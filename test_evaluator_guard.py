@@ -189,8 +189,14 @@ class TestModelEvaluator(GuardTestCase):
         self.backend.on("judge", lambda req: _ok(
             req, emissions=(("shell", {"cmd": "rm -rf /"}),)))
         self.rt.send((job, "gate", "io"), {})
-        with self.assertRaises(InvariantError):
-            self.rt.drain(job)
+        self.rt.drain(job)                     # 不再穿透 drain
+
+        recs = [r for r in self.rt.node_executions(job, "gate")]
+        self.assertEqual([r.status for r in recs], ["FAILED"])
+        self.assertNotIn("last", self.rt.node_persistent_state(job, "sink"))
+        gate_msgs = [m for m in self.rt._messages.values()
+                     if m.target[0] == job and m.target[1] == "gate"]
+        self.assertTrue(all(m.state == "FAILED" for m in gate_msgs))
 
     def test_M3_allowed_ports_come_from_declared_endpoints(self):
         """模型看到的可选项 == 节点已声明的端点，一个不多。"""

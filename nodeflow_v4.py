@@ -659,6 +659,16 @@ class Runtime:
         for edge in spec.get("edges", []):
             eid = edge.get("id", f"{edge['from']}->{edge['to']}")
             op = edge.get("operation", "PUSH")
+            if op != "PUSH":
+                # 契约诚实：V4 的边只实现单向 PUSH 数据流。
+                # CALL 需要等待与关联，落在 subflow 节点或队列 REQUEST + callback 上
+                # （不变量 M3）；这里若接受 CALL 边而运行时按 PUSH 投递，
+                # 是静默降级 —— 宁可注册期拒绝。
+                raise InvariantError(
+                    f"边 {eid} 不合法：operation={op!r} 未实现。"
+                    f"V4 边只支持 PUSH；需要调用语义请用 subflow 节点或"
+                    f"队列 REQUEST + callback（不变量 M3）"
+                )
             src_node_id, src_ep = edge["from"].split(".", 1)
             tgt_node_id, tgt_ep = edge["to"].split(".", 1)
 
@@ -783,6 +793,13 @@ class Runtime:
             raise InvariantError("消息不得指定下游边（不变量 M1）")
         ids = []
         for _sid, target in self._subs.get(topic_id, []):
+            gid = target[0]
+            inst = self._instances.get(gid)
+            if inst is None or inst.status == "CLOSED":
+                # CLOSED 是终态：投递只会制造永不到达的死信，
+                # 静默排队会让 queue 深度永远非零 —— 跳过。
+                # PAUSED 仍接收（恢复后会消费），仅 CLOSED 被过滤。
+                continue
             # 每个订阅者拿独立 payload 副本
             ids.append(
                 self._new_message(target, dict(payload), callback=callback, topic=topic_id)
@@ -874,7 +891,21 @@ class Runtime:
                         self._release(unit.execution_id, "FAILED",
                                       reason=result.termination)
                     else:
-                        self.apply_execution(unit.execution_id, result)
+                        inst = self._instances[rec.gid]
+                        st = inst.nodes[rec.node_id]
+                        if st.version != rec.base_node_version:
+                            # 乐观并发冲突：他人先提交，本执行作废；
+                            # 输入退回 QUEUED，由调度器重新认领重试。
+                            self._release(unit.execution_id, "FAILED",
+                                          reason="FAILED")
+                            return
+                        try:
+                            self.apply_execution(unit.execution_id, result)
+                        except InvariantError:
+                            # 提交被拒（非法端口/契约失败）：
+                            # 终态 FAILED 并经 on_error 进图，不崩溃不滞留。
+                            self._release(unit.execution_id, "FAILED",
+                                          reason="APPLY_REJECTED")
             elif unit.kind == "model_strategy":
                 rec = self._records[unit.execution_id]
                 result = self._execute_with_retry(rec)          # 锁外
@@ -885,13 +916,17 @@ class Runtime:
                             "CANCELLED" if result.termination == "CANCELLED" else "FAILED",
                             reason=result.termination)
                     else:
-                        rec.status = "APPLIED"
-                        # 模型的输出提案 → decision.emit，其余一律不接受
-                        self._handle_strategy(
-                            unit.inst, unit.node_id, unit.node, unit.batch,
-                            decision={"emit": {p: pl for p, pl in result.emissions}},
-                            trusted=False,
-                        )
+                        try:
+                            rec.status = "APPLIED"
+                            # 模型的输出提案 → decision.emit，其余一律不接受
+                            self._handle_strategy(
+                                unit.inst, unit.node_id, unit.node, unit.batch,
+                                decision={"emit": {p: pl for p, pl in result.emissions}},
+                                trusted=False,
+                            )
+                        except InvariantError:
+                            self._release(unit.execution_id, "FAILED",
+                                          reason="APPLY_REJECTED")
             elif unit.kind == "strategy":
                 with self._lock:
                     self._handle_strategy(unit.inst, unit.node_id, unit.node,
@@ -1132,6 +1167,13 @@ class Runtime:
             if len(bucket) >= cap:
                 cursor = inst.pool_cursor.get(slot_id, 0)
                 child = bucket[cursor % cap]
+                if self._instance_busy(child):
+                    # 池满且目标实例仍忙（上一次调用遗留 QUEUED/CLAIMED 消息）。
+                    # 隔离优先：不复用、不混消息 —— 临时新建独立实例，
+                    # 不复用状态与消息队列。池实例在空闲后仍会被轮转复用。
+                    child = self.instantiate(
+                        slot["template"], owner=f"service:{inst.gid}")
+                    return child
                 inst.pool_cursor[slot_id] = cursor + 1
                 # 只复用执行资源，不复用状态：清空 persistentState（判据=暗示性）
                 for st in self._instances[child].nodes.values():
@@ -1140,6 +1182,17 @@ class Runtime:
         child = self.instantiate(slot["template"], owner=f"service:{inst.gid}")
         bucket.append(child)
         return child
+
+    def _instance_busy(self, gid: str) -> bool:
+        """该实例是否仍有未完成的工作（QUEUED/CLAIMED/AWAITING 消息）。
+
+        WARM_POOL 复用前的隔离检查：池实例忙时不复用，
+        避免上一调用的遗留消息混入新调用（复用状态污染的来源）。
+        """
+        return any(
+            m.target[0] == gid and m.state in ("QUEUED", "CLAIMED", "AWAITING")
+            for m in self._messages.values()
+        )
 
     def _handle(self, msg: _Message) -> None:
         gid, node_id, ep = msg.target

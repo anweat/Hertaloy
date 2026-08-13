@@ -562,8 +562,15 @@ class TestExecutionPlane(FoundationTestCase):
         job = _agent_env(self.rt, self.backend)
         self.backend.on("worker", lambda req: _ok(req, emissions=(("nowhere", {"x": 1}),)))
         self.rt.send((job, "worker", "io"), {"task": "t1"})
-        with self.assertRaises(InvariantError):
-            self.rt.drain(job)
+        self.rt.drain(job)          # 拒绝被捕获并释放，不再穿透 drain
+
+        recs = [r for r in self.rt.node_executions(job, "worker")]
+        self.assertEqual([r.status for r in recs], ["FAILED"])
+        msgs = [m for m in self.rt._messages.values() if m.target[0] == job]
+        self.assertTrue(all(m.state == "FAILED" for m in msgs),
+                        [m.state for m in msgs])
+        # 下游 sink 未被触发
+        self.assertNotIn("last", self.rt.node_persistent_state(job, "sink"))
 
     def test_E3_invalid_output_retries_inside_execution_plane(self):
         """帧 3：输出不合 schema 是常态，重试循环属执行面，不上升为协议错误。"""
