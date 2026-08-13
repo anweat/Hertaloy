@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import itertools
 import json
@@ -379,6 +380,7 @@ class Runtime:
     def __init__(self) -> None:
         self._ids = itertools.count(1)
         self._cards: dict[tuple[str, str], dict[int, Mapping[str, Any]]] = {}
+        self._characters: dict[str, dict[str, Any]] = {}
         self._specs: dict[str, dict[str, Any]] = {}
         self._templates: dict[str, Mapping[str, Any]] = {}
         self._topics: dict[str, Mapping[str, Any]] = {}
@@ -432,8 +434,9 @@ class Runtime:
         slot = self._cards.setdefault((kind, card_id), {})
         if version in slot:
             raise InvariantError(f"card version already exists: {kind}/{card_id}@{version}")
-        # 只读引用：正文冻结，不提供就地修改入口
-        slot[version] = dict(body)
+        # 只读引用：正文冻结，不提供就地修改入口。
+        # deepcopy：嵌套 dict 也不得被调用方事后修改（边界 B1c）。
+        slot[version] = copy.deepcopy(body)
         return f"{kind}/{card_id}@{version}"
 
     def _latest(self, kind: str, card_id: str) -> int:
@@ -461,6 +464,43 @@ class Runtime:
         }
         self._specs[spec_id] = spec
         return self._resolve_spec(spec_id)
+
+    def register_character(self, character_id, *, cards, tools=()) -> str:
+        """装配面对象（边界 Ch）：命名的卡片组合，**不是内核类型**。
+
+        body = 卡片引用列表 + 默认工具集。展开结果与手写卡片组合
+        完全同构 —— 编译规则仍归内核，character 只是装配面的命名层。
+        """
+        if character_id in self._characters:
+            raise InvariantError(f"character 已存在：{character_id}")
+        declared: list[tuple[str, str, int | None]] = []
+        for entry in cards:
+            if len(entry) == 2:
+                kind, cid = entry
+                if kind not in ("skill", "mcp", "rules", "prompt"):
+                    raise InvariantError(
+                        f"unknown card kind: {kind!r}；"
+                        f"character 只能引用 skill/mcp/rules/prompt 卡片")
+                declared.append((kind, cid, None))
+            else:
+                kind, cid, ver = entry
+                if kind not in ("skill", "mcp", "rules", "prompt"):
+                    raise InvariantError(f"unknown card kind: {kind!r}")
+                if ver not in self._cards.get((kind, cid), {}):
+                    raise InvariantError(f"unknown card version: {kind}/{cid}@{ver}")
+                declared.append((kind, cid, ver))
+        self._characters[character_id] = {
+            "cards": declared,
+            "tools": list(tools),
+        }
+        return character_id
+
+    def expand_character(self, character_id) -> tuple[list[tuple[str, str, int | None]], list[str]]:
+        """展开为 (cards, tools)，可直接传给 compile_agent_spec —— 同构性来源。"""
+        if character_id not in self._characters:
+            raise InvariantError(f"unknown character: {character_id}")
+        ch = self._characters[character_id]
+        return list(ch["cards"]), list(ch["tools"])
 
     def _resolve_spec(self, spec_id: str) -> dict[str, Any]:
         """把声明解析成具体版本。休眠→唤醒时调用一次，执行期间冻结。"""
@@ -593,7 +633,11 @@ class Runtime:
                 )
         self._validate_edges(template_id, spec)     # 连接期校验
         ref = f"{template_id}@1"
-        self._templates[ref] = spec
+        # 定义层不可变：注册后调用方修改原 dict 不得影响模板（边界 B1/B6）。
+        # _layout（画布坐标）不进入语义层（边界 Lb）：剥离存储。
+        stored = copy.deepcopy(spec)
+        stored.pop("_layout", None)
+        self._templates[ref] = stored
         return ref
 
     # ---- MessageContract 与端点声明 ---------------------------------------
@@ -603,7 +647,7 @@ class Runtime:
         ref = f"{contract_id}@{version}"
         if ref in self._contracts:
             raise InvariantError(f"契约已存在，不可覆盖：{ref}")
-        self._contracts[ref] = dict(schema)
+        self._contracts[ref] = copy.deepcopy(schema)   # 边界 B1b：快照
         return ref
 
     def _contract(self, ref: str | None):
@@ -711,18 +755,18 @@ class Runtime:
 
     def register_topic(self, topic_id, *, request_contract, reply_contract=None) -> str:
         self._topics[topic_id] = {
-            "request_contract": request_contract,
-            "reply_contract": reply_contract,
+            "request_contract": copy.deepcopy(request_contract),
+            "reply_contract": copy.deepcopy(reply_contract),
         }
         self._subs.setdefault(topic_id, [])
         return topic_id
 
     def register_transform(self, transform_id, *, role, body) -> str:
-        self._transforms[transform_id] = {"role": role, "body": dict(body)}
+        self._transforms[transform_id] = {"role": role, "body": copy.deepcopy(body)}
         return transform_id
 
     def register_policy(self, policy_id, spec) -> str:
-        self._policies[policy_id] = spec
+        self._policies[policy_id] = copy.deepcopy(spec)   # 边界 B1c：快照
         return policy_id
 
     def register_handler(self, name: str, fn: Callable[..., Any]) -> str:
@@ -1269,9 +1313,16 @@ class Runtime:
                     raise InvariantError(f"{where}：{ref} 不允许字段 {extra}")
 
     def _route(self, inst, tpl, node_id, port, payload) -> list[str]:
+        """边路由 —— 两段式，fan-out 原子（边界 B5b）。
+
+        第一段（纯函数）：对全部匹配边完成地址解析、源契约校验、
+        Servo、目标契约校验，只收集结果，不产生任何消息；
+        任一边失败 → 整个 fan-out 失败，零副作用（由调用方决定
+        如何释放执行并进图）。第二段（物化）：全部通过后统一创建消息。
+        """
         src = f"{node_id}.{port}"
         nodes = tpl.get("nodes", {})
-        traversed = []
+        prepared: list[tuple[str, str, str, Any]] = []      # (eid, tgt_node, tgt_ep, out)
         for edge in tpl.get("edges", []):
             if edge["from"] != src:
                 continue
@@ -1287,7 +1338,10 @@ class Runtime:
             if edge.get("servo"):
                 out = self._apply_servo(edge["servo"], out)
             self._validate_payload(tgt_ref, out, where=f"边 {eid} 目标端（Servo 之后）")
+            prepared.append((eid, tgt_node, tgt_ep, out))
 
+        traversed = []
+        for eid, tgt_node, tgt_ep, out in prepared:
             self._new_message((inst.gid, tgt_node, tgt_ep), out)
             traversed.append(eid)
         return traversed
@@ -1389,11 +1443,22 @@ class Runtime:
         return result
 
     def apply_execution(self, execution_id, result: ExecutionResult) -> None:
-        """commit B —— base 检查只针对被 claim 的切片（节点级，非容器级）。"""
+        """commit B —— base 检查只针对被 claim 的切片（节点级，非容器级）。
+
+        边界检查：
+          - 终态气密（B2）：实例已非 OPEN 时拒绝提交在途执行 ——
+            CLOSED 后不得再产生提交与路由；
+          - 内核前缀保护（B3）：backend 只能提交用户 kind 的内容，
+            run//annotation/ 前缀与内核 kind（run/annotation/context_summary）
+            归内核独占，伪造即拒。
+        """
         rec = self._records[execution_id]
         if rec.status != "RUNNING":
             raise InvariantError(f"execution is not RUNNING: {rec.status}")
         inst = self._instances[rec.gid]
+        if inst.status != "OPEN":
+            raise InvariantError(
+                f"{rec.gid} 已 {inst.status}，拒绝提交在途执行（终态气密）")
         st = inst.nodes[rec.node_id]
         if st.version != rec.base_node_version:
             raise InvariantError("node-scoped base changed since claim")
@@ -1408,6 +1473,11 @@ class Runtime:
 
         produced: list[str] = []
         for kind_, oid, body in result.artifacts:
+            if kind_ in self.store.KERNEL_KINDS or                     oid.startswith("run/") or oid.startswith("annotation/"):
+                raise InvariantError(
+                    f"backend 不得提交内核保留对象：kind={kind_!r} oid={oid!r}；"
+                    f"内核 kind 与 run//annotation/ 前缀归内核，"
+                    f"用户 kind（plan/spec/…）自由")
             ov = self._append_object(
                 oid, body, kind=kind_,
                 provenance=Provenance(
