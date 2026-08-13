@@ -13,7 +13,9 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
-from dataclasses import asdict, dataclass, field
+import threading
+import time
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 # ---------------------------------------------------------------------------
@@ -187,6 +189,7 @@ class ObjectStore:
     def __init__(self) -> None:
         self._by_object: dict[str, list[ObjectVersion]] = {}
         self._by_hash: dict[tuple[str, str], ObjectVersion] = {}
+        self._lock = threading.RLock()      # 版本分配必须串行（V1）
 
     @staticmethod
     def content_hash(body: Mapping[str, Any]) -> str:
@@ -196,21 +199,22 @@ class ObjectStore:
     def put(self, object_id, kind, body, provenance: Provenance | None = None) -> ObjectVersion:
         """唯一写入口。同内容重复提交返回既有版本（V3 幂等）。"""
         h = self.content_hash(body)
-        existing = self._by_hash.get((object_id, h))
-        if existing is not None:
-            return existing
-        versions = self._by_object.setdefault(object_id, [])
-        ov = ObjectVersion(
-            object_id=object_id,
-            version=len(versions) + 1,
-            kind=kind,
-            content_hash=h,
-            body=dict(body),
-            provenance=provenance or Provenance(),
-        )
-        versions.append(ov)
-        self._by_hash[(object_id, h)] = ov
-        return ov
+        with self._lock:
+            existing = self._by_hash.get((object_id, h))
+            if existing is not None:
+                return existing
+            versions = self._by_object.setdefault(object_id, [])
+            ov = ObjectVersion(
+                object_id=object_id,
+                version=len(versions) + 1,
+                kind=kind,
+                content_hash=h,
+                body=dict(body),
+                provenance=provenance or Provenance(),
+            )
+            versions.append(ov)
+            self._by_hash[(object_id, h)] = ov
+            return ov
 
     def get(self, object_id, version) -> ObjectVersion:
         return self._by_object[object_id][version - 1]
@@ -257,6 +261,34 @@ class QueueView:
 # ---------------------------------------------------------------------------
 # 内部结构
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Principal:
+    """控制面主体（#10）。
+
+    形式固定为 `kind:id`。**必须由可信边界注入**，绝不能从 payload 复制 ——
+    调用者在 JSON 里写 `"actor": "human:alice"` 不能因此获得权限。
+    """
+
+    kind: Literal["human", "agent", "system", "service"]
+    id: str
+
+    def __str__(self) -> str:
+        return f"{self.kind}:{self.id}"
+
+    @classmethod
+    def parse(cls, value) -> Principal:
+        if isinstance(value, Principal):
+            return value
+        text = str(value)
+        kind, sep, ident = text.partition(":")
+        if not sep or kind not in ("human", "agent", "system", "service"):
+            raise InvariantError(
+                f"principal 必须形如 kind:id，kind ∈ "
+                f"human|agent|system|service，得到 {text!r}"
+            )
+        return cls(kind=kind, id=ident)          # type: ignore[arg-type]
 
 
 class InvariantError(RuntimeError):
@@ -307,6 +339,20 @@ class _Record:
     request: Any = None
     base_node_version: int = 0
     session_handle: Any = None
+    context_trims: tuple = ()          # 本次调用为塞进预算裁掉了什么
+
+
+@dataclass
+class _Unit:
+    """一份已 claim 住、待执行的活。选取在锁内，执行在锁外。"""
+
+    kind: str                       # agent | strategy | simple
+    inst: Any
+    node_id: str
+    node: Mapping[str, Any]
+    msg: Any = None
+    batch: Any = None
+    execution_id: str | None = None
 
 
 @dataclass
@@ -318,6 +364,8 @@ class _Message:
     callback: tuple[str, str, str] | None = None
     topic: str | None = None
     mkind: str = "DATA"        # DATA | REPLY
+    attempts: int = 0          # 已失败次数（#7 重试策略）
+    exit_port: str | None = None   # 子流程回程端口（#9，取代 "reply" 魔法串）
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +383,7 @@ class Runtime:
         self._templates: dict[str, Mapping[str, Any]] = {}
         self._topics: dict[str, Mapping[str, Any]] = {}
         self._transforms: dict[str, dict[str, Any]] = {}
+        self._contracts: dict[str, Mapping[str, Any]] = {}
         self._policies: dict[str, Mapping[str, Any]] = {}
         self._handlers: dict[str, Callable[..., Any]] = {}
         self._instances: dict[str, _Instance] = {}
@@ -343,11 +392,37 @@ class Runtime:
         self.store = ObjectStore()          # 版本分配的唯一权威
         self._records: dict[str, _Record] = {}
         self._backend: ExecutionBackend | None = None
+        #: 每次提交后回调 (runtime, run_snapshot)。持久化层挂这里。
+        self.on_commit: Callable[[Runtime, ObjectVersion], None] | None = None
         self.max_output_retries = 3
-        self.chars_per_token = 4          # 预算估算用的粗略换算
+        self.default_max_fanout = 32     # evaluator 未声明上限时的兜底
+        self.default_max_attempts = 3    # 失败重试上限（#7）
+        self._lock = threading.RLock()   # 保护全部可变运行状态
+        self._inflight = 0               # 锁外执行中的活数
+        # 系数由 test_context_budget.TestEstimatorCalibration 对着真实
+        # usage.in_tokens 量出来，不是拍的。改之前先跑那两条。
+        self.chars_per_token = 2.2        # 拉丁字符
+        self.cjk_chars_per_token = 0.9    # CJK 密度高得多，分开算
+        #: 超预算时的裁剪顺序。**head 不在其中，永不裁剪。**
+        #: tail 先于 messages —— tail 是补充资料，messages 是任务本身。
+        self.truncation_order = ("transient", "tail", "messages")
+        #: 各段的保底条数。当前任务不可丢光，否则 agent 无事可做。
+        self.min_keep = {"messages": 1}
 
     def _nid(self, prefix: str) -> str:
         return f"{prefix}-{next(self._ids):05d}"
+
+    def _bump_id_counter(self) -> None:
+        """从持久化恢复后调用：把计数器推过已用最大值，避免新 id 撞车。"""
+        seen = 0
+        keys = list(self._instances) + list(self._messages) + list(self._records)
+        for entries in self._subs.values():
+            keys += [sid for sid, _t in entries]
+        for key in keys:
+            tail = key.rsplit("-", 1)[-1]
+            if tail.isdigit():
+                seen = max(seen, int(tail))
+        self._ids = itertools.count(seen + 1)
 
     # ---- 装配面 -----------------------------------------------------------
 
@@ -403,6 +478,103 @@ class Runtime:
             "tools": list(spec["tools"]),
         }
 
+    # ---- 卡片编译器（INTERFACES_V4.md §1.2）------------------------------
+    #
+    # 布局按**缓存稳定性**排列。不变量 X：稳定前缀不得因运行期发现而改变。
+    #   skill / 资料 → 可运行期追加（落 context.tail，位于缓存断点之后）
+    #   tool         → 不可运行期新增（编译期声明全集，运行期只做启用）
+    #
+    # 编译规则属内核，用户不可改 —— 它决定上下文质量，是命题的一部分。
+
+    def _compile_agent_prompt(self, resolved, node) -> tuple[str, list[dict]]:
+        by_kind: dict[str, list[tuple[str, int]]] = {}
+        for key, ver in resolved.get("cards", {}).items():
+            kind, cid = key.split("/", 1)
+            by_kind.setdefault(kind, []).append((cid, ver))
+
+        parts: list[str] = []
+        tools: list[dict[str, Any]] = []
+
+        # [a] rules 全量前置 —— 必须遵守
+        rules = [self.card_body("rules", c, v).get("text", "")
+                 for c, v in sorted(by_kind.get("rules", []))]
+        rules = [r for r in rules if r]
+        if rules:
+            parts.append("# 规则（必须遵守）\n" + "\n\n".join(rules))
+
+        # [b] 角色。节点级 systemPrompt 视作一张内联的 prompt 卡。
+        roles = [self.card_body("prompt", c, v).get("text", "")
+                 for c, v in sorted(by_kind.get("prompt", []))]
+        if node.get("systemPrompt"):
+            roles.append(str(node["systemPrompt"]))
+        roles = [r for r in roles if r]
+        if roles:
+            parts.append("# 角色\n" + "\n\n".join(roles))
+
+        # [c] mcp 可用列表：名称 + 摘要，**不含全量 schema**
+        mcp_lines: list[str] = []
+        claimed: dict[str, str] = {}
+        for cid, v in sorted(by_kind.get("mcp", [])):
+            body = self.card_body("mcp", cid, v)
+            for t in body.get("tools", []):
+                name = t["name"]
+                # #8 工具命名：内核保留名不可占用，跨卡片重名不可静默覆盖
+                if name in self.KERNEL_TOOL_NAMES:
+                    raise InvariantError(
+                        f"mcp/{cid}@{v} 的工具 {name!r} 占用了内核保留名；"
+                        f"保留名：{sorted(self.KERNEL_TOOL_NAMES)}"
+                    )
+                if name in claimed:
+                    raise InvariantError(
+                        f"工具名冲突：{name!r} 同时来自 {claimed[name]} 与 mcp/{cid}@{v}；"
+                        f"请在卡片里改名，不要依赖加载顺序"
+                    )
+                claimed[name] = f"mcp/{cid}@{v}"
+                mcp_lines.append(f"- {name}：{t.get('summary', '')}")
+                tools.append({
+                    "name": t["name"],
+                    "description": t.get("summary", ""),
+                    "source": f"mcp/{cid}@{v}",
+                    # 不变量 X：工具集编译期声明齐全，运行期只启用不新增
+                    "defer_loading": True,
+                })
+        if mcp_lines:
+            parts.append("# 可用 MCP 工具\n" + "\n".join(mcp_lines))
+
+        # [d] skill 压缩索引：只放 summary，全文运行期按需追加到 tail
+        skill_lines = [
+            f"- skill/{cid}@{v}：{self.card_body('skill', cid, v).get('summary', '')}"
+            for cid, v in sorted(by_kind.get("skill", []))
+        ]
+        if skill_lines:
+            parts.append("# 可用 skill（需要时索取全文）\n" + "\n".join(skill_lines))
+
+        # [e] 输出契约 —— 由 emit 端点的 contract 生成，不是人写的
+        endpoints = node.get("endpoints") or {}
+        emit_ports = [ep for ep, d in endpoints.items()
+                      if isinstance(d, Mapping) and "emit" in d] or list(endpoints)
+        lines = []
+        for ep in sorted(emit_ports):
+            ref = self._endpoint_ref(node, ep, "emit")
+            if ref:
+                fields, required = self._fields_of(self._contract(ref))
+                lines.append(f"- {ep}：{ref} 字段 {sorted(fields)}"
+                             f"（必需 {sorted(required)}）")
+            else:
+                lines.append(f"- {ep}")
+        if lines:
+            parts.append("# 输出契约\n完成后调用 emit 输出，port 只能取以下之一：\n"
+                         + "\n".join(lines))
+
+        return "\n\n".join(parts), tools
+
+    @staticmethod
+    def prefix_fingerprint(spec: Mapping[str, Any]) -> str:
+        """稳定前缀指纹。运行期发现若改变了它，就是违反不变量 X。"""
+        blob = str(spec.get("systemPrompt") or "") + json.dumps(
+            spec.get("tools") or [], sort_keys=True, ensure_ascii=False, default=repr)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
     def card_body(self, kind: str, card_id: str, version: int) -> Mapping[str, Any]:
         """只读引用。返回不可变映射视图。"""
         from types import MappingProxyType
@@ -419,9 +591,113 @@ class Runtime:
                     f"unsupported node kind {kind!r} at {node_id!r}; "
                     f"循环锚点是 strategy 的配置，不是节点种类（FOUNDATION §5.6）"
                 )
+        self._validate_edges(template_id, spec)     # 连接期校验
         ref = f"{template_id}@1"
         self._templates[ref] = spec
         return ref
+
+    # ---- MessageContract 与端点声明 ---------------------------------------
+
+    def register_contract(self, contract_id, version, schema) -> str:
+        """不可变契约。运行消息只能引用精确版本（不变量 V4 的同款规则）。"""
+        ref = f"{contract_id}@{version}"
+        if ref in self._contracts:
+            raise InvariantError(f"契约已存在，不可覆盖：{ref}")
+        self._contracts[ref] = dict(schema)
+        return ref
+
+    def _contract(self, ref: str | None):
+        if ref is None:
+            return None
+        if "@" not in ref:
+            raise InvariantError(f"契约引用必须精确到版本：{ref!r}")
+        if ref not in self._contracts:
+            raise InvariantError(f"未注册的契约：{ref}")
+        return self._contracts[ref]
+
+    @staticmethod
+    def _endpoint_ref(node, ep_name, direction, operation="PUSH") -> str | None:
+        """端点不是永久的 input/output 两类；方向来自本次 operation。
+
+        未声明 = 未约束（向后兼容），不是"禁止"。
+        """
+        ep = (node.get("endpoints") or {}).get(ep_name)
+        if not isinstance(ep, Mapping):
+            return None
+        block = ep.get(direction)
+        if not isinstance(block, Mapping):
+            return None
+        entry = block.get(operation)
+        if isinstance(entry, Mapping):
+            return entry.get("contract")
+        return entry if isinstance(entry, str) else None
+
+    @staticmethod
+    def _fields_of(schema) -> tuple[set[str], set[str]]:
+        if not schema:
+            return set(), set()
+        return set(schema.get("properties", {})), set(schema.get("required", []))
+
+    def _servo_fields(self, fields: set[str], transform_id: str | None) -> set[str]:
+        """符号化推演 Servo 之后的字段集 —— 连接期校验的依据。"""
+        if not transform_id:
+            return set(fields)
+        body = self._transforms[transform_id]["body"]
+        out = set(fields)
+        for src, dst in (body.get("map") or {}).items():
+            if src in out:
+                out.discard(src)
+            out.add(dst)
+        out |= set(body.get("set") or {})
+        out -= set(body.get("drop") or ())
+        return out
+
+    def _validate_edges(self, template_id: str, spec: Mapping) -> None:
+        """连接期校验：边一旦画上就要能跑通，而不是运行到一半才炸。"""
+        nodes = spec.get("nodes", {})
+        strict = bool(spec.get("strict_contracts"))
+        for edge in spec.get("edges", []):
+            eid = edge.get("id", f"{edge['from']}->{edge['to']}")
+            op = edge.get("operation", "PUSH")
+            src_node_id, src_ep = edge["from"].split(".", 1)
+            tgt_node_id, tgt_ep = edge["to"].split(".", 1)
+
+            for node_id, ep in ((src_node_id, src_ep), (tgt_node_id, tgt_ep)):
+                node = nodes.get(node_id)
+                if node is None:
+                    raise InvariantError(
+                        f"边 {eid} 不合法：节点 {node_id!r} 不存在。"
+                        f"可用节点：{sorted(nodes)}"
+                    )
+                if ep not in (node.get("endpoints") or {}):
+                    raise InvariantError(
+                        f"边 {eid} 不合法：节点 {node_id!r} 没有端点 {ep!r}。"
+                        f"可用端点：{sorted((node.get('endpoints') or {}))}"
+                    )
+
+            src_ref = self._endpoint_ref(nodes[src_node_id], src_ep, "emit", op)
+            tgt_ref = self._endpoint_ref(nodes[tgt_node_id], tgt_ep, "receive", op)
+            if src_ref is None or tgt_ref is None:
+                if strict:
+                    raise InvariantError(
+                        f"边 {eid} 不合法：模板声明了 strict_contracts，"
+                        f"但 {'源' if src_ref is None else '目标'}端点未声明 {op} 契约"
+                    )
+                continue                     # 未声明 = 未约束
+
+            src_all, _ = self._fields_of(self._contract(src_ref))
+            tgt_all, tgt_req = self._fields_of(self._contract(tgt_ref))
+            servo = edge.get("servo")
+            after = self._servo_fields(src_all, servo)
+            missing = tgt_req - after
+            if missing:
+                raise InvariantError(
+                    f"边 {eid} 不合法：\n"
+                    f"  源    {edge['from']}  产出 {src_ref}  {sorted(src_all)}\n"
+                    f"  Servo {servo or '（无）'} 之后  {sorted(after)}\n"
+                    f"  目标  {edge['to']}  要求 {tgt_ref}  必需 {sorted(tgt_req)}\n"
+                    f"  缺失字段：{sorted(missing)}。可用的映射来源：{sorted(after)}"
+                )
 
     def register_topic(self, topic_id, *, request_contract, reply_contract=None) -> str:
         self._topics[topic_id] = {
@@ -446,6 +722,10 @@ class Runtime:
     # ---- 实例层 -----------------------------------------------------------
 
     def instantiate(self, template_ref, *, owner, params=None, controllers=()) -> str:
+        with self._lock:
+            return self._instantiate_locked(template_ref, owner, params, controllers)
+
+    def _instantiate_locked(self, template_ref, owner, params, controllers) -> str:
         tpl = self._templates[template_ref]
         gid = self._nid("gi")
         inst = _Instance(
@@ -454,7 +734,8 @@ class Runtime:
             owner=owner,
             params=dict(params or {}),
             head=tuple((params or {}).get("context_head", ())),
-            controllers={owner, "system", *controllers},
+            controllers={str(Principal.parse(owner)), "system:core",
+                         *(str(Principal.parse(c)) for c in controllers)},
         )
         for node_id in tpl.get("nodes", {}):
             inst.nodes[node_id] = _NodeState()
@@ -463,6 +744,14 @@ class Runtime:
         for sub in tpl.get("subscriptions", []):
             node_id, ep = sub["endpoint"].split(".")
             self.subscribe(sub["topic"], target=(gid, node_id, ep))
+        # R0 物化写入初始提交记录（FOUNDATION §5.3）。
+        # seq 仍为 0 —— 它计的是**创建之后**的状态转换次数。
+        self._append_object(
+            f"run/{gid}",
+            {"seq": 0, "node": None, "materialized": template_ref,
+             "owner": owner, "edges_traversed": [], "endpoint": None},
+            provenance=Provenance(graph_instance_id=gid, at_seq=0),
+        )
         return gid
 
     def subscribe(self, topic_id, *, target) -> str:
@@ -500,13 +789,15 @@ class Runtime:
             )
         return ids[0] if ids else ""
 
-    def _new_message(self, target, payload, *, callback=None, topic=None, mkind="DATA") -> str:
-        mid = self._nid("msg")
-        self._messages[mid] = _Message(
-            mid=mid, target=target, payload=payload,
-            callback=callback, topic=topic, mkind=mkind,
-        )
-        return mid
+    def _new_message(self, target, payload, *, callback=None, topic=None,
+                     mkind="DATA", exit_port=None) -> str:
+        with self._lock:
+            mid = self._nid("msg")
+            self._messages[mid] = _Message(
+                mid=mid, target=target, payload=payload, callback=callback,
+                topic=topic, mkind=mkind, exit_port=exit_port,
+            )
+            return mid
 
     def step(self, *gids, max_commits: int = 1) -> int:
         done = 0
@@ -521,25 +812,139 @@ class Runtime:
             if guard > 10_000:
                 raise InvariantError("drain did not converge")
 
+    # ---- 调度：选取/claim 在锁内，执行在锁外 ------------------------------
+
+    def _take_unit(self, gids) -> tuple[_Unit | None, bool]:
+        """锁内原子地挑一份活并 claim 住。
+
+        返回 (unit, still_busy)。unit 为 None 时，still_busy 表示别的线程
+        还有在途执行 —— 此时不能判定已排空。
+        """
+        scope = set(gids) if gids else None
+        with self._lock:
+            for msg in list(self._messages.values()):
+                if msg.state != "QUEUED":
+                    continue
+                gid, node_id, _ep = msg.target
+                if scope is not None and gid not in scope:
+                    continue
+                inst = self._instances.get(gid)
+                if inst is None or inst.status != "OPEN":
+                    continue
+                node = self._templates[inst.template_ref]["nodes"][node_id]
+                kind = node["kind"]
+
+                if kind == "strategy":
+                    batch = self._select_for_strategy(inst, node_id, node)
+                    if batch is None:
+                        continue                  # 未就绪，让给别的消息
+                    for m in batch:
+                        m.state = "CLAIMED"
+                    ev = node.get("evaluator") or {}
+                    if ev.get("kind") == "model":
+                        # 模型驱动的判断也是一次执行，必须走三段式在锁外跑
+                        eid = self._claim(inst, node_id, node, batch,
+                                          spec_id=ev["spec"])
+                        unit = _Unit("model_strategy", inst, node_id, node,
+                                     batch=batch, execution_id=eid)
+                    else:
+                        unit = _Unit("strategy", inst, node_id, node, batch=batch)
+                elif kind == "agent":
+                    eid = self._claim(inst, node_id, node, [msg])
+                    unit = _Unit("agent", inst, node_id, node, msg=msg,
+                                 execution_id=eid)
+                else:
+                    msg.state = "CLAIMED"
+                    unit = _Unit("simple", inst, node_id, node, msg=msg)
+
+                self._inflight += 1
+                return unit, True
+            return None, self._inflight > 0
+
+    def _run_unit(self, unit: _Unit) -> None:
+        """agent 的执行在**锁外**——这是并行的全部意义。"""
+        try:
+            if unit.kind == "agent":
+                rec = self._records[unit.execution_id]
+                result = self._execute_with_retry(rec)          # 锁外，可能数分钟
+                with self._lock:
+                    if result.termination == "CANCELLED":
+                        self._release(unit.execution_id, "CANCELLED")
+                    elif result.termination in ("FAILED", "INVALID_OUTPUT", "BUDGET"):
+                        self._release(unit.execution_id, "FAILED",
+                                      reason=result.termination)
+                    else:
+                        self.apply_execution(unit.execution_id, result)
+            elif unit.kind == "model_strategy":
+                rec = self._records[unit.execution_id]
+                result = self._execute_with_retry(rec)          # 锁外
+                with self._lock:
+                    if result.termination != "DONE":
+                        self._release(
+                            unit.execution_id,
+                            "CANCELLED" if result.termination == "CANCELLED" else "FAILED",
+                            reason=result.termination)
+                    else:
+                        rec.status = "APPLIED"
+                        # 模型的输出提案 → decision.emit，其余一律不接受
+                        self._handle_strategy(
+                            unit.inst, unit.node_id, unit.node, unit.batch,
+                            decision={"emit": {p: pl for p, pl in result.emissions}},
+                            trusted=False,
+                        )
+            elif unit.kind == "strategy":
+                with self._lock:
+                    self._handle_strategy(unit.inst, unit.node_id, unit.node,
+                                          unit.batch)
+            else:
+                with self._lock:
+                    self._handle(unit.msg)
+        finally:
+            with self._lock:
+                self._inflight -= 1
+
     def _dispatch_once(self, gids) -> bool:
-        scope = set(gids) if gids else set(self._instances)
-        for msg in list(self._messages.values()):
-            if msg.state != "QUEUED":
-                continue
-            gid, node_id, _ep = msg.target
-            if gid not in scope or self._instances[gid].status != "OPEN":
-                continue
-            inst = self._instances[gid]
-            node = self._templates[inst.template_ref]["nodes"][node_id]
-            if node["kind"] == "strategy":
-                batch = self._select_for_strategy(inst, node_id, node)
-                if batch is None:
-                    continue                      # 未就绪，让给别的消息
-                self._handle_strategy(inst, node_id, node, batch)
-                return True
-            self._handle(msg)
-            return True
-        return False
+        unit, _busy = self._take_unit(gids)
+        if unit is None:
+            return False
+        self._run_unit(unit)
+        return True
+
+    def drain_concurrent(self, *gids, workers: int = 4, poll: float = 0.005,
+                         timeout: float = 120.0) -> None:
+        """多线程排空。claim / apply 在锁内串行，agent 执行在锁外并行。
+
+        冲突域是 NodeInstance + 消费的消息集合（不是容器），因此不同节点
+        可以真正并发提交。
+        """
+        errors: list[BaseException] = []
+        deadline = time.monotonic() + timeout
+
+        def worker() -> None:
+            while not errors:
+                if time.monotonic() > deadline:
+                    errors.append(InvariantError("drain_concurrent 超时"))
+                    return
+                unit, busy = self._take_unit(gids)
+                if unit is None:
+                    if not busy:
+                        return                    # 无活且无在途 → 收工
+                    time.sleep(poll)
+                    continue
+                try:
+                    self._run_unit(unit)
+                except BaseException as exc:       # noqa: BLE001
+                    errors.append(exc)
+                    return
+
+        threads = [threading.Thread(target=worker, daemon=True, name=f"nf-{i}")
+                   for i in range(workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=timeout)
+        if errors:
+            raise errors[0]
 
     # ---- Strategy：input policy -> evaluator -> output policy --------------
 
@@ -559,17 +964,86 @@ class Runtime:
             return [by_ep[ep][0] for ep in required]
         return [next(iter(by_ep.values()))[0]]
 
-    def _handle_strategy(self, inst, node_id, node, batch) -> None:
+    # ---- evaluator 守门（第一不变量在策略节点上的落点）---------------------
+
+    #: evaluator 允许返回的顶层键。模型驱动时更窄，见 _guard_decision。
+    #: 内核注入的工具名，卡片不得占用（#8）
+    KERNEL_TOOL_NAMES = frozenset({"emit", "read_artifact", "publish", "spawn"})
+
+    DECISION_KEYS = frozenset({"emit", "items", "annotate"})
+    MODEL_DECISION_KEYS = frozenset({"emit"})
+
+    def _guard_decision(self, node, policy, decision, *, trusted: bool):
+        """校验 evaluator 的返回，拒绝一切未声明的东西。
+
+        受信 handler（我们自己写的 Python）可返回三种键；
+        **模型驱动的 evaluator 只能返回 `emit`** —— `items` 会实例化子容器、
+        `annotate` 会写版本锚点，都不是"从已声明选项中选择"。
+        """
+        allowed_keys = self.DECISION_KEYS if trusted else self.MODEL_DECISION_KEYS
+        if not isinstance(decision, Mapping):
+            raise InvariantError(f"evaluator 必须返回映射，得到 {type(decision).__name__}")
+        unknown = set(decision) - allowed_keys
+        if unknown:
+            raise InvariantError(
+                f"evaluator 返回了不允许的字段：{sorted(unknown)}；"
+                f"允许：{sorted(allowed_keys)}"
+                + ("" if trusted else "（模型驱动的 evaluator 只能选择端口，不能构造）")
+            )
+
+        declared = set(node.get("endpoints", {}))
+        emit = decision.get("emit") or {}
+        if not isinstance(emit, Mapping):
+            raise InvariantError("decision.emit 必须是 {port: payload}")
+        bad = set(emit) - declared
+        if bad:
+            raise InvariantError(
+                f"evaluator 选择了未声明的端口：{sorted(bad)}；可用：{sorted(declared)}"
+            )
+
+        items = decision.get("items") or []
+        if items:
+            out_policy = policy.get("output", {})
+            if out_policy.get("mode") != "FANOUT_TO_SLOT":
+                raise InvariantError("policy 未声明 FANOUT_TO_SLOT，不得返回 items")
+            if not isinstance(items, (list, tuple)):
+                raise InvariantError("decision.items 必须是列表")
+            cap = out_policy.get("max_items", self.default_max_fanout)
+            if len(items) > cap:
+                raise InvariantError(f"fan-out 数量 {len(items)} 超过上限 {cap}")
+
+        ann = decision.get("annotate")
+        if ann is not None:
+            if not isinstance(ann, Mapping):
+                raise InvariantError("decision.annotate 必须是映射")
+            unknown = set(ann) - {"object_refs", "fields"}
+            if unknown:
+                raise InvariantError(f"annotate 含未声明字段：{sorted(unknown)}")
+            for name, ref in (ann.get("object_refs") or {}).items():
+                oid, _, ver = str(ref).rpartition("@")
+                if not oid or not ver.isdigit():
+                    raise InvariantError(
+                        f"annotate.object_refs[{name!r}] = {ref!r} 不是精确版本引用"
+                        f"（不变量 V4，形如 plan@2）"
+                    )
+        return decision
+
+    def _handle_strategy(self, inst, node_id, node, batch, *,
+                         decision=None, trusted=True) -> None:
         tpl = self._templates[inst.template_ref]
         for m in batch:
             m.state = "CLAIMED"
         payloads = {m.target[2]: m.payload for m in batch}
-        evaluator = self._handlers.get(node.get("handler"))
-        decision = (
-            evaluator(payloads, self._node_ctx(inst, node_id)) if evaluator else {}
-        ) or {}
+        policy = self._policies[node["policy"]]
 
-        out_policy = self._policies[node["policy"]].get("output", {})
+        if decision is None:
+            evaluator = self._handlers.get(node.get("handler"))
+            decision = (
+                evaluator(payloads, self._node_ctx(inst, node_id)) if evaluator else {}
+            ) or {}
+        decision = self._guard_decision(node, policy, decision, trusted=trusted)
+
+        out_policy = policy.get("output", {})
         traversed: list[str] = []
         spawned: list[str] = []
         if out_policy.get("mode") == "FANOUT_TO_SLOT":
@@ -635,10 +1109,14 @@ class Runtime:
             msg.state = "QUEUED"          # 输入恢复，不制造永远等待的子调用
             raise InvariantError(f"bound child {child} is not OPEN")
         entry_node, entry_ep = slot["entry"].split(".")
+        exit_decl = slot.get("exit") or {}
+        exit_port = (exit_decl.get("endpoint", "").split(".")[-1]
+                     or None) if exit_decl else None
         self._new_message(
             (child, entry_node, entry_ep),
             msg.payload,
             callback=(inst.gid, node_id, msg.target[2]),
+            exit_port=exit_port,
         )
         return {}
 
@@ -659,7 +1137,7 @@ class Runtime:
                 for st in self._instances[child].nodes.values():
                     st.persistent.clear()
                 return child
-        child = self.instantiate(slot["template"], owner=inst.gid)
+        child = self.instantiate(slot["template"], owner=f"service:{inst.gid}")
         bucket.append(child)
         return child
 
@@ -694,9 +1172,10 @@ class Runtime:
         else:
             raise NotImplementedError(f"node kind not implemented yet: {kind}")
 
-        # reply 端口 + 原消息带 callback → 回投到已声明端点（不变量 M3）
-        if "reply" in outputs and msg.callback is not None:
-            self._new_message(msg.callback, outputs.pop("reply"), mkind="REPLY")
+        # 回程端口由 slot.exit 声明（#9）；未声明时退回 "reply" 兼容默认
+        back = msg.exit_port or "reply"
+        if back in outputs and msg.callback is not None:
+            self._new_message(msg.callback, outputs.pop(back), mkind="REPLY")
 
         for port, payload in outputs.items():
             traversed += self._route(inst, tpl, node_id, port, payload)
@@ -719,18 +1198,45 @@ class Runtime:
             ),
         )
 
+    def _validate_payload(self, ref, payload, *, where) -> None:
+        """只接受或拒绝，绝不暗中补字段（V3 那条老规矩）。"""
+        schema = self._contract(ref)
+        if schema is None:
+            return
+        if schema.get("type") == "object":
+            if not isinstance(payload, Mapping):
+                raise InvariantError(
+                    f"{where}：{ref} 要求对象，得到 {type(payload).__name__}")
+            missing = [k for k in schema.get("required", []) if k not in payload]
+            if missing:
+                raise InvariantError(f"{where}：{ref} 缺少必需字段 {missing}")
+            if schema.get("additionalProperties") is False:
+                extra = sorted(set(payload) - set(schema.get("properties", {})))
+                if extra:
+                    raise InvariantError(f"{where}：{ref} 不允许字段 {extra}")
+
     def _route(self, inst, tpl, node_id, port, payload) -> list[str]:
         src = f"{node_id}.{port}"
+        nodes = tpl.get("nodes", {})
         traversed = []
         for edge in tpl.get("edges", []):
             if edge["from"] != src:
                 continue
-            tgt_node, tgt_ep = edge["to"].split(".")
+            eid = edge.get("id", edge["from"] + "->" + edge["to"])
+            op = edge.get("operation", "PUSH")
+            tgt_node, tgt_ep = edge["to"].split(".", 1)
+
+            src_ref = self._endpoint_ref(nodes.get(node_id, {}), port, "emit", op)
+            tgt_ref = self._endpoint_ref(nodes.get(tgt_node, {}), tgt_ep, "receive", op)
+
             out = dict(payload) if isinstance(payload, Mapping) else payload
+            self._validate_payload(src_ref, out, where=f"边 {eid} 源端")
             if edge.get("servo"):
                 out = self._apply_servo(edge["servo"], out)
+            self._validate_payload(tgt_ref, out, where=f"边 {eid} 目标端（Servo 之后）")
+
             self._new_message((inst.gid, tgt_node, tgt_ep), out)
-            traversed.append(edge.get("id", edge["from"] + "->" + edge["to"]))
+            traversed.append(eid)
         return traversed
 
     _SERVO_OPS = {"set", "map", "drop"}
@@ -774,26 +1280,30 @@ class Runtime:
             return
         self.apply_execution(eid, result)
 
-    def _claim(self, inst, node_id, node, msgs) -> str:
+    def _claim(self, inst, node_id, node, msgs, *, spec_id=None) -> str:
         """commit A —— 锁定输入，写 RUNNING 记录，推进节点级版本。"""
         if self._backend is None:
             raise InvariantError("no execution backend configured")
         st = inst.nodes[node_id]
         # 休眠→唤醒时解析一次卡片版本，执行期间冻结
-        resolved = self._resolve_spec(node["spec"])
+        resolved = dict(self._resolve_spec(spec_id or node["spec"]))
+        # 卡片 + 输出契约 → system prompt 与工具全集（编译规则归内核）
+        prompt, tools = self._compile_agent_prompt(resolved, node)
+        resolved["systemPrompt"] = prompt
+        resolved["tools"] = tools
+        resolved["prefix_hash"] = self.prefix_fingerprint(resolved)
         ctx = InvocationContext(
             head=inst.head,
             messages=tuple(m.payload for m in msgs),
             tail=tuple(st.tail),
         )
-        st.last_context, st.last_spec = ctx, resolved
-        # 预算在调用**前**校验：超预算是编排面的错，不该丢给 harness 去压缩
+        # 预算在调用**前**处理：超预算是编排面的事，不该丢给 harness 去压缩
         budget = (node.get("limits") or {}).get("token_budget")
-        if budget is not None and self.estimate_tokens(ctx) > budget:
-            raise InvariantError(
-                f"context budget exceeded before invocation: "
-                f"{self.estimate_tokens(ctx)} > {budget}（图切分过粗）"
-            )
+        ctx, trims = self._fit_context(
+            ctx, budget, gid=inst.gid, node_id=node_id,
+            overhead=self.estimate_spec_tokens(resolved),
+        )
+        st.last_context, st.last_spec = ctx, resolved
         eid = self._nid("exec")
         req = ExecutionRequest(
             execution_id=eid,
@@ -812,7 +1322,7 @@ class Runtime:
         self._records[eid] = _Record(
             execution_id=eid, gid=inst.gid, node_id=node_id, status="RUNNING",
             claimed=tuple(m.mid for m in msgs), request=req,
-            base_node_version=st.version,
+            base_node_version=st.version, context_trims=tuple(trims),
         )
         return eid
 
@@ -878,6 +1388,7 @@ class Runtime:
                 "topic": next((m.topic for m in claimed if m.topic), None),
                 "edges_traversed": traversed, "usage": asdict(result.usage),
                 "produced": produced,
+                "context_trims": list(rec.context_trims),
                 "observations": list(result.observations),
                 "payload": rec.request.context.messages,
             },
@@ -888,11 +1399,64 @@ class Runtime:
             ),
         )
 
-    def _release(self, execution_id, status) -> None:
+    # ---- 错误分类与失败如何进入图（#7）-----------------------------------
+    #
+    #   CANCELLED / BUDGET  不可重试 —— 是意图，不是故障
+    #   INVALID_OUTPUT      执行面内已重试过，到这里算耗尽
+    #   FAILED              按 max_attempts 重试
+    #
+    # 重试耗尽后：若节点声明了 on_error 端点，错误**沿边进入图**，
+    # 由策略节点决定怎么办；否则消息进 FAILED 终态，不再被调度。
+
+    RETRYABLE = frozenset({"FAILED"})
+
+    def _release(self, execution_id, status, *, reason=None) -> None:
         rec = self._records[execution_id]
-        for mid in rec.claimed:
-            self._messages[mid].state = "QUEUED"       # 输入恢复，不丢工作
         rec.status = status
+        msgs = [self._messages[mid] for mid in rec.claimed]
+        if status == "CANCELLED":
+            for m in msgs:
+                m.state = "QUEUED"          # 取消是意图，工作留着
+            return
+
+        inst = self._instances[rec.gid]
+        node = self._templates[inst.template_ref]["nodes"][rec.node_id]
+        cap = (node.get("limits") or {}).get("max_attempts", self.default_max_attempts)
+        retryable = (reason or "FAILED") in self.RETRYABLE
+        for m in msgs:
+            m.attempts += 1
+
+        if retryable and all(m.attempts < cap for m in msgs):
+            for m in msgs:
+                m.state = "QUEUED"          # 还能再试
+            return
+
+        for m in msgs:
+            m.state = "FAILED"              # 终态，不再被调度
+        self._raise_into_graph(inst, rec.node_id, node, msgs,
+                               reason=reason or "FAILED", attempts=cap)
+
+    def _raise_into_graph(self, inst, node_id, node, msgs, *, reason, attempts) -> None:
+        """失败沿边进入图 —— 由策略节点决定怎么办，而不是静默消失。"""
+        payload = {
+            "error": reason,
+            "node": node_id,
+            "attempts": max((m.attempts for m in msgs), default=0),
+            "messages": [m.mid for m in msgs],
+        }
+        err_port = node.get("on_error")
+        tpl = self._templates[inst.template_ref]
+        traversed = []
+        if err_port:
+            traversed = self._route(inst, tpl, node_id, err_port, payload)
+        inst.seq += 1
+        self._append_object(
+            f"run/{inst.gid}",
+            {"seq": inst.seq, "node": node_id, "endpoint": None,
+             "failure": payload, "edges_traversed": traversed},
+            provenance=Provenance(graph_instance_id=inst.gid, node_id=node_id,
+                                  at_seq=inst.seq),
+        )
 
     def begin_execution(self, gid, node_id):
         """显式 claim（供调度器与测试分步驱动）。返回 (execution_id, request)。"""
@@ -919,19 +1483,22 @@ class Runtime:
         """崩溃接管：RUNNING 记录是唯一依据，输入退回 QUEUED 可被重新认领。"""
         stale = [r.execution_id for r in self._records.values() if r.status == "RUNNING"]
         for eid in stale:
-            self._release(eid, "FAILED")
+            self._release(eid, "FAILED", reason="FAILED")
         return stale
 
     def append_context_tail(self, gid: str, node_id: str, ref: str) -> None:
         """运行期发现的卡片追加到该实例的 tail。不回写模板。"""
         self._instances[gid].nodes[node_id].tail.append(ref)
 
-    def _authorize(self, inst, actor: str) -> None:
-        """actor 由可信边界注入，payload 不能自封身份。"""
-        if actor not in inst.controllers:
+    def _authorize(self, inst, actor) -> Principal:
+        """actor 由可信边界注入，payload 不能自封身份（#10）。"""
+        principal = Principal.parse(actor)
+        if str(principal) not in inst.controllers:
             raise AuthorizationError(
-                f"actor {actor!r} 无权控制 {inst.gid}；可信主体：{sorted(inst.controllers)}"
+                f"principal {principal} 无权控制 {inst.gid}；"
+                f"可信主体：{sorted(inst.controllers)}"
             )
+        return principal
 
     def control(self, gid, action, *, actor) -> None:
         """控制走授权路径并留下提交事实，不是旁路 API。"""
@@ -1022,7 +1589,11 @@ class Runtime:
             kind = ("run" if oid.startswith("run/")
                     else "annotation" if oid.startswith("annotation/")
                     else "object")
-        return self.store.put(oid, kind, body, provenance)
+        ov = self.store.put(oid, kind, body, provenance)
+        # 每条 RunSnapshot 恰好对应一次提交 —— 持久化挂在这里，一处覆盖全部提交路径
+        if kind == "run" and self.on_commit is not None:
+            self.on_commit(self, ov)
+        return ov
 
     def artifact_versions(self, oid) -> list[int]:
         return [ov.version for ov in self.store.history(oid)]
@@ -1036,7 +1607,70 @@ class Runtime:
 
     def estimate_tokens(self, ctx: InvocationContext) -> int:
         blob = "".join(str(x) for x in (ctx.head, ctx.messages, ctx.tail, ctx.transient))
-        return len(blob) // self.chars_per_token
+        return self.estimate_text_tokens(blob)
+
+    def estimate_text_tokens(self, text: str) -> int:
+        """粗略估算。CJK 与拉丁字符的 token 密度差好几倍，分开算。
+
+        系数由 `test_context_budget.py` 的校准用例对着真实 usage 量出来，
+        不是拍的。改系数前先跑那条。
+        """
+        cjk = sum(1 for ch in text if "㐀" <= ch <= "鿿"
+                  or "豈" <= ch <= "﫿"
+                  or "぀" <= ch <= "ヿ")
+        return int(cjk / self.cjk_chars_per_token
+                   + (len(text) - cjk) / self.chars_per_token)
+
+    # ---- 上下文预算：分配与降级 ------------------------------------------
+
+    def estimate_spec_tokens(self, spec: Mapping[str, Any]) -> int:
+        """system prompt 与工具 schema 也占输入预算 —— 漏算它们会系统性低估。"""
+        blob = str(spec.get("systemPrompt") or "")
+        blob += json.dumps(spec.get("tools") or [], ensure_ascii=False, default=repr)
+        return self.estimate_text_tokens(blob)
+
+    def _fit_context(self, ctx: InvocationContext, budget: int | None,
+                     *, gid: str, node_id: str, overhead: int = 0):
+        """把上下文裁到预算内。
+
+        **head 永不裁剪** —— 它是实例化时固定的引用，动它等于换任务。
+        head 自己就超预算 ⇒ 图切分过粗，直接失败，不要悄悄降级。
+
+        其余按 `truncation_order` 依次砍**最旧**的。每次裁剪产生一条告警，
+        与压缩同级 —— 都是"这个节点承担的任务过大"的信号。
+        """
+        if budget is None:
+            return ctx, []
+        head_only = InvocationContext(head=ctx.head)
+        head_tokens = self.estimate_tokens(head_only) + overhead
+        if head_tokens > budget:
+            raise InvariantError(
+                f"{gid}/{node_id}：head + spec 开销 {head_tokens} tokens 已超预算 {budget}；"
+                f"head 不可裁剪（图切分过粗，应拆分节点）"
+            )
+        trims: list[dict[str, Any]] = []
+        cur = ctx
+        for section in self.truncation_order:
+            keep = self.min_keep.get(section, 0)
+            while self.estimate_tokens(cur) + overhead > budget:
+                items = getattr(cur, section)
+                if len(items) <= keep:
+                    break
+                trims.append({
+                    "section": section,
+                    "dropped_index": len(trims),
+                    "approx_tokens": self.estimate_text_tokens(str(items[0])),
+                })
+                cur = replace(cur, **{section: tuple(items[1:])})   # 砍最旧
+            if self.estimate_tokens(cur) + overhead <= budget:
+                break
+        if self.estimate_tokens(cur) + overhead > budget:
+            raise InvariantError(
+                f"{gid}/{node_id}：裁到无可再裁仍超预算"
+                f"（{self.estimate_tokens(cur) + overhead} > {budget}，"
+                f"其中 spec 开销 {overhead}）"
+            )
+        return cur, trims
 
     def queue(self, topic_id) -> QueueView:
         if topic_id not in self._topics:
@@ -1065,13 +1699,24 @@ class Runtime:
         """压缩不是特性，是图切分错误的告警信号（FOUNDATION §1）。"""
         out = []
         for ov in self.store.history(f"run/{gid}"):
-            u = ov.body.get("usage")
+            body = ov.body
+            u = body.get("usage")
             if isinstance(u, Mapping) and u.get("compactions"):
                 out.append({
-                    "node": ov.body.get("node"),
-                    "execution": ov.body.get("execution"),
+                    "kind": "compaction",
+                    "node": body.get("node"),
+                    "execution": body.get("execution"),
                     "compactions": u["compactions"],
                     "reason": "上下文压缩发生 —— 该节点承担的任务过大，应拆分",
+                })
+            trims = body.get("context_trims") or []
+            if trims:
+                out.append({
+                    "kind": "truncation",
+                    "node": body.get("node"),
+                    "execution": body.get("execution"),
+                    "trims": list(trims),
+                    "reason": "为塞进预算裁剪了上下文 —— 与压缩同级的失败信号",
                 })
         return out
 

@@ -506,12 +506,17 @@ JSON 是**编译目标**，画布是可视化与人工调整面，助手 AI 也�
 7. ~~上下文裁剪与预算观测~~ ✅ —— 命题本身已可断言
 8. ~~控制面授权与终态~~ ✅
 
-**以下为剩余工作：**
+9. ~~实测 harness 待验证清单~~ ✅ pi 全中；另建对照组（见 `HARNESS_EVALUATION.md`）
+10. ~~实现第一个真 backend~~ ✅ `SubprocessBackend` + OpenAI 兼容 driver，
+    已用 DeepSeek `deepseek-v4-flash` 跑通真实图执行（`test_live_graph.py`，4 条，三轮稳定）
 
-9. **实测 opencode / pi 的 §4.3 待验证清单** ← 唯一的外部依赖，决定 backend 主路径
-10. 按实测结果实现第一个真 backend，替换 `MockExecutionBackend`
-11. 持久化：内存字典换 sqlite（`_records` / `_objects` / `_messages`）
-12. 真并发：当前调度单线程顺序执行，冲突域已按节点级设计，接线即可
+**以下为剩余工作：**
+11. ~~持久化~~ ✅ `nodeflow_persistence.py` —— 对象 append-only 增量写，运行状态每次提交
+    upsert，挂在 `Runtime.on_commit`。崩溃接管（帧 14）已是真能力（`test_persistence.py` S5）。
+    定义层刻意不落盘：由装配面重新注册，handler 本就是函数存不了。
+12. ~~真并发~~ ✅ `drain_concurrent(workers=N)` —— 调度拆成"锁内选取/claim"与
+    "锁外执行"两段；`test_concurrency.py` 8 条坐实了**冲突域节点级**这条设计
+    （N3 是 E5 的真线程版本：同容器两节点并发提交，无一被作废）
 13. 消息投递保证等级（至少一次？谁负责重投？）
 14. 装配面实体：卡片库、标签索引、发现服务
 15. JSON schema 与校验器（含 LLM 友好的错误信息）

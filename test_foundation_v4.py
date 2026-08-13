@@ -164,7 +164,7 @@ class TestAssetCards(FoundationTestCase):
         )
         self.rt.drain(env["coder2"], env["discovery"])
 
-        fresh = self.rt.instantiate(env["coder_template"], owner="system")
+        fresh = self.rt.instantiate(env["coder_template"], owner="system:core")
         self.assertEqual(self.rt.context_of(fresh, "agent").tail, ())
 
 
@@ -188,7 +188,7 @@ class TestEdgeOrchestration(FoundationTestCase):
             },
             "edges": [{"id": "e1", "from": "start.out", "to": "sink.io", "servo": "norm"}],
         })
-        job = self.rt.instantiate(tpl, owner="system")
+        job = self.rt.instantiate(tpl, owner="system:core")
         self.rt.send((job, "start", "io"), {"goal": "add export"})
         self.rt.drain(job)
 
@@ -208,7 +208,7 @@ class TestEdgeOrchestration(FoundationTestCase):
             },
             "edges": [{"id": "e1", "from": "start.out", "to": "sink.io", "servo": "evil"}],
         })
-        job = self.rt.instantiate(tpl, owner="system")
+        job = self.rt.instantiate(tpl, owner="system:core")
         self.rt.send((job, "start", "io"), {"x": 1})
         with self.assertRaises(InvariantError):
             self.rt.drain(job)
@@ -224,7 +224,7 @@ class TestEdgeOrchestration(FoundationTestCase):
             },
             "edges": [{"id": "e1", "from": "start.out", "to": "sink.io", "servo": "proj"}],
         })
-        job = self.rt.instantiate(tpl, owner="system")
+        job = self.rt.instantiate(tpl, owner="system:core")
         self.rt.send((job, "start", "io"), {"x": 1})
         with self.assertRaises(InvariantError):
             self.rt.drain(job)
@@ -296,7 +296,7 @@ class TestQueueIsIndependentIndex(FoundationTestCase):
         self.rt.register_handler("record", lambda p, c: c["state"].update({"last": p}) or {})
         self.rt.register_handler("noop", lambda p, c: {})
         tpl = self.rt.register_graph_template("with-metrics", _graph_with_unconnected_metrics())
-        job = self.rt.instantiate(tpl, owner="system")
+        job = self.rt.instantiate(tpl, owner="system:core")
         self.rt.register_topic("progress", request_contract={"type": "object"})
         self.rt.subscribe("progress", target=(job, "metrics", "io"))
 
@@ -314,8 +314,8 @@ class TestQueueIsIndependentIndex(FoundationTestCase):
         self.rt.register_handler("noop", lambda p, c: {})
         tpl = self.rt.register_graph_template("with-metrics", _graph_with_unconnected_metrics())
 
-        a = self.rt.instantiate(tpl, owner="job-a")
-        b = self.rt.instantiate(tpl, owner="job-b")
+        a = self.rt.instantiate(tpl, owner="service:job-a")
+        b = self.rt.instantiate(tpl, owner="service:job-b")
         self.rt.subscribe("progress", target=(a, "metrics", "io"))
         self.rt.subscribe("progress", target=(b, "metrics", "io"))
 
@@ -360,8 +360,8 @@ class TestQueueIsIndependentIndex(FoundationTestCase):
         self.rt.register_handler("record", lambda p, c: c["state"].update({"last": p}) or {})
         self.rt.register_handler("noop", lambda p, c: {})
         tpl = self.rt.register_graph_template("with-metrics", _graph_with_unconnected_metrics())
-        a = self.rt.instantiate(tpl, owner="job-a")
-        b = self.rt.instantiate(tpl, owner="job-b")
+        a = self.rt.instantiate(tpl, owner="service:job-a")
+        b = self.rt.instantiate(tpl, owner="service:job-b")
         self.rt.subscribe("progress", target=(a, "metrics", "io"))
         self.rt.subscribe("progress", target=(b, "metrics", "io"))
 
@@ -380,7 +380,7 @@ class TestQueueIsIndependentIndex(FoundationTestCase):
         """
         env = _three_coder_env(self.rt, self.backend)
         research_tpl = self.rt.register_graph_template("research-flow", _coder_template())
-        research = self.rt.instantiate(research_tpl, owner="job-b")
+        research = self.rt.instantiate(research_tpl, owner="service:job-b")
 
         for caller in (env["coder1"], research):
             self.rt.publish(
@@ -400,7 +400,7 @@ class TestQueueIsIndependentIndex(FoundationTestCase):
         self.rt.register_handler("record", lambda p, c: {})
         self.rt.register_handler("noop", lambda p, c: {})
         tpl = self.rt.register_graph_template("with-metrics", _graph_with_unconnected_metrics())
-        job = self.rt.instantiate(tpl, owner="system")
+        job = self.rt.instantiate(tpl, owner="system:core")
 
         before = list(self.rt._templates[tpl]["edges"])
         sid = self.rt.subscribe("progress", target=(job, "metrics", "io"))
@@ -438,7 +438,7 @@ class TestQueueIsIndependentIndex(FoundationTestCase):
                 "edges": [{"id": "e1", "from": "start.out", "to": "sink.io", "servo": "tag"}],
             },
         )
-        job = self.rt.instantiate(tpl, owner="system")
+        job = self.rt.instantiate(tpl, owner="system:core")
         self.rt.send((job, "start", "io"), {"x": 1})
         self.rt.drain(job)
 
@@ -499,7 +499,7 @@ class TestSubflowReuse(FoundationTestCase):
     def test_D4_service_instance_survives_caller_close(self):
         """帧 6 推论：调用方关闭后，服务实例仍 OPEN，可继续服务他人。"""
         env = _three_coder_env(self.rt, self.backend)
-        self.rt.control(env["coder2"], "close", actor="system")
+        self.rt.control(env["coder2"], "close", actor="system:core")
         self.assertEqual(self.rt.graph_status(env["discovery"]), "OPEN")
 
     def test_D5_reference_node_has_no_static_edge_to_service(self):
@@ -524,7 +524,7 @@ class TestSubflowReuse(FoundationTestCase):
         self.rt.drain()
 
         child = self.rt.children_of(job, "reviewers")[0]
-        self.rt.control(child, "close", actor="system")
+        self.rt.control(child, "close", actor="system:core")
 
         self.rt.send((job, "caller", "io"), {"round": 1})
         with self.assertRaises(InvariantError):
@@ -811,7 +811,7 @@ class TestControlPlane(FoundationTestCase):
         self.assertEqual(self.rt.graph_status(job), "OPEN")
 
         before = len(self.rt.artifact_versions(f"run/{job}"))
-        self.rt.control(job, "close", actor="job")
+        self.rt.control(job, "close", actor="service:job")
         self.assertEqual(self.rt.graph_status(job), "CLOSED")
         # 不是旁路：状态变更本身留下了一条提交事实
         after = self.rt.artifact_versions(f"run/{job}")
@@ -824,7 +824,7 @@ class TestControlPlane(FoundationTestCase):
         self.rt.send((job, "caller", "io"), {"round": 0})
         self.rt.drain()
 
-        self.rt.control(job, "close", actor="job")
+        self.rt.control(job, "close", actor="service:job")
 
         with self.assertRaises(InvariantError):
             self.rt.send((job, "caller", "io"), {"round": 1})
@@ -872,7 +872,7 @@ class TestObjectStore(FoundationTestCase):
         self.rt.send((job, "worker", "io"), {"t": 1})
         self.rt.drain(job)
 
-        self.rt.control(job, "close", actor="job")
+        self.rt.control(job, "close", actor="service:job")
         self.assertEqual(self.rt.graph_status(job), "CLOSED")
         # 实例已终态，产物照常可读
         self.assertEqual(self.rt.store.get("plan", 1).body, {"n": 1})
@@ -999,7 +999,7 @@ def _fanout_env(rt: Runtime, backend: MockExecutionBackend, *, instantiation="PE
             }
         },
     })
-    return rt.instantiate(tpl, owner="job"), {"coder_template": coder_tpl}
+    return rt.instantiate(tpl, owner="service:job"), {"coder_template": coder_tpl}
 
 
 def _agent_env(rt: Runtime, backend: MockExecutionBackend, *, head=(), budget=None) -> str:
@@ -1018,7 +1018,7 @@ def _agent_env(rt: Runtime, backend: MockExecutionBackend, *, head=(), budget=No
         "edges": [{"id": "e1", "from": "worker.out", "to": "sink.io"}],
     })
     backend.on("worker", lambda req: _ok(req, emissions=(("out", {"done": True}),)))
-    return rt.instantiate(tpl, owner="job", params={"context_head": list(head)})
+    return rt.instantiate(tpl, owner="service:job", params={"context_head": list(head)})
 
 
 def _approval_env(rt: Runtime, backend: MockExecutionBackend) -> str:
@@ -1051,7 +1051,7 @@ def _approval_env(rt: Runtime, backend: MockExecutionBackend) -> str:
                    artifacts=(("plan", "plan", {"plan": ["a", "b"]}),))
 
     backend.on("planner", planner)
-    return rt.instantiate(tpl, owner="job", controllers=("human:alice",))
+    return rt.instantiate(tpl, owner="service:job", controllers=("human:alice",))
 
 
 def _rework_env(rt: Runtime, backend: MockExecutionBackend) -> str:
@@ -1093,7 +1093,7 @@ def _rework_env(rt: Runtime, backend: MockExecutionBackend) -> str:
         ],
     })
     backend.on("coder", lambda req: _ok(req, emissions=(("out", {"built": True}),)))
-    return rt.instantiate(tpl, owner="job", params={"context_head": ["repo/survey@1"]})
+    return rt.instantiate(tpl, owner="service:job", params={"context_head": ["repo/survey@1"]})
 
 
 def _two_agent_env(rt: Runtime, backend: MockExecutionBackend) -> str:
@@ -1115,7 +1115,7 @@ def _two_agent_env(rt: Runtime, backend: MockExecutionBackend) -> str:
     })
     backend.on("a", lambda req: _ok(req, emissions=(("out", {"from": "a"}),)))
     backend.on("b", lambda req: _ok(req, emissions=(("out", {"from": "b"}),)))
-    return rt.instantiate(tpl, owner="job")
+    return rt.instantiate(tpl, owner="service:job")
 
 
 def _subflow_env(rt: Runtime, *, instantiation: str) -> str:
@@ -1146,7 +1146,7 @@ def _subflow_env(rt: Runtime, *, instantiation: str) -> str:
             }
         },
     })
-    return rt.instantiate(tpl, owner="job")
+    return rt.instantiate(tpl, owner="service:job")
 
 
 def _join_env(rt: Runtime) -> str:
@@ -1167,7 +1167,7 @@ def _join_env(rt: Runtime) -> str:
         },
         "edges": [{"id": "e1", "from": "join.out", "to": "sink.io"}],
     })
-    return rt.instantiate(tpl, owner="job")
+    return rt.instantiate(tpl, owner="service:job")
 
 
 def _loop_env(rt: Runtime, *, rounds: int) -> str:
@@ -1201,7 +1201,7 @@ def _loop_env(rt: Runtime, *, rounds: int) -> str:
             {"id": "e4", "from": "loop.done", "to": "end.io"},
         ],
     })
-    return rt.instantiate(tpl, owner="job")
+    return rt.instantiate(tpl, owner="service:job")
 
 
 def _three_coder_env(rt: Runtime, backend: MockExecutionBackend) -> dict:
@@ -1223,8 +1223,8 @@ def _three_coder_env(rt: Runtime, backend: MockExecutionBackend) -> dict:
     coder_tpl = rt.register_graph_template("coder-flow", _coder_template())
     disc_tpl = rt.register_graph_template("discovery-svc", _discovery_template())
 
-    discovery = rt.instantiate(disc_tpl, owner="system")
-    coders = [rt.instantiate(coder_tpl, owner="job") for _ in range(3)]
+    discovery = rt.instantiate(disc_tpl, owner="system:core")
+    coders = [rt.instantiate(coder_tpl, owner="service:job") for _ in range(3)]
 
     def coder_agent(req):
         # 收到发现服务回投的卡片 → 追加到本实例 tail（不回写模板）

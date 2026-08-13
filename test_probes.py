@@ -19,8 +19,8 @@
 
 from __future__ import annotations
 
+import json
 import os
-import sys
 import threading
 import time
 import unittest
@@ -83,14 +83,20 @@ class ProbeSuite:
         history = [
             {"role": "user", "content": "之前发生过的第一轮"},
             {"role": "assistant", "content": "之前的回答"},
-            {"role": "user", "content": "接着这个上下文继续"},
+            # 末轮带上本次任务指令 —— 真实编排下编译出的上下文也是这个形状
+            {"role": "user", "content":
+             '接着上面的上下文继续。调用 emit，port 用 out，payload 填 {"ok": true}。'},
         ]
         be = self.make_backend()
         res = be.run(self.request(messages=history, echoContext=True,
                                   emit=[{"port": "out", "payload": {"ok": True}}]))
-        self.assertEqual(res.termination, "DONE")
+        # 断言"调用走通了"，而非"模型一定照做"——后者是模型顺从度，不是 backend 判据
+        self.assertNotEqual(
+            res.termination, "FAILED",
+            f"backend 无法处理外来历史：{res.diagnostics.get('error')}",
+        )
         echoed = res.diagnostics.get("received_context")
-        if echoed is not None:                       # 假 driver 能自证
+        if echoed is not None:                       # driver 能自证时做强断言
             self.assertEqual(echoed["messages"], history)
 
     # ---- P2 ★A3 -----------------------------------------------------------
@@ -154,10 +160,12 @@ class ProbeSuite:
 
     # ---- P4 ○B6 -----------------------------------------------------------
 
-    def test_P4_internal_tools_are_observable_even_when_ungated(self):
-        """○B6：拦不住的内部 tool 也必须能观测到，落进 RunSnapshot 供展示。
+    def test_P4_tool_calls_are_all_labelled_observable(self):
+        """○B6：**每一次**工具调用都必须可观测且带 gated 标注。
 
-        控制不了没关系；看不见才是问题。
+        断言的是**标注属性**，不是"必须存在内部 tool"——
+        完全受控的 backend（如对照组）压根没有内部 tool，那是好事，跳过即可。
+        控制不了没关系；看不见、或看得见却分不清能不能拦，才是问题。
         """
         be = self.make_backend()
         res = be.run(self.request(
@@ -165,12 +173,13 @@ class ProbeSuite:
                        {"name": "internal_todo", "gated": False}],
             emit=[{"port": "out", "payload": {}}],
         ))
-        names = [o.get("name") for o in res.observations if o.get("kind") == "tool_call"]
-        if not names:
-            self.skipTest("该 backend 未产生工具调用；真实模型下需人工复核")
-        self.assertIn("internal_todo", names)
-        ungated = [o for o in res.observations if o.get("gated") is False]
-        self.assertTrue(ungated, "拦不住的调用必须标记 gated:false，而不是隐藏")
+        calls = [o for o in res.observations if o.get("kind") == "tool_call"]
+        if not calls:
+            self.skipTest("本轮未产生工具调用")
+        for c in calls:
+            self.assertIn("gated", c, f"工具调用 {c.get('name')!r} 未标注 gated")
+        if not any(c.get("gated") is False for c in calls):
+            self.skipTest("该 backend 无不可干预的内部 tool（完全受控）")
 
     # ---- P5 ◇C1 -----------------------------------------------------------
 
@@ -205,20 +214,40 @@ class ProbeSuite:
 
     # ---- P7 无状态 --------------------------------------------------------
 
-    def test_P7_same_request_twice_is_equivalent(self):
-        """无状态：同一 request 连跑两次应等价，不得依赖上次留下的隐藏状态。"""
+    def test_P7_no_hidden_state_between_runs(self):
+        """无状态：第二次调用不得被第一次影响。
+
+        **不断言输出内容相等** —— 真实模型有随机性，同一 request 两次得到
+        `{"message": …}` 和 `{"response": …}` 是正常的，不是隐藏状态。
+
+        断言的是**信息不泄漏**：第一次告诉它的暗号，第二次必须不知道。
+        泄漏 ⇒ backend 在背着我们维护历史，违反 ★D1。
+        """
         be = self.make_backend()
-        mk = lambda: self.request(                       # noqa: E731
-            messages=[{"role": "user", "content": "同一个问题"}],
-            echoContext=True, emit=[{"port": "out", "payload": {"n": 1}}],
+        secret = "XYZZY-7419"
+
+        be.run(self.request(
+            messages=[{"role": "user", "content":
+                       f"记住暗号 {secret}。然后调用 emit，port 用 out，"
+                       f'payload 填 {{"ack": true}}。'}],
+            emit=[{"port": "out", "payload": {"ack": True}}],
+        ))
+        res = be.run(self.request(
+            messages=[{"role": "user", "content":
+                       "上一轮我告诉过你一个暗号，是什么？调用 emit，port 用 out，"
+                       'payload 的 secret 字段填那个暗号；如果你并不知道，填 "unknown"。'}],
+            emit=[{"port": "out", "payload": {"secret": "unknown"}}],
+        ))
+
+        blob = json.dumps([p for _, p in res.emissions], ensure_ascii=False)
+        self.assertNotIn(
+            secret, blob,
+            "第二次调用拿到了第一次的内容 —— backend 在背着我们维护历史（违反 ★D1）",
         )
-        a, b = be.run(mk()), be.run(mk())
-        self.assertEqual(a.emissions, b.emissions)
-        self.assertEqual(a.termination, b.termination)
-        if a.diagnostics.get("received_context") is not None:
-            self.assertEqual(
-                a.diagnostics["received_context"], b.diagnostics["received_context"]
-            )
+        # 弱断言：两次调用收到的上下文互不污染
+        if res.diagnostics.get("received_context") is not None:
+            received = json.dumps(res.diagnostics["received_context"], ensure_ascii=False)
+            self.assertNotIn(secret, received)
 
 
 def _counter():

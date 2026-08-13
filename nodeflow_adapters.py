@@ -148,6 +148,7 @@ class SubprocessBackend(ExecutionBackend):
         self.on_event = on_event
         self.timeout = timeout
         self.events: list[tuple[str, Mapping[str, Any]]] = []
+        self.seen: list[ExecutionRequest] = []      # 与 MockExecutionBackend 对齐
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._cancelled: set[str] = set()
@@ -200,6 +201,7 @@ class SubprocessBackend(ExecutionBackend):
     # ---- ExecutionBackend -------------------------------------------------
 
     def run(self, request: ExecutionRequest) -> ExecutionResult:
+        self.seen.append(request)
         proc = self._ensure()
         self._send(proc, {"type": "run", "request": request_to_json(request)})
 
@@ -246,6 +248,15 @@ class SubprocessBackend(ExecutionBackend):
         proc.stdin.flush()
 
     # ---- 观测投影 ---------------------------------------------------------
+
+    def last_request_for(self, spec_id: str) -> ExecutionRequest:
+        for req in reversed(self.seen):
+            if req.agent_spec.get("spec_id") == spec_id:
+                return req
+        raise KeyError(spec_id)
+
+    def requests_for(self, spec_id: str) -> list[ExecutionRequest]:
+        return [r for r in self.seen if r.agent_spec.get("spec_id") == spec_id]
 
     def tool_calls(self) -> list[Mapping[str, Any]]:
         return [b for k, b in self.events if k == "observation" and b.get("kind") == "tool_call"]

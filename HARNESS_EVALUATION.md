@@ -103,6 +103,25 @@ harness 自己的 session 存储**保留作为调试与审计兜底**，但**不
 
 `✅` 已确认 ｜ `⚠️` 部分/有条件 ｜ `❔` 待实测 ｜ `❌` 不满足
 
+| # | 判据 | **直连兼容端点**<br>（对照组·已实测） | **pi** | **Claude Agent SDK** | **Claude Code CLI** | **Codex** |
+|---|---|---|---|---|---|---|
+| ★A1 | system prompt 可替换 | ✅ P3 | ✅ | ✅ | ⚠️ | ❔ |
+| ★A2 | messages 可完全提供 | ✅ P1 | ✅ | ❔ | ❌ | ❔ |
+| ★A3 | 可禁用自动压缩 | ✅ P2（恒不压缩） | ✅ | ❔ | ❔ | ❔ |
+| ○A4 | 压缩可观测 | ✅ 恒为 0 | ✅ | ⚠️ | ⚠️ | ❔ |
+| ◇B1 | 工具集精确限定 | ✅ P3 | ✅ | ✅ | ⚠️ | ❔ |
+| ◇B2 | 调用前拦截 + 理由回传 | ✅ 两处拦截 | ✅ | ✅ | ⚠️ | ❔ |
+| ○B6 | 内部 tool 可观测 | ➖ 无内部 tool（完全受控） | ❔ | ❔ | ❔ | ❔ |
+| ◇C1 | 取消 | ✅ P5 | ✅ | ✅ | ⚠️ | ❔ |
+| ★D1 | 可无状态调用 | ✅ P6 + P7 | ✅ | ❔ | ❌ | ❔ |
+| ◇D3 | 供应商中立 | ✅ 换 base_url 即可 | ✅ | ❌ | ❌ | ❌ |
+
+**对照组实测：DeepSeek `deepseek-v4-flash`，8 条探针 6 过 2 合理跳过，连续三轮稳定。**
+跳过的两条是 `P2b`（受控 backend 无法被强制压缩）与 `P4`（完全受控，没有不可干预的内部
+tool）——都是"该 backend 不具备该情形"，不是缺陷。
+
+下表为详细判据，各候选列待补。
+
 | # | 判据 | **pi** | **Claude Agent SDK** | **Claude Code CLI** | **Codex** |
 |---|---|---|---|---|---|
 | ★A1 | system prompt 可替换 | ✅ `agent.state.systemPrompt` | ✅ | ⚠️ `--system-prompt` / `--append-system-prompt` | ❔ |
@@ -266,6 +285,24 @@ python -m unittest test_probes -v
 npm i @earendil-works/pi-agent-core @earendil-works/pi-ai
 PROBE_PI=1 python -m unittest test_probes.TestPi -v
 ```
+
+### 6.0 对照组已跑通，并抓出三个问题
+
+用 DeepSeek `deepseek-v4-flash` 跑对照组，**在测任何真实候选之前**就暴露了三处，全是
+**探针自身的缺陷**，不是 backend 的：
+
+| 症状 | 真因 | 修正 |
+|---|---|---|
+| P4 失败：`'internal_todo' not found in ['emit']` | 探针断言"必须存在不可干预的内部 tool"。完全受控的 backend 压根没有——**那是优点** | 改为断言**标注属性**：每次调用都必须带 `gated`；无 ungated 调用则 skip |
+| P7 失败：`{'message': …}` ≠ `{'response': …}` | 断言两次输出内容相等。真实模型有随机性，这是**顺从度差异不是隐藏状态** | 改为**信息不泄漏**测试：第一轮给暗号，第二轮问暗号，答得出才算有隐藏状态 |
+| P1 间歇失败（约 1/3 概率） | 断言 `termination == "DONE"`，但传入的外来历史里**没有让模型调 emit 的指令**——模型爱调不调 | 末轮补上任务指令；断言放宽为 `!= "FAILED"`（走通即可，顺从度不是 backend 判据） |
+
+**这正是设立对照组的目的**：先校准尺子，再量候选。若这三条在完全受控的 backend 上都过不了，
+拿去量 pi / Claude 只会得到错误结论。
+
+一条方法论：**真实模型上的探针天然 flaky**。断言必须落在
+*backend 的能力* 上（能否接受外来历史、会不会偷偷压缩、有没有隐藏状态），
+不能落在 *模型的顺从度* 上（有没有照指令调工具）。
 
 ### 6.1 探针清单
 
