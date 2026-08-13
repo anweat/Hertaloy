@@ -1,0 +1,14 @@
+# 密钥与本地配置 —— 绝不入库
+config/*.local.json
+.env
+.env.local
+*.key
+
+# Node
+node_modules/
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/

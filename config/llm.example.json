@@ -1,0 +1,7 @@
+{
+  "_comment": "复制为 llm.local.json 并填入真实 key。只有 llm.local.json 在 .gitignore 中；本文件会入库，切勿在此填写真实 key。",
+  "base_url": "https://api.deepseek.com/v1",
+  "api_key": "REPLACE_ME",
+  "model": "deepseek-v4-flash",
+  "max_iterations": 6
+}
