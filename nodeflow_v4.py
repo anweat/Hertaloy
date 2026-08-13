@@ -14,6 +14,7 @@ import copy
 import hashlib
 import itertools
 import json
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass, field, replace
@@ -780,7 +781,10 @@ class Runtime:
             return self._instantiate_locked(template_ref, owner, params, controllers)
 
     def _instantiate_locked(self, template_ref, owner, params, controllers) -> str:
-        tpl = self._templates[template_ref]
+        tpl = self._templates.get(template_ref)
+        if tpl is None:
+            raise InvariantError(
+                f"未知模板：{template_ref}；模板必须先注册（register_graph_template）")
         gid = self._nid("gi")
         inst = _Instance(
             gid=gid,
@@ -809,15 +813,17 @@ class Runtime:
         return gid
 
     def subscribe(self, topic_id, *, target) -> str:
-        if topic_id not in self._topics:
-            raise InvariantError(f"unknown topic: {topic_id}")
-        sid = self._nid("sub")
-        self._subs.setdefault(topic_id, []).append((sid, target))
-        return sid
+        with self._lock:
+            if topic_id not in self._topics:
+                raise InvariantError(f"unknown topic: {topic_id}")
+            sid = self._nid("sub")
+            self._subs.setdefault(topic_id, []).append((sid, target))
+            return sid
 
     def unsubscribe(self, subscription_id) -> None:
-        for topic, entries in self._subs.items():
-            self._subs[topic] = [e for e in entries if e[0] != subscription_id]
+        with self._lock:
+            for topic, entries in self._subs.items():
+                self._subs[topic] = [e for e in entries if e[0] != subscription_id]
 
     # ---- 驱动 -------------------------------------------------------------
 
@@ -825,30 +831,36 @@ class Runtime:
         self._backend = backend
 
     def send(self, target, payload) -> str:
-        gid = target[0]
-        if self._instances[gid].status != "OPEN":
-            raise InvariantError("instance is not OPEN")
-        return self._new_message(target, payload)
-
-    def publish(self, topic_id, payload, *, sender=None, callback=None) -> str:
-        if topic_id not in self._topics:
-            raise InvariantError(f"unknown topic: {topic_id}")
-        if isinstance(payload, Mapping) and "edgeId" in payload:
-            raise InvariantError("消息不得指定下游边（不变量 M1）")
-        ids = []
-        for _sid, target in self._subs.get(topic_id, []):
+        with self._lock:
             gid = target[0]
             inst = self._instances.get(gid)
-            if inst is None or inst.status == "CLOSED":
-                # CLOSED 是终态：投递只会制造永不到达的死信，
-                # 静默排队会让 queue 深度永远非零 —— 跳过。
-                # PAUSED 仍接收（恢复后会消费），仅 CLOSED 被过滤。
-                continue
-            # 每个订阅者拿独立 payload 副本
-            ids.append(
-                self._new_message(target, dict(payload), callback=callback, topic=topic_id)
-            )
-        return ids[0] if ids else ""
+            if inst is None:
+                raise InvariantError(f"未知实例：{gid}")
+            if inst.status != "OPEN":
+                raise InvariantError(f"instance {gid} is not OPEN（{inst.status}）")
+            return self._new_message(target, payload)
+
+    def publish(self, topic_id, payload, *, sender=None, callback=None) -> str:
+        with self._lock:
+            if topic_id not in self._topics:
+                raise InvariantError(f"unknown topic: {topic_id}")
+            if isinstance(payload, Mapping) and "edgeId" in payload:
+                raise InvariantError("消息不得指定下游边（不变量 M1）")
+            ids = []
+            for _sid, target in self._subs.get(topic_id, []):
+                gid = target[0]
+                inst = self._instances.get(gid)
+                if inst is None or inst.status == "CLOSED":
+                    # CLOSED 是终态：投递只会制造永不到达的死信，
+                    # 静默排队会让 queue 深度永远非零 —— 跳过。
+                    # PAUSED 仍接收（恢复后会消费），仅 CLOSED 被过滤。
+                    continue
+                # 每个订阅者拿独立 payload 副本
+                ids.append(
+                    self._new_message(target, dict(payload),
+                                      callback=callback, topic=topic_id)
+                )
+            return ids[0] if ids else ""
 
     def _new_message(self, target, payload, *, callback=None, topic=None,
                      mkind="DATA", exit_port=None) -> str:
@@ -1238,6 +1250,25 @@ class Runtime:
             for m in self._messages.values()
         )
 
+    def _emit_reply(self, inst, gid, node_id, msg, payload, *, where) -> None:
+        """回程 REPLY —— 终态气密（R13）：callback 目标已非 OPEN 时
+        不得滞留死信；跳过并留下失败痕迹，因果可审计。"""
+        cb_gid = msg.callback[0]
+        cb_inst = self._instances.get(cb_gid)
+        if cb_inst is None or cb_inst.status != "OPEN":
+            inst.seq += 1
+            self._append_object(
+                f"run/{gid}",
+                {"seq": inst.seq, "node": node_id, "endpoint": msg.target[2],
+                 "dropped_reply": {"to": cb_gid, "reason": (
+                     "unknown" if cb_inst is None else cb_inst.status)},
+                 "payload": payload},
+                provenance=Provenance(graph_instance_id=gid, node_id=node_id,
+                                      at_seq=inst.seq),
+            )
+            return
+        self._new_message(msg.callback, payload, mkind="REPLY")
+
     def _handle(self, msg: _Message) -> None:
         gid, node_id, ep = msg.target
         inst = self._instances[gid]
@@ -1272,7 +1303,8 @@ class Runtime:
         # 回程端口由 slot.exit 声明（#9）；未声明时退回 "reply" 兼容默认
         back = msg.exit_port or "reply"
         if back in outputs and msg.callback is not None:
-            self._new_message(msg.callback, outputs.pop(back), mkind="REPLY")
+            self._emit_reply(inst, gid, node_id, msg,
+                             outputs.pop(back), where=f"{gid}/{node_id}")
 
         for port, payload in outputs.items():
             traversed += self._route(inst, tpl, node_id, port, payload)
@@ -1311,6 +1343,22 @@ class Runtime:
                 extra = sorted(set(payload) - set(schema.get("properties", {})))
                 if extra:
                     raise InvariantError(f"{where}：{ref} 不允许字段 {extra}")
+            # 取值维度（R10）：enum / const / pattern —— 只接受或拒绝
+            for k, ps in (schema.get("properties") or {}).items():
+                if k in payload and isinstance(ps, Mapping):
+                    self._check_value(ps, payload[k], where=f"{where}.{k}")
+
+    def _check_value(self, ps: Mapping[str, Any], value: Any, *, where: str) -> None:
+        """字段取值校验（enum/const/pattern）。"""
+        if "enum" in ps and value not in ps["enum"]:
+            raise InvariantError(
+                f"{where}：值 {value!r} 不在枚举 {ps['enum']} 内")
+        if "const" in ps and value != ps["const"]:
+            raise InvariantError(f"{where}：值必须等于 {ps['const']!r}")
+        if "pattern" in ps:
+            if not re.search(str(ps["pattern"]), str(value)):
+                raise InvariantError(
+                    f"{where}：{value!r} 不匹配 pattern {ps['pattern']!r}")
 
     def _route(self, inst, tpl, node_id, port, payload) -> list[str]:
         """边路由 —— 两段式，fan-out 原子（边界 B5b）。
@@ -1494,7 +1542,14 @@ class Runtime:
         if "reply" in outputs:
             cb = next((m.callback for m in claimed if m.callback), None)
             if cb is not None:
-                self._new_message(cb, outputs.pop("reply"), mkind="REPLY")
+                payload = outputs.pop("reply")
+                cb_inst = self._instances.get(cb[0])
+                if cb_inst is None or cb_inst.status != "OPEN":
+                    # 终态气密（R13）：目标已关闭/不存在，不滞留死信
+                    raise InvariantError(
+                        f"REPLY 目标 {cb[0]} 已 {cb_inst.status if cb_inst else '不存在'}，"
+                        f"拒绝提交回程消息")
+                self._new_message(cb, payload, mkind="REPLY")
         for port, payload in outputs.items():
             traversed += self._route(inst, tpl, rec.node_id, port, payload)
 
@@ -1583,35 +1638,40 @@ class Runtime:
 
     def begin_execution(self, gid, node_id):
         """显式 claim（供调度器与测试分步驱动）。返回 (execution_id, request)。"""
-        inst = self._instances[gid]
-        node = self._templates[inst.template_ref]["nodes"][node_id]
-        pending = [
-            m for m in self._messages.values()
-            if m.state == "QUEUED" and m.target[0] == gid and m.target[1] == node_id
-        ]
-        if not pending:
-            return None
-        eid = self._claim(inst, node_id, node, pending[:1])
-        return eid, self._records[eid].request
+        with self._lock:
+            inst = self._instances[gid]
+            node = self._templates[inst.template_ref]["nodes"][node_id]
+            pending = [
+                m for m in self._messages.values()
+                if m.state == "QUEUED" and m.target[0] == gid and m.target[1] == node_id
+            ]
+            if not pending:
+                return None
+            eid = self._claim(inst, node_id, node, pending[:1])
+            return eid, self._records[eid].request
 
     def cancel_execution(self, execution_id) -> None:
-        rec = self._records.get(execution_id)
-        if rec is None or rec.status != "RUNNING":
-            return
-        if self._backend is not None:
-            self._backend.cancel(execution_id)
-        self._release(execution_id, "CANCELLED")
+        with self._lock:
+            rec = self._records.get(execution_id)
+            if rec is None or rec.status != "RUNNING":
+                return
+            if self._backend is not None:
+                self._backend.cancel(execution_id)
+            self._release(execution_id, "CANCELLED")
 
     def reclaim_stale_executions(self) -> list[str]:
         """崩溃接管：RUNNING 记录是唯一依据，输入退回 QUEUED 可被重新认领。"""
-        stale = [r.execution_id for r in self._records.values() if r.status == "RUNNING"]
-        for eid in stale:
-            self._release(eid, "FAILED", reason="FAILED")
-        return stale
+        with self._lock:
+            stale = [r.execution_id for r in self._records.values()
+                     if r.status == "RUNNING"]
+            for eid in stale:
+                self._release(eid, "FAILED", reason="FAILED")
+            return stale
 
     def append_context_tail(self, gid: str, node_id: str, ref: str) -> None:
         """运行期发现的卡片追加到该实例的 tail。不回写模板。"""
-        self._instances[gid].nodes[node_id].tail.append(ref)
+        with self._lock:
+            self._instances[gid].nodes[node_id].tail.append(ref)
 
     def _authorize(self, inst, actor) -> Principal:
         """actor 由可信边界注入，payload 不能自封身份（#10）。"""
@@ -1625,57 +1685,61 @@ class Runtime:
 
     def control(self, gid, action, *, actor) -> None:
         """控制走授权路径并留下提交事实，不是旁路 API。"""
-        inst = self._instances[gid]
-        self._authorize(inst, actor)
-        if action == "close":
-            inst.status = "CLOSED"
-        elif action == "pause":
-            for rec in list(self._records.values()):
-                if rec.gid == gid and rec.status == "RUNNING":
-                    self.cancel_execution(rec.execution_id)
-            inst.status = "PAUSED"
-        elif action == "resume":
-            inst.status = "OPEN"
-        else:
-            raise InvariantError(f"unknown control action: {action}")
-        inst.seq += 1
-        self._append_object(
-            f"run/{gid}",
-            {"seq": inst.seq, "node": None, "control": action, "actor": actor,
-             "edges_traversed": [], "endpoint": None},
-            provenance=Provenance(graph_instance_id=gid, at_seq=inst.seq),
-        )
+        with self._lock:
+            inst = self._instances[gid]
+            self._authorize(inst, actor)
+            if action == "close":
+                inst.status = "CLOSED"
+            elif action == "pause":
+                for rec in list(self._records.values()):
+                    if rec.gid == gid and rec.status == "RUNNING":
+                        self.cancel_execution(rec.execution_id)
+                inst.status = "PAUSED"
+            elif action == "resume":
+                inst.status = "OPEN"
+            else:
+                raise InvariantError(f"unknown control action: {action}")
+            inst.seq += 1
+            self._append_object(
+                f"run/{gid}",
+                {"seq": inst.seq, "node": None, "control": action, "actor": actor,
+                 "edges_traversed": [], "endpoint": None},
+                provenance=Provenance(graph_instance_id=gid, at_seq=inst.seq),
+            )
 
     def approve(self, gid, node_id, *, actor, decision, payload=None) -> None:
-        inst = self._instances[gid]
-        tpl = self._templates[inst.template_ref]
-        node = tpl["nodes"][node_id]
-        allowed = node.get("authorized_actors")
-        if allowed is not None and actor not in allowed:
-            raise AuthorizationError(
-                f"actor {actor!r} 不在 {node_id} 的授权名单内：{allowed}"
+        with self._lock:
+            inst = self._instances.get(gid)
+            if inst is None:
+                raise InvariantError(f"未知实例：{gid}")
+            tpl = self._templates[inst.template_ref]
+            node = tpl["nodes"][node_id]
+            allowed = node.get("authorized_actors")
+            if allowed is not None and actor not in allowed:
+                raise AuthorizationError(
+                    f"actor {actor!r} 不在 {node_id} 的授权名单内：{allowed}"
+                )
+            pending = inst.nodes[node_id].persistent.get("pending", [])
+            if not pending:
+                raise InvariantError(f"{node_id} 没有待审批项")
+            msg = self._messages[pending.pop(0)]
+            out = msg.payload if payload is None else payload
+            port = (
+                node.get("approve_port", "out") if decision == "allow"
+                else node.get("deny_port", "denied")
             )
-        pending = inst.nodes[node_id].persistent.get("pending", [])
-        if not pending:
-            raise InvariantError(f"{node_id} 没有待审批项")
-        msg = self._messages[pending.pop(0)]
-        out = msg.payload if payload is None else payload
-        port = (
-            node.get("approve_port", "out") if decision == "allow"
-            else node.get("deny_port", "denied")
-        )
-        traversed = self._route(inst, tpl, node_id, port, out)
-        msg.state = "CONSUMED"
-        inst.seq += 1
-        self._append_object(
-            f"run/{gid}",
-            {"seq": inst.seq, "node": node_id, "endpoint": msg.target[2],
-             "decision": decision, "actor": actor, "edges_traversed": traversed,
-             "payload": out},
-            provenance=Provenance(
-                graph_instance_id=gid, node_id=node_id, at_seq=inst.seq
-            ),
-        )
+            traversed = self._route(inst, tpl, node_id, port, out)
+            msg.state = "CONSUMED"
+            inst.seq += 1
+            self._append_object(
+                f"run/{gid}",
+                {"seq": inst.seq, "node": node_id, "endpoint": msg.target[2],
+                 "decision": decision, "actor": actor, "edges_traversed": traversed,
+                 "payload": out},
+                provenance=Provenance(
+                    graph_instance_id=gid, node_id=node_id, at_seq=inst.seq
+                ),
+            )
 
     # ---- 观察 -------------------------------------------------------------
 
@@ -1796,17 +1860,18 @@ class Runtime:
         return cur, trims
 
     def queue(self, topic_id) -> QueueView:
-        if topic_id not in self._topics:
-            raise InvariantError(f"unknown topic: {topic_id}")
-        depth = sum(
-            1 for m in self._messages.values()
-            if m.topic == topic_id and m.state == "QUEUED"
-        )
-        return QueueView(
-            topic_id=topic_id,
-            depth=depth,
-            subscriber_endpoints=tuple(t for _s, t in self._subs.get(topic_id, [])),
-        )
+        with self._lock:
+            if topic_id not in self._topics:
+                raise InvariantError(f"unknown topic: {topic_id}")
+            depth = sum(
+                1 for m in self._messages.values()
+                if m.topic == topic_id and m.state == "QUEUED"
+            )
+            return QueueView(
+                topic_id=topic_id,
+                depth=depth,
+                subscriber_endpoints=tuple(t for _s, t in self._subs.get(topic_id, [])),
+            )
 
     def usage(self, gid) -> Usage:
         acc: dict[str, Any] = {}

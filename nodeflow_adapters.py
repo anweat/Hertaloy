@@ -150,7 +150,12 @@ class SubprocessBackend(ExecutionBackend):
         self.events: list[tuple[str, Mapping[str, Any]]] = []
         self.seen: list[ExecutionRequest] = []      # 与 MockExecutionBackend 对齐
         self._proc: subprocess.Popen | None = None
-        self._lock = threading.Lock()
+        self._write_lock = threading.Lock()         # stdin 写串行
+        self._cond = threading.Condition()          # 结果按 execution_id 分发
+        self._pending: dict[str, ExecutionResult] = {}
+        self._errors: dict[str, Exception] = {}
+        self._closed = False
+        self._reader: threading.Thread | None = None
         self._cancelled: set[str] = set()
 
     # ---- 生命周期 ---------------------------------------------------------
@@ -167,10 +172,50 @@ class SubprocessBackend(ExecutionBackend):
                 encoding="utf-8",
                 bufsize=1,
             )
+            self._reader = threading.Thread(
+                target=self._read_loop, daemon=True, name="nf-driver-reader")
+            self._reader.start()
         return self._proc
 
+    def _read_loop(self) -> None:
+        """唯一消费者：逐行读 stdout，按 execution_id 分发 result/error。"""
+        proc = self._proc
+        try:
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    break                       # EOF：driver 退出
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue                    # 非 JSON 辅助行：忽略
+                kind = msg.get("type")
+                eid = msg.get("execution_id")
+                if kind in ("event", "observation"):
+                    body = msg.get("event") or msg.get("observation") or {}
+                    self.events.append((kind, body))
+                    if self.on_event is not None:
+                        self.on_event(kind, body)
+                    continue
+                if kind == "error":
+                    with self._cond:
+                        self._errors[eid] = DriverError(
+                            msg.get("message", "unknown driver error"))
+                        self._cond.notify_all()
+                    continue
+                if kind == "result":
+                    with self._cond:
+                        self._pending[eid] = result_from_json(msg["result"])
+                        self._cond.notify_all()
+                    continue
+                # 未知消息类型：忽略，保持协议向前兼容
+        finally:
+            with self._cond:
+                self._closed = True
+                self._cond.notify_all()
+
     def close(self) -> None:
-        with self._lock:
+        with self._write_lock:
             proc, self._proc = self._proc, None
             if proc is None:
                 return
@@ -191,6 +236,8 @@ class SubprocessBackend(ExecutionBackend):
                         stream.close()
                 except Exception:
                     pass
+        if self._reader is not None:
+            self._reader.join(timeout=2)
 
     def __enter__(self) -> SubprocessBackend:
         return self
@@ -203,30 +250,19 @@ class SubprocessBackend(ExecutionBackend):
     def run(self, request: ExecutionRequest) -> ExecutionResult:
         self.seen.append(request)
         proc = self._ensure()
-        self._send(proc, {"type": "run", "request": request_to_json(request)})
-
-        while True:
-            line = proc.stdout.readline()
-            if not line:
-                err = proc.stderr.read() if proc.stderr else ""
-                raise DriverError(f"driver 提前退出：{err.strip()[:500]}")
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise DriverError(f"driver 输出非 JSON：{line[:200]!r}") from exc
-
-            kind = msg.get("type")
-            if kind in ("event", "observation"):
-                body = msg.get("event") or msg.get("observation") or {}
-                self.events.append((kind, body))
-                if self.on_event is not None:
-                    self.on_event(kind, body)
-                continue
-            if kind == "error":
-                raise DriverError(msg.get("message", "unknown driver error"))
-            if kind == "result":
-                return result_from_json(msg["result"])
-            raise DriverError(f"未知 driver 消息类型：{kind!r}")
+        with self._write_lock:
+            self._send(proc, {"type": "run", "request": request_to_json(request)})
+        with self._cond:
+            while (request.execution_id not in self._pending
+                   and request.execution_id not in self._errors
+                   and not self._closed):
+                self._cond.wait(timeout=0.1)
+            if request.execution_id in self._errors:
+                raise self._errors.pop(request.execution_id)
+            if request.execution_id in self._pending:
+                return self._pending.pop(request.execution_id)
+            err = proc.stderr.read() if proc.stderr else ""
+            raise DriverError(f"driver 提前退出：{err.strip()[:500]}")
 
     def cancel(self, execution_id: str) -> None:
         self._cancelled.add(execution_id)
@@ -234,7 +270,8 @@ class SubprocessBackend(ExecutionBackend):
         if proc is None or proc.poll() is not None:
             return
         try:
-            self._send(proc, {"type": "cancel", "execution_id": execution_id})
+            with self._write_lock:
+                self._send(proc, {"type": "cancel", "execution_id": execution_id})
         except Exception:
             # driver 不响应取消 —— 降级为杀进程（判据 C1 的降级路径）
             proc.kill()
