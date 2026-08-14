@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+import time
 from dataclasses import asdict
 from typing import Any, Callable, Mapping, Sequence
 
@@ -155,13 +156,26 @@ class SubprocessBackend(ExecutionBackend):
         self._pending: dict[str, ExecutionResult] = {}
         self._errors: dict[str, Exception] = {}
         self._closed = False
+        self._generation = 0                        # driver 世代号
         self._reader: threading.Thread | None = None
         self._cancelled: set[str] = set()
 
     # ---- 生命周期 ---------------------------------------------------------
 
+    @staticmethod
+    def _close_streams(proc: subprocess.Popen | None) -> None:
+        if proc is None:
+            return
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if stream is not None and not stream.closed:
+                    stream.close()
+            except Exception:
+                pass
+
     def _ensure(self) -> subprocess.Popen:
         if self._proc is None or self._proc.poll() is not None:
+            self._close_streams(self._proc)      # 重启前回收旧进程句柄
             self._proc = subprocess.Popen(
                 self.command,
                 cwd=self.cwd,
@@ -172,14 +186,22 @@ class SubprocessBackend(ExecutionBackend):
                 encoding="utf-8",
                 bufsize=1,
             )
+            with self._cond:
+                self._generation += 1
+                self._closed = False        # 新世代开张，复位关闭标志
+                gen = self._generation
             self._reader = threading.Thread(
-                target=self._read_loop, daemon=True, name="nf-driver-reader")
+                target=self._read_loop, args=(self._proc, gen),
+                daemon=True, name=f"nf-driver-reader-{gen}")
             self._reader.start()
         return self._proc
 
-    def _read_loop(self) -> None:
-        """唯一消费者：逐行读 stdout，按 execution_id 分发 result/error。"""
-        proc = self._proc
+    def _read_loop(self, proc: subprocess.Popen, gen: int) -> None:
+        """唯一消费者：逐行读 stdout，按 execution_id 分发 result/error。
+
+        `proc` / `gen` 由启动方显式传入 —— 不读 `self._proc`，
+        否则重启后旧 reader 会去读新进程。
+        """
         try:
             while True:
                 line = proc.stdout.readline()
@@ -211,7 +233,9 @@ class SubprocessBackend(ExecutionBackend):
                 # 未知消息类型：忽略，保持协议向前兼容
         finally:
             with self._cond:
-                self._closed = True
+                # 只有当前世代的 reader 有权宣告关闭；旧 reader 退出不影响新世代
+                if gen == self._generation:
+                    self._closed = True
                 self._cond.notify_all()
 
     def close(self) -> None:
@@ -252,17 +276,30 @@ class SubprocessBackend(ExecutionBackend):
         proc = self._ensure()
         with self._write_lock:
             self._send(proc, {"type": "run", "request": request_to_json(request)})
+        deadline = None if self.timeout is None else time.monotonic() + self.timeout
         with self._cond:
             while (request.execution_id not in self._pending
                    and request.execution_id not in self._errors
                    and not self._closed):
+                if deadline is not None and time.monotonic() > deadline:
+                    raise DriverError(
+                        f"driver 超时未响应 {request.execution_id}（{self.timeout}s）")
                 self._cond.wait(timeout=0.1)
             if request.execution_id in self._errors:
                 raise self._errors.pop(request.execution_id)
             if request.execution_id in self._pending:
                 return self._pending.pop(request.execution_id)
-            err = proc.stderr.read() if proc.stderr else ""
-            raise DriverError(f"driver 提前退出：{err.strip()[:500]}")
+        raise DriverError(f"driver 提前退出：{self._drain_stderr(proc)}")
+
+    @staticmethod
+    def _drain_stderr(proc: subprocess.Popen) -> str:
+        """只在进程确已退出时读 stderr —— 对活着的进程 read() 会阻塞到 EOF。"""
+        if proc.stderr is None or proc.poll() is None:
+            return "(进程仍在运行，未读取 stderr)"
+        try:
+            return proc.stderr.read().strip()[:500]
+        except Exception:
+            return "(stderr 不可读)"
 
     def cancel(self, execution_id: str) -> None:
         self._cancelled.add(execution_id)

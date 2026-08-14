@@ -557,5 +557,55 @@ class TestPausedSubscriber(RobustnessTestCase):
                          {"pct": 50})
 
 
+class TestDriverLifecycle(unittest.TestCase):
+    """driver 进程的生死 —— backend 必须能从中恢复。"""
+
+    def _req(self, i):
+        return ExecutionRequest(
+            execution_id=f"life-{i}",
+            agent_spec={"spec_id": "p",
+                        "fake": {"emit": [{"port": "out", "payload": {"n": i}}]}},
+            context=InvocationContext(),
+            output_contract=OutputContract(allowed_emit_ports=("out",)),
+        )
+
+    def test_R15_backend_recovers_after_driver_crash(self):
+        """★ driver 崩溃后 backend 必须能重启续用，而不是永久失效。
+
+        修复前：`_closed` 是单向标志，`_ensure()` 重启进程时不复位，
+        且旧 reader 退出时置的标志会干扰新 reader —— 崩一次就废到重建对象。
+        """
+        be = SubprocessBackend(["node", os.path.join(HERE, "drivers", "fake_driver.mjs")],
+                               cwd=HERE)
+        try:
+            self.assertEqual(be.run(self._req(1)).emissions, (("out", {"n": 1}),))
+
+            be._proc.kill()                      # —— driver 崩溃 ——
+            be._proc.wait(timeout=5)
+            time.sleep(0.3)                      # 让旧 reader 收到 EOF 退出
+
+            # 同一个 backend 对象必须能继续干活
+            self.assertEqual(be.run(self._req(2)).emissions, (("out", {"n": 2}),))
+            self.assertEqual(be.run(self._req(3)).emissions, (("out", {"n": 3}),))
+        finally:
+            be.close()
+
+    def test_R16_stale_reader_cannot_close_a_live_generation(self):
+        """旧世代的 reader 退出，不得把新世代标记为已关闭。"""
+        be = SubprocessBackend(["node", os.path.join(HERE, "drivers", "fake_driver.mjs")],
+                               cwd=HERE)
+        try:
+            be.run(self._req(1))
+            old_reader = be._reader
+            be._proc.kill()
+            be._proc.wait(timeout=5)
+            be.run(self._req(2))                 # 触发重启，起新 reader
+            old_reader.join(timeout=3)           # 旧 reader 此时才彻底退出
+            self.assertFalse(be._closed, "旧 reader 关掉了新世代")
+            self.assertEqual(be.run(self._req(4)).emissions, (("out", {"n": 4}),))
+        finally:
+            be.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
