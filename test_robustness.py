@@ -454,6 +454,85 @@ class TestValueValidation(RobustnessTestCase):
 
 
 # ---------------------------------------------------------------------------
+# R17 —— 跨端口扇出的原子性：原子边界是"一次提交"，不是"一个端口"
+# ---------------------------------------------------------------------------
+
+
+class TestCrossPortAtomicity(RobustnessTestCase):
+    """一次执行 emit 多个端口时，任一端口校验失败 → 全部端口零投递。
+
+    逐端口物化的旧写法会留下：执行记录 FAILED，但先处理的那个端口
+    的下游已经收到消息并跑起来了 —— 图的状态与提交记录互相矛盾。
+    """
+
+    def _two_port_graph(self):
+        self.rt.compile_agent_spec("w", model="m", cards=[("rules", "base")])
+        self.rt.register_contract("Strict", 1, {
+            "type": "object", "required": ["c"],
+            "properties": {"c": {"enum": ["red"]}}})
+        tpl = self.rt.register_graph_template("fanout", {
+            "nodes": {
+                "worker": {"kind": "agent", "spec": "w", "endpoints": {
+                    "io": {},
+                    "good": {},                       # 无契约，必过
+                    "bad": {"emit": {"PUSH": {"contract": "Strict@1"}}},
+                }},
+                "sa": {"kind": "plain", "handler": "record",
+                       "endpoints": {"io": {}}},
+                "sb": {"kind": "plain", "handler": "record",
+                       "endpoints": {"io": {}}},
+            },
+            "edges": [{"id": "ea", "from": "worker.good", "to": "sa.io"},
+                      {"id": "eb", "from": "worker.bad", "to": "sb.io"}],
+        })
+        return self.rt.instantiate(tpl, owner="service:x")
+
+    def test_R17_failing_port_rolls_back_the_passing_port(self):
+        job = self._two_port_graph()
+        # good 先于 bad —— 旧实现会先把 sa 的消息物化出去
+        self.backend.on("w", lambda req: _ok(req, emissions=(
+            ("good", {"ok": True}), ("bad", {"c": "blue"}))))
+        self.rt.send((job, "worker", "io"), {"task": "t"})
+        self.rt.drain(job)
+
+        self.assertEqual(
+            [r.status for r in self.rt.node_executions(job, "worker")], ["FAILED"])
+        self.assertIsNone(self.rt.node_persistent_state(job, "sa").get("last"),
+                          "bad 端口失败，sa 却收到了 good 端口的投递")
+        self.assertIsNone(self.rt.node_persistent_state(job, "sb").get("last"))
+        for m in self.rt._messages.values():
+            self.assertNotEqual(m.target[1:], ("sa", "io"),
+                                "失败的提交仍然物化了消息")
+
+    def test_R17b_artifacts_are_not_committed_when_routing_fails(self):
+        """artifact 与路由同生共死 —— 提交被拒时不得留下已落库的产物。"""
+        job = self._two_port_graph()
+        self.backend.on("w", lambda req: _ok(
+            req,
+            emissions=(("bad", {"c": "blue"}),),
+            artifacts=(("plan", "plan/x", {"body": 1}),)))
+        self.rt.send((job, "worker", "io"), {"task": "t"})
+        self.rt.drain(job)
+
+        self.assertEqual(
+            [r.status for r in self.rt.node_executions(job, "worker")], ["FAILED"])
+        self.assertEqual(self.rt.artifact_versions("plan/x"), [])
+
+    def test_R17c_all_ports_pass_still_routes_everything(self):
+        """反向对照：全部合规时两个端口都要投递到。"""
+        job = self._two_port_graph()
+        self.backend.on("w", lambda req: _ok(req, emissions=(
+            ("good", {"ok": True}), ("bad", {"c": "red"}))))
+        self.rt.send((job, "worker", "io"), {"task": "t"})
+        self.rt.drain(job)
+
+        self.assertEqual(
+            [r.status for r in self.rt.node_executions(job, "worker")], ["APPLIED"])
+        self.assertEqual(self.rt.node_persistent_state(job, "sa")["last"], {"ok": True})
+        self.assertEqual(self.rt.node_persistent_state(job, "sb")["last"], {"c": "red"})
+
+
+# ---------------------------------------------------------------------------
 # R13/R14 —— 终态气密补漏：REPLY 到 CLOSED 目标 / queue() 并发迭代
 # ---------------------------------------------------------------------------
 

@@ -277,8 +277,13 @@ class SchedulingMixin:
         decision = self._guard_decision(node, policy, decision, trusted=trusted)
 
         out_policy = policy.get("output", {})
-        traversed: list[str] = []
         spawned: list[str] = []
+        # 先把全部端口 prepare 完（纯函数，可能抛）—— 校验失败时
+        # 子容器还没实例化，扇出与路由一起保持原子。
+        prepared: list[tuple] = []
+        for port, payload in (decision.get("emit") or {}).items():
+            prepared += self._prepare_route(tpl, node_id, port, payload)
+
         if out_policy.get("mode") == "FANOUT_TO_SLOT":
             slot_id = out_policy["slot"]
             slot = tpl["slots"][slot_id]
@@ -287,8 +292,7 @@ class SchedulingMixin:
                 child = self._spawn_child(inst, slot_id, slot)
                 spawned.append(child)
                 self._new_message((child, entry_node, entry_ep), item)
-        for port, payload in (decision.get("emit") or {}).items():
-            traversed += self._route(inst, tpl, node_id, port, payload)
+        traversed: list[str] = self._materialize_route(inst, prepared)
 
         # 循环锚点 = Strategy 配置 + 一条 Annotation。
         # Annotation 就是 ObjectVersion(kind="annotation")，无独立类型。
@@ -437,8 +441,7 @@ class SchedulingMixin:
             self._emit_reply(inst, gid, node_id, msg,
                              outputs.pop(back), where=f"{gid}/{node_id}")
 
-        for port, payload in outputs.items():
-            traversed += self._route(inst, tpl, node_id, port, payload)
+        traversed += self._route_all(inst, tpl, node_id, outputs)
 
         msg.state = "CONSUMED"
         inst.seq += 1
@@ -479,13 +482,12 @@ class SchedulingMixin:
                 if k in payload and isinstance(ps, Mapping):
                     self._check_value(ps, payload[k], where=f"{where}.{k}")
 
-    def _route(self, inst, tpl, node_id, port, payload) -> list[str]:
-        """边路由 —— 两段式，fan-out 原子（边界 B5b）。
+    def _prepare_route(self, tpl, node_id, port, payload) -> list[tuple]:
+        """路由第一段 —— 纯函数，零副作用。
 
-        第一段（纯函数）：对全部匹配边完成地址解析、源契约校验、
-        Servo、目标契约校验，只收集结果，不产生任何消息；
-        任一边失败 → 整个 fan-out 失败，零副作用（由调用方决定
-        如何释放执行并进图）。第二段（物化）：全部通过后统一创建消息。
+        对全部匹配边完成地址解析、源契约校验、Servo、目标契约校验，
+        只收集结果，不产生任何消息。任一边失败 → 抛出，调用方尚未
+        物化任何东西，可以安全地把失败送进图。
         """
         src = f"{node_id}.{port}"
         nodes = tpl.get("nodes", {})
@@ -506,12 +508,32 @@ class SchedulingMixin:
                 out = self._apply_servo(edge["servo"], out)
             self._validate_payload(tgt_ref, out, where=f"边 {eid} 目标端（Servo 之后）")
             prepared.append((eid, tgt_node, tgt_ep, out))
+        return prepared
 
+    def _materialize_route(self, inst, prepared) -> list[str]:
+        """路由第二段 —— 全部通过后统一创建消息。不做任何校验。"""
         traversed = []
         for eid, tgt_node, tgt_ep, out in prepared:
             self._new_message((inst.gid, tgt_node, tgt_ep), out)
             traversed.append(eid)
         return traversed
+
+    def _route_all(self, inst, tpl, node_id, outputs) -> list[str]:
+        """一次提交里的**全部端口**一起走两段式（边界 B5b）。
+
+        原子边界是**这次提交**，不是单个端口 —— 一次执行可以同时
+        emit 多个端口，若逐端口物化，第二个端口的契约失配会留下第一个
+        端口已投递的消息：执行记录 FAILED，下游却已经跑起来了。
+        因此先把所有端口都 prepare 完，再统一 materialize。
+        """
+        prepared: list[tuple] = []
+        for port, payload in outputs.items():
+            prepared += self._prepare_route(tpl, node_id, port, payload)
+        return self._materialize_route(inst, prepared)
+
+    def _route(self, inst, tpl, node_id, port, payload) -> list[str]:
+        """单端口路由。多端口场景一律走 `_route_all`。"""
+        return self._route_all(inst, tpl, node_id, {port: payload})
 
     _SERVO_OPS = {"set", "map", "drop"}
 
@@ -636,13 +658,36 @@ class SchedulingMixin:
                 raise InvariantError(f"agent emitted undeclared port: {port}")
             outputs[port] = payload
 
-        produced: list[str] = []
+        # ---- 校验段：全部纯函数，任一失败都不留副作用 --------------------
+        # 顺序很关键：artifact 落库、REPLY 投递、边路由必须**同生共死**。
+        # 逐项边做边校验会出现"执行记录 FAILED，下游却已跑起来"。
+        claimed = [self._messages[mid] for mid in rec.claimed]
+        reply: tuple | None = None
+        if "reply" in outputs:
+            cb = next((m.callback for m in claimed if m.callback), None)
+            if cb is not None:
+                # cb 为空时 "reply" 留在 outputs 里，按普通端口路由
+                payload = outputs.pop("reply")
+                cb_inst = self._instances.get(cb[0])
+                if cb_inst is None or cb_inst.status != "OPEN":
+                    # 终态气密（R13）：目标已关闭/不存在，不滞留死信
+                    raise InvariantError(
+                        f"REPLY 目标 {cb[0]} 已 {cb_inst.status if cb_inst else '不存在'}，"
+                        f"拒绝提交回程消息")
+                reply = (cb, payload)
+        prepared: list[tuple] = []
+        for port, payload in outputs.items():
+            prepared += self._prepare_route(tpl, rec.node_id, port, payload)
         for kind_, oid, body in result.artifacts:
             if kind_ in self.store.KERNEL_KINDS or                     oid.startswith("run/") or oid.startswith("annotation/"):
                 raise InvariantError(
                     f"backend 不得提交内核保留对象：kind={kind_!r} oid={oid!r}；"
                     f"内核 kind 与 run//annotation/ 前缀归内核，"
                     f"用户 kind（plan/spec/…）自由")
+
+        # ---- 物化段：从这里开始不再抛 -----------------------------------
+        produced: list[str] = []
+        for kind_, oid, body in result.artifacts:
             ov = self._append_object(
                 oid, body, kind=kind_,
                 provenance=Provenance(
@@ -653,22 +698,9 @@ class SchedulingMixin:
             )
             produced.append(ov.ref)
         st.session_handle = result.session_handle      # 不透明，只存不解释
-
-        claimed = [self._messages[mid] for mid in rec.claimed]
-        traversed: list[str] = []
-        if "reply" in outputs:
-            cb = next((m.callback for m in claimed if m.callback), None)
-            if cb is not None:
-                payload = outputs.pop("reply")
-                cb_inst = self._instances.get(cb[0])
-                if cb_inst is None or cb_inst.status != "OPEN":
-                    # 终态气密（R13）：目标已关闭/不存在，不滞留死信
-                    raise InvariantError(
-                        f"REPLY 目标 {cb[0]} 已 {cb_inst.status if cb_inst else '不存在'}，"
-                        f"拒绝提交回程消息")
-                self._new_message(cb, payload, mkind="REPLY")
-        for port, payload in outputs.items():
-            traversed += self._route(inst, tpl, rec.node_id, port, payload)
+        if reply is not None:
+            self._new_message(reply[0], reply[1], mkind="REPLY")
+        traversed: list[str] = self._materialize_route(inst, prepared)
 
         for m in claimed:
             m.state = "CONSUMED"
