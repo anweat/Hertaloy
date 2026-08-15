@@ -356,6 +356,8 @@ class _Unit:
     msg: Any = None
     batch: Any = None
     execution_id: str | None = None
+    discard: tuple = ()            # TOP_ONE DISCARD：随本次提交一起消费但不进 handler
+    selection_ctx: dict = field(default_factory=dict)   # CROSS_ALL 等选择期上下文
 
 
 @dataclass

@@ -110,9 +110,11 @@ AgentSpec = compile(model, cards[], node.emit_contracts)
 
 ### 2.1 `EndpointDefinition` ✅
 
-现状是空 dict `{"io": {}}`，导致：所有端点都可 emit、没有形状约束、连接期无从校验。
+两种合法形态：
 
-拟定形式：
+1. **未声明 = 未约束**：`{"io": {}}` —— 向后兼容，任何 payload 放行；
+   模板可用 `strict_contracts: true` 要求所有边都有契约。
+2. **声明方向 + 契约**（运行期取值校验 + `OutputContract.schema` 推导）：
 
 ```json
 "endpoints": {
@@ -121,15 +123,13 @@ AgentSpec = compile(model, cards[], node.emit_contracts)
   },
   "out": {
     "emit":    { "PUSH": {"contract": "CodeResult@2"} }
-  },
-  "result": {
-    "emit":    { "CALL":  {"contract": "Query@1", "reply": "Answer@1"} },
-    "receive": { "REPLY": {"contract": "Answer@1"} }
   }
 }
 ```
 
-端点不是永久的 input/output 两类；方向来自本次 operation 与已定义连接。
+边只实现 `PUSH`（CALL/REPLY 在注册期拒绝）；调用/回程语义落在 subflow 节点
+与队列 REQUEST + callback 上（不变量 M3）。端点不是永久的 input/output 两类；
+方向来自本次 operation 与已定义连接。
 
 ### 2.2 连接期校验 ✅
 
@@ -314,3 +314,4 @@ Backend 矩阵与待验证清单见 `FOUNDATION_V4.md §4.3`。
 | — | 上下文压缩是失败信号 | ✅ F3 |
 | — | 预算在调用前校验 | ✅ F4 |
 | — | 控制走授权路径并留提交事实 | ✅ G3 |
+| — | 关闭走控制面 `control(close)`；`end` 是终态汇点，无内核 DRAIN/CLOSING | ✅ G4/G5、close 实验1/2 |

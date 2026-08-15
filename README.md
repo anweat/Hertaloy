@@ -1,5 +1,12 @@
 # Nodeflow Runtime V2：五主体运行时讨论稿
 
+> **版本导航（2026-08-14）**：
+> - **当前实现入口 = V4**：概念见 [FOUNDATION_V4.md](./FOUNDATION_V4.md)，
+>   接口见 [INTERFACES_V4.md](./INTERFACES_V4.md)，代码 `nodeflow_v4.py` 及
+>   `nodeflow_*` 模块，测试 `python -m pytest -q`（273 条）。
+> - **本文档与 `runtime_v2.py` 是 V2 历史证据**（37 条行为测试仍随全量跑），
+>   不代表当前 V4 行为；V4 对 V2 的取舍见 FOUNDATION §6。
+
 > 状态：可执行讨论基线，不是冻结设计，也没有改动原 `nodeflow.md`。
 
 > **版本关系（2026-08-12）**：本文件和 `runtime_v2.py` 保留为已经通过 37 条测试的 V2 行为证据；后续概念设计已上升到通用 Container 元模型。当前概念入口见 [Container 元模型 V3](./CONTAINER_MODEL_V3.md)，协议候选和未决项见 [统一 JSON 协议工作台 V3](./PROTOCOL_WORKBENCH_V3.md)。V3 尚未由本文件中的 Python 模拟器实现。

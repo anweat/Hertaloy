@@ -1,6 +1,6 @@
-"""Nodeflow V4 —— 行为验收集（骨架，当前全部 RED）
+"""Nodeflow V4 —— 行为验收集（全绿，与 FOUNDATION_V4.md 第 2 节剧本逐帧对应）
 
-每条测试对应 FOUNDATION_V4.md 第 2 节剧本的某一帧，docstring 里标注帧号。
+每条测试对应剧本的某一帧，docstring 里标注帧号。
 它们定义"必须能表达什么"，不定义"如何实现"。
 
 裁判规则：新增任何持久对象前，先问它对应哪一帧；指不回帧的不得加入。
@@ -196,38 +196,32 @@ class TestEdgeOrchestration(FoundationTestCase):
         self.assertEqual(got, {"task": "add export", "ok": True})
 
     def test_B2_servo_cannot_alter_route_or_contract(self):
-        """帧 3 不变量：Servo 只能改 payload，触碰路由/契约必须被拒。"""
+        """帧 3 不变量：Servo 只能改 payload，触碰路由/契约必须被拒（注册期）。"""
         self.rt.register_transform(
             "evil", role="EDGE_SERVO", body={"set_target": {"to": "other.io"}}
         )
         self.rt.register_handler("record", lambda p, c: {})
-        tpl = self.rt.register_graph_template("evil-flow", {
-            "nodes": {
-                "start": {"kind": "start", "emit": "out", "endpoints": {"io": {}, "out": {}}},
-                "sink": {"kind": "plain", "handler": "record", "endpoints": {"io": {}}},
-            },
-            "edges": [{"id": "e1", "from": "start.out", "to": "sink.io", "servo": "evil"}],
-        })
-        job = self.rt.instantiate(tpl, owner="system:core")
-        self.rt.send((job, "start", "io"), {"x": 1})
         with self.assertRaises(InvariantError):
-            self.rt.drain(job)
+            self.rt.register_graph_template("evil-flow", {
+                "nodes": {
+                    "start": {"kind": "start", "emit": "out", "endpoints": {"io": {}, "out": {}}},
+                    "sink": {"kind": "plain", "handler": "record", "endpoints": {"io": {}}},
+                },
+                "edges": [{"id": "e1", "from": "start.out", "to": "sink.io", "servo": "evil"}],
+            })
 
     def test_B2b_non_servo_role_cannot_bind_to_an_edge(self):
-        """单一 Transform 类型 + role 矩阵：只有 EDGE_SERVO 能绑边。"""
+        """单一 Transform 类型 + role 矩阵：只有 EDGE_SERVO 能绑边（注册期拒绝）。"""
         self.rt.register_transform("proj", role="VARIABLE_PROJECTION", body={"set": {"a": 1}})
         self.rt.register_handler("record", lambda p, c: {})
-        tpl = self.rt.register_graph_template("role-flow", {
-            "nodes": {
-                "start": {"kind": "start", "emit": "out", "endpoints": {"io": {}, "out": {}}},
-                "sink": {"kind": "plain", "handler": "record", "endpoints": {"io": {}}},
-            },
-            "edges": [{"id": "e1", "from": "start.out", "to": "sink.io", "servo": "proj"}],
-        })
-        job = self.rt.instantiate(tpl, owner="system:core")
-        self.rt.send((job, "start", "io"), {"x": 1})
         with self.assertRaises(InvariantError):
-            self.rt.drain(job)
+            self.rt.register_graph_template("role-flow", {
+                "nodes": {
+                    "start": {"kind": "start", "emit": "out", "endpoints": {"io": {}, "out": {}}},
+                    "sink": {"kind": "plain", "handler": "record", "endpoints": {"io": {}}},
+                },
+                "edges": [{"id": "e1", "from": "start.out", "to": "sink.io", "servo": "proj"}],
+            })
 
     def test_B3_strategy_fanout_creates_parallel_container_instances(self):
         """帧 5：Strategy 按 plan 展开 3 个并行 coder 容器实例。"""
@@ -841,6 +835,32 @@ class TestControlPlane(FoundationTestCase):
         slot = self.rt._templates[inst.template_ref]["slots"]["reviewers"]
         with self.assertRaises(InvariantError):
             self.rt._spawn_child(inst, "reviewers", slot)
+
+    def test_G5_end_is_a_terminal_sink_not_a_close_mechanism(self):
+        """V4 定案：end 消费到达数据并留终态提交；实例关闭只认 control(close)。
+
+        不再有 close-tag/DRAIN 内核语义（V2 遗产按 FOUNDATION §6 降级表处理）。
+        """
+        self.rt.register_card(kind="rules", card_id="base", version=1, body={})
+        self.rt.compile_agent_spec("planner", model="m",
+                                   cards=[("rules", "base")])
+        self.backend.on("planner", lambda req: _ok(
+            req, emissions=(("out", {"plan": ["t1"]}),)))
+        tpl = self.rt.register_graph_template("plan-flow", _plan_flow_spec())
+        job = self.rt.instantiate(tpl, owner="service:job")
+        self.rt.send((job, "start", "io"), {"goal": "add export"})
+        self.rt.drain(job)
+
+        # 消息全部消费、end 留下终态提交、实例仍 OPEN
+        self.assertEqual({m.state for m in self.rt._messages.values()
+                          if m.target[0] == job}, {"CONSUMED"})
+        self.assertEqual(self.rt.graph_status(job), "OPEN")
+        snaps = self.rt.store.history(f"run/{job}")
+        self.assertEqual(snaps[-1].body["node"], "end")
+
+        # 关闭只能走授权控制面
+        self.rt.control(job, "close", actor="service:job")
+        self.assertEqual(self.rt.graph_status(job), "CLOSED")
 
 
 # ===========================================================================

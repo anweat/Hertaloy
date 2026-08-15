@@ -439,16 +439,16 @@ class TestCharacterIsAssemblyObject(BoundaryTestCase):
 
         cid = self.rt.register_character(
             "coder", cards=[("rules", "py-strict", 3), ("skill", "repo-survey", 1)],
-            tools=["emit"])
+            tools=["repo_tool"])
         expanded_cards, expanded_tools = self.rt.expand_character(cid)
 
         # ★ 同构：展开结果与手写卡片组合逐项一致
         manual_cards = [("rules", "py-strict", 3), ("skill", "repo-survey", 1)]
         self.assertEqual(expanded_cards, manual_cards)
-        self.assertEqual(expanded_tools, ["emit"])
+        self.assertEqual(expanded_tools, [{"name": "repo_tool"}])
 
         direct = self.rt.compile_agent_spec(
-            "direct", model="m", cards=manual_cards, tools=["emit"])
+            "direct", model="m", cards=manual_cards, tools=["repo_tool"])
         via_char = self.rt.compile_agent_spec(
             "via-char", model="m", cards=expanded_cards, tools=expanded_tools)
 

@@ -20,7 +20,8 @@ def _ok(req, **kw):
     return ExecutionResult(execution_id=req.execution_id, **kw)
 
 
-def register_definitions(rt: Runtime, backend: MockExecutionBackend) -> str:
+def register_definitions(rt: Runtime, backend: MockExecutionBackend,
+                         *, max_attempts=None) -> str:
     """定义层不落盘 —— 重启后由装配面重新注册。handler 本就是函数，存不了。"""
     rt.register_card(kind="rules", card_id="base", version=1, body={})
     rt.compile_agent_spec("worker", model="m", cards=[("rules", "base")])
@@ -29,10 +30,13 @@ def register_definitions(rt: Runtime, backend: MockExecutionBackend) -> str:
         req, emissions=(("out", {"done": True}),),
         artifacts=(("plan", "plan", {"n": 1}),),
     ))
+    worker = {"kind": "agent", "spec": "worker",
+              "endpoints": {"io": {}, "out": {}}}
+    if max_attempts is not None:
+        worker["limits"] = {"max_attempts": max_attempts}
     return rt.register_graph_template("persist-flow", {
         "nodes": {
-            "worker": {"kind": "agent", "spec": "worker",
-                       "endpoints": {"io": {}, "out": {}}},
+            "worker": worker,
             "sink": {"kind": "plain", "handler": "record",
                      "endpoints": {"io": {}}},
         },
@@ -53,11 +57,11 @@ class PersistenceTestCase(unittest.TestCase):
         if os.path.exists(self.db):
             os.unlink(self.db)
 
-    def fresh_runtime(self):
+    def fresh_runtime(self, *, max_attempts=None):
         rt = Runtime()
         backend = MockExecutionBackend()
         rt.set_backend(backend)
-        tpl = register_definitions(rt, backend)
+        tpl = register_definitions(rt, backend, max_attempts=max_attempts)
         p = SqlitePersistence(self.db)
         self._open.append(p)
         return rt, backend, tpl, p
@@ -207,6 +211,78 @@ class TestCrashRecovery(PersistenceTestCase):
         rt2.drain(job)                                   # 剩下那条被跑掉
         self.assertEqual(sum(1 for m in rt2._messages.values()
                              if m.state == "QUEUED"), 0)
+
+    def test_S6b_failure_attempt_counter_survives_restart(self):
+        """★ 重试计数跨重启不归零：崩溃续跑不会无限重试。"""
+        rt, backend, tpl, p = self.fresh_runtime(max_attempts=5)
+        p.attach(rt)
+        backend.on("worker", lambda req: ExecutionResult(
+            execution_id=req.execution_id, termination="FAILED"))
+        job = rt.instantiate(tpl, owner="service:job")
+        rt.send((job, "worker", "io"), {"task": "t"})
+
+        rt.step(job)                          # 一次失败 → 退回可重试
+        attempts_before = next(m.attempts for m in rt._messages.values()
+                               if m.target[1] == "worker")
+        self.assertEqual(attempts_before, 1)
+        p.flush(rt)                           # claim 也是状态，要落盘
+        del rt
+
+        rt2, backend2, _tpl2, p2 = self.fresh_runtime(max_attempts=5)
+        backend2.on("worker", lambda req: ExecutionResult(
+            execution_id=req.execution_id, termination="FAILED"))
+        p2.restore(rt2)
+        restored = next(m for m in rt2._messages.values()
+                        if m.target[1] == "worker")
+        self.assertEqual(restored.attempts, 1, "attempts 未落盘/恢复")
+        self.assertEqual(restored.state, "QUEUED")
+
+        p2.attach(rt2)
+        rt2.drain(job)                        # 从 1 继续，到上限即 FAILED 终态
+        self.assertEqual(restored.attempts, 5)
+        self.assertEqual(restored.state, "FAILED")
+
+    def test_S6c_subflow_exit_port_survives_restart(self):
+        """subflow 回程端口（exit_port）跨重启保留 —— REPLY 魔法串不复活。"""
+        def work(payload, ctx):
+            return {"done": {"reviewed": payload}}
+
+        rt, _be, tpl, p = self.fresh_runtime()
+        rt.register_handler("work", work)
+        child = rt.register_graph_template("child-flow", {
+            "nodes": {"w": {"kind": "plain", "handler": "work",
+                            "endpoints": {"io": {}, "done": {}}}},
+            "edges": [],
+        })
+        caller = rt.register_graph_template("caller-flow", {
+            "nodes": {"caller": {"kind": "subflow", "slot": "k",
+                                 "return_port": "out",
+                                 "endpoints": {"io": {}, "out": {}}}},
+            "edges": [],
+            "slots": {"k": {"template": child, "instantiation": "PER_CALL",
+                            "entry": "w.io", "exit": {"endpoint": "w.done"}}},
+        })
+        p.attach(rt)
+        job = rt.instantiate(caller, owner="service:job")
+        rt.send((job, "caller", "io"), {"n": 1})
+        rt.step(job)                          # caller 转发，子消息带 exit_port
+        p.flush(rt)
+        exit_before = [m.exit_port for m in rt._messages.values()
+                       if m.target[1] == "w"]
+        self.assertEqual(exit_before, ["done"])
+        del rt
+
+        rt2, _be2, _tpl2, p2 = self.fresh_runtime()
+        rt2.register_handler("work", work)
+        rt2.register_graph_template("child-flow", {
+            "nodes": {"w": {"kind": "plain", "handler": "work",
+                            "endpoints": {"io": {}, "done": {}}}},
+            "edges": [],
+        })
+        p2.restore(rt2)
+        exit_after = [m.exit_port for m in rt2._messages.values()
+                      if m.target[1] == "w"]
+        self.assertEqual(exit_after, ["done"])
 
 
 class TestScope(PersistenceTestCase):

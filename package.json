@@ -1,0 +1,10 @@
+{
+  "name": "hertaloy-drivers",
+  "private": true,
+  "type": "module",
+  "description": "Nodeflow 执行面 driver 依赖（pi 低层 Agent API 接线验证用）",
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "^0.84.2",
+    "@earendil-works/pi-ai": "^0.84.2"
+  }
+}

@@ -101,31 +101,32 @@ harness 自己的 session 存储**保留作为调试与审计兜底**，但**不
 
 ## 3. 候选评估
 
-`✅` 已确认 ｜ `⚠️` 部分/有条件 ｜ `❔` 待实测 ｜ `❌` 不满足
+`✅` 已确认 ｜ `⚠️` 部分/有条件 ｜ `❔` 待实测 ｜ `❌` 不满足 ｜ `*` = 仅接线形状已验证（faux provider），真实供应商行为待实测
 
 | # | 判据 | **直连兼容端点**<br>（对照组·已实测） | **pi** | **Claude Agent SDK** | **Claude Code CLI** | **Codex** |
 |---|---|---|---|---|---|---|
-| ★A1 | system prompt 可替换 | ✅ P3 | ✅ | ✅ | ⚠️ | ❔ |
-| ★A2 | messages 可完全提供 | ✅ P1 | ✅ | ❔ | ❌ | ❔ |
-| ★A3 | 可禁用自动压缩 | ✅ P2（恒不压缩） | ✅ | ❔ | ❔ | ❔ |
-| ○A4 | 压缩可观测 | ✅ 恒为 0 | ✅ | ⚠️ | ⚠️ | ❔ |
-| ◇B1 | 工具集精确限定 | ✅ P3 | ✅ | ✅ | ⚠️ | ❔ |
-| ◇B2 | 调用前拦截 + 理由回传 | ✅ 两处拦截 | ✅ | ✅ | ⚠️ | ❔ |
+| ★A1 | system prompt 可替换 | ✅ P3 | ⚠️* | ✅ | ⚠️ | ❔ |
+| ★A2 | messages 可完全提供 | ✅ P1 | ⚠️* | ❔ | ❌ | ❔ |
+| ★A3 | 可禁用自动压缩 | ✅ P2（恒不压缩） | ⚠️* | ❔ | ❔ | ❔ |
+| ○A4 | 压缩可观测 | ✅ 恒为 0 | ⚠️* | ⚠️ | ⚠️ | ❔ |
+| ◇B1 | 工具集精确限定 | ✅ P3 | ⚠️* | ✅ | ⚠️ | ❔ |
+| ◇B2 | 调用前拦截 + 理由回传 | ✅ 两处拦截 | ⚠️* | ✅ | ⚠️ | ❔ |
 | ○B6 | 内部 tool 可观测 | ➖ 无内部 tool（完全受控） | ❔ | ❔ | ❔ | ❔ |
-| ◇C1 | 取消 | ✅ P5 | ✅ | ✅ | ⚠️ | ❔ |
-| ★D1 | 可无状态调用 | ✅ P6 + P7 | ✅ | ❔ | ❌ | ❔ |
-| ◇D3 | 供应商中立 | ✅ 换 base_url 即可 | ✅ | ❌ | ❌ | ❌ |
+| ◇C1 | 取消 | ✅ P5 | ⚠️* | ✅ | ⚠️ | ❔ |
+| ★D1 | 可无状态调用 | ✅ P6 + P7 | ⚠️* | ❔ | ❌ | ❔ |
+| ◇D3 | 供应商中立 | ✅ 换 base_url 即可 | ⚠️* | ❌ | ❌ | ❌ |
 
 **对照组实测：DeepSeek `deepseek-v4-flash`，8 条探针 6 过 2 合理跳过，连续三轮稳定。**
 跳过的两条是 `P2b`（受控 backend 无法被强制压缩）与 `P4`（完全受控，没有不可干预的内部
 tool）——都是"该 backend 不具备该情形"，不是缺陷。
 
-下表为详细判据，各候选列待补。
+下表为详细判据。pi 列的 ✅ 表示**代码/文档确认**（其中 A1/A2/B1/B2/C1/D1 已被
+faux-provider 接线测试坐实）；真实供应商行为仍待实测（见 §3.1）。
 
 | # | 判据 | **pi** | **Claude Agent SDK** | **Claude Code CLI** | **Codex** |
 |---|---|---|---|---|---|
 | ★A1 | system prompt 可替换 | ✅ `agent.state.systemPrompt` | ✅ | ⚠️ `--system-prompt` / `--append-system-prompt` | ❔ |
-| ★A2 | messages 可完全提供 | ✅ `initialState.messages` | ❔ | ❌ CLI 面向交互，非任意历史注入 | ❔ |
+| ★A2 | messages 可完全提供 | ✅ `agent.prompt(messages)` | ❔ | ❌ CLI 面向交互，非任意历史注入 | ❔ |
 | ★A3 | 可禁用自动压缩 | ✅ 压缩是可选 hook | ❔ 内置上下文管理，能否关闭待验 | ❔ | ❔ |
 | A4 | 压缩/token 可观测 | ✅ 事件流 | ⚠️ | ⚠️ stream-json | ❔ |
 | A5 | 缓存断点可控 | ✅ 自行组装前缀 | ❔ | ❌ | ❔ |
@@ -143,7 +144,17 @@ tool）——都是"该 backend 不具备该情形"，不是缺陷。
 | D2 | 自有存储可作审计 | ✅ `~/.pi/agent/sessions/` JSONL | ✅ | ✅ | ❔ |
 | D3 | 供应商中立 | ✅ OpenAI / Anthropic / Google / 兼容端点 | ❌ Anthropic | ❌ Anthropic | ❌ OpenAI |
 
-### 3.1 pi —— 已实测，满足全部否决项
+### 3.1 pi —— 低层 API 接线已验证；真实供应商行为待实测
+
+> 证据（本仓库可复现）：`PROBE_PI=1 python -m unittest test_probes.TestPi -v`
+> 结果为 **5 passed / 3 skipped**（P2b 受控 backend 无法强制压缩、P4 无不可干预
+> internal tool、P5 无法构造可控挂起 —— 三条均为"该 backend 不具备该情形"，
+> 与对照组同款跳过，不是缺陷）。
+>
+> 验证的是**我们的接口 → pi 低层 Agent 的接线形状**：构造、`transformContext`、
+> `beforeToolCall`、工具全集、无状态、取消入口，全部走 `fauxProvider` 脚本响应。
+> **真实供应商（OpenAI/Anthropic/Google）下的 A2/A3/D1 仍待实测** —— 在跑出真实
+> 供应商证据前，pi 不得被宣称为"已实测满足全部否决项"。
 
 **用低层 `Agent`，不用 `AgentHarness`。**
 
@@ -255,7 +266,7 @@ class ExecutionBackend:
 
 ## 5. 选型结论
 
-1. **pi 低层 `Agent`** 为首个 backend —— 唯一已实测满足全部否决项者，且供应商中立。
+1. **pi 低层 `Agent`** 为首个候选 backend —— 低层 API 接线已由 `TestPi`（faux provider，5/3）验证；真实供应商否决项待实测，未出证据前不宣称为最终选型。
 2. **不用** `AgentHarness`、不用 CBOR 协议、不用其 CLI 层。
 3. **不依赖任何 backend 的会话存储**；历史与恢复自有，其存储仅作审计兜底。
 4. **Claude / Codex 待实测**，重点是 A2 / A3 / D1 三条否决项。
@@ -272,7 +283,7 @@ class ExecutionBackend:
 | `nodeflow_adapters.py` | `SubprocessBackend` —— 边界固定在 JSON 上，不绑定实现语言 | ✅ |
 | `drivers/fake_driver.mjs` | 假 driver，用于验证探针与适配层本身 | ✅ 8/8 绿 |
 | `test_probes.py` | `ProbeSuite` 混入 —— 换 driver 即换候选 | ✅ |
-| `drivers/pi_driver.mjs` | pi 的 driver | ⚠️ 骨架，含 `[TODO-VERIFY]`，未在装 pi 的环境跑过 |
+| `drivers/pi_driver.mjs` | pi 的 driver | ✅ faux-provider 接线验证（TestPi 5/3）；真实供应商集成待办 |
 
 ```bash
 python -m unittest test_probes -v

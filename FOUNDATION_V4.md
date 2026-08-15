@@ -203,15 +203,16 @@ ExecutionResult {
 
 **托管路径的真实代价（要认）**：大型本地仓库需按会话挂载进远程沙箱，改动需回传。对主线场景是明确降级。设计上保留该 backend，但不作为默认。
 
-### 4.3.1 pi 实测结论（已完成）
+### 4.3.1 pi 接口核对结论（接线已验证；真实供应商待实测）
 
-五条待验证项**全部满足**，另有两项超出预期：
+低层 Agent API 的**接线形状**已由 `TestPi`（faux provider，5 passed / 3 设计跳过）坐实；
+下表接口落点经代码确认（真实供应商下 A2/A3/D1 仍待实测，见 `HARNESS_EVALUATION.md §3.1`）：
 
 | 我们的接口 | pi 的落点 |
 |---|---|
 | `ExecutionRequest.agent_spec.systemPrompt` | `agent.state.systemPrompt`（可变） |
 | `ExecutionRequest.agent_spec.tools` | `agent.state.tools: AgentTool[]`（可变） |
-| `ExecutionRequest.context` 编译 | **`transformContext(messages, signal)` hook** ← 上下文编译器的插入点 |
+| `ExecutionRequest.context` 编译 | `agent.prompt(messages)` + **`transformContext(messages, signal)` hook** ← 上下文编译器的插入点 |
 | `OutputContract.allowed_emit_ports` 强制 | **`beforeToolCall` → `{block, reason, terminate}`** ← 第一不变量的落点 |
 | `control.streamChannel` | `agent.subscribe((event, signal) => ...)` |
 | `control.cancelToken` | `agent.abort()` + AbortSignal 传入 `execute` |
@@ -271,7 +272,7 @@ commit B: apply
 | 对象 | 帧 | 说明 |
 |---|---|---|
 | `GraphTemplate` | 3,5,9 | 节点、端点、边、Servo、策略绑定、子槽声明、订阅声明。发布后不可变，按版本引用 |
-| `NodeDefinition` | 3,4,11 | kind: `agent` / `plain` / `strategy` / `approval` / `subflow` / `start` / `end`。**没有 `checkpoint` kind**——循环锚点是 `strategy` 的一种预置配置，见 §5.6 |
+| `NodeDefinition` | 3,4,11 | kind: `agent` / `plain` / `strategy` / `approval` / `subflow` / `start` / `end`。**没有 `checkpoint` kind**——循环锚点是 `strategy` 的一种预置配置，见 §5.6。`end` 是终态汇点：只进不出、消费到达数据并留终态提交；实例关闭一律走控制面 `control(close)`（§6 降级表） |
 | `EdgeDefinition` | 3,5,13 | 固定 source/target 端点 + operation + Servo 绑定 |
 | `JsonTransformDefinition` | 3 | **单一类型 + `role` 枚举 + role→能力矩阵**（取代 V3 的 7 种） |
 | `StrategyPolicy` | 5,11,13 | input policy → variable projection → evaluator → trigger policy → output policy |
@@ -366,7 +367,7 @@ InvocationContext {
 | Strategy = 可复用 policy 组合，不是新运行子系统 | V2 |
 | 消息投递三态 QUEUED → CLAIMED → CONSUMED | V2 |
 | 节点级锁 + 提交失败回滚 | V2 |
-| close 是授权消息 + DRAIN，不是旁路 API | V2 |
+| close 走授权路径并留提交事实（控制面 API） | V4（test_boundaries close 实验1/2、G3/G4） |
 | 每轮重建 agent 上下文，无隐藏会话历史 | V2 |
 | Trace 只观测，不裁决 | V3 |
 | **Agent 只能在预先声明的选项中选择，不能构造地址/能力/契约** | V3（提升为第一不变量） |
@@ -377,6 +378,7 @@ InvocationContext {
 | 项 | 改成 |
 |---|---|
 | 容器级 revision 乐观并发 | 提交序号保留；冲突域降到 NodeInstance + 消费消息集合 |
+| V2 的 close-tag 消息 + 内核 DRAIN + end 关闭语义 | **V4 定案**：关闭走控制面 `control(close)`（授权 + 提交事实，G3/G4）；`end` 是终态汇点（只进不出、消费到达数据并留终态提交，G5）；排空由编排自行表达（close 实验1/2）。不再有 CLOSING 状态 |
 | 统一 JSON envelope 覆盖一切通信 | **拆成边传递 + 跨图消息投递两套** |
 | `ContainerTemplate.runtimeSlot` 三选一联合 | 单一 Graph 运行时；Workspace / Queue 降为服务，不是 runtime type |
 | 7 种 Transform Definition | 1 个 `JsonTransformDefinition` + `role` 枚举 + 能力矩阵 |
@@ -478,17 +480,32 @@ JSON 是**编译目标**，画布是可视化与人工调整面，助手 AI 也�
 
 ## 10. 当前进度
 
-**验收集 45/45 绿**（`nodeflow_v4.py` + `test_foundation_v4.py`，内存实现，mock backend）。
+**验收集 52/52 绿**（`nodeflow_v4.py` + `test_foundation_v4.py`，内存实现，mock backend）。
+全仓当前 **273 条测试**：`PROBE_PI=1` 下 268 passed / 5 skipped（pi 未装或未设
+`PROBE_PI` 时其 8 条自动跳过）。
 
 | 组 | 覆盖 | 关键结论 |
 |---|---|---|
-| A 卡片与 AgentSpec | 5 | 读=只读引用，写经 tool，**休眠时生效**；活跃期不漂移 |
-| B 边编排 | 7 | Servo 越权被拒；Strategy 展开并行子容器；循环不重复实例化 |
+| A 卡片与 AgentSpec | 6 | 读=只读引用，写经 tool，**休眠时生效**；活跃期不漂移 |
+| B 边编排 | 7 | Servo 越权在注册期被拒；Strategy 展开并行子容器；循环不重复实例化 |
 | C 队列独立索引 | 9 | **同图不连边可走队列**；callback 落已声明端点；RunSnapshot 保留全量链路 |
 | D 子流程复用 | 6 | 服务式复用**未加任何新对象**即绿；WARM_POOL 只复用资源不复用状态 |
 | E 执行面 | 7 | claim/execute/apply 三段；**冲突域节点级**；崩溃可接管；handle 不透明 |
 | F 循环与上下文裁剪 | 6 | **epoch 2 只见失败切片**；预算调用前拒绝；压缩产出告警 |
-| G 控制面 | 4 | 审批授权；控制留提交事实非旁路；CLOSED 终态约束 |
+| G 控制面 | 5 | 审批授权；控制留提交事实非旁路；CLOSED 终态约束；end=终态汇点 |
+| H 版本管理 | 6 | V1–V4 + lineage；RunSnapshot 就是 ObjectVersion |
+
+Phase 0 一致性收口（2026-08-14）新增的硬约束：
+
+- 定义层注册即完整：spec/policy/handler/slot/topic/端点/Servo 全引用注册期校验；
+  模板/主题/变换/策略/handler 重复注册拒绝（`test_definition_guard.py`）。
+- Strategy 选择/输出策略轴补齐：TOP_ONE(DISCARD/RETAIN)/ONE_PER_INPUT/CROSS_ALL/
+  WAIT_ALL/CROSS（`test_strategy_policies.py`），ALL_REQUIRED 未声明 selection 时
+  默认 ONE_PER_INPUT（兼容既有模板）。
+- 输出契约推导进 `OutputContract.schema`；apply 对 emit 契约做取值校验；
+  "reply" 只是回程通道，不再是自由端口。
+- 持久化补齐 `messages.attempts/exit_port`（跨重启重试计数与 subflow 回程不丢）。
+- pi：低层 Agent 接线由 `TestPi`（faux provider）验证 5/3；真实供应商待实测。
 
 三条被测试验证掉的简化：
 - `B6` 绿 → 循环控制不需要 Checkpoint 机制，Strategy 配置足够
@@ -506,7 +523,7 @@ JSON 是**编译目标**，画布是可视化与人工调整面，助手 AI 也�
 7. ~~上下文裁剪与预算观测~~ ✅ —— 命题本身已可断言
 8. ~~控制面授权与终态~~ ✅
 
-9. ~~实测 harness 待验证清单~~ ✅ pi 全中；另建对照组（见 `HARNESS_EVALUATION.md`）
+9. ~~实测 harness 待验证清单~~ ✅ 对照组真实 API 全过；pi 低层 API 接线验证（faux provider 5/3），真实供应商待实测（见 `HARNESS_EVALUATION.md`）
 10. ~~实现第一个真 backend~~ ✅ `SubprocessBackend` + OpenAI 兼容 driver，
     已用 DeepSeek `deepseek-v4-flash` 跑通真实图执行（`test_live_graph.py`，4 条，三轮稳定）
 

@@ -13,11 +13,15 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from typing import Any, Callable, Mapping
 
 from nodeflow_core import (
     InvariantError, _ALLOWED_NODE_KINDS,
 )
+
+#: 边 Servo 允许的 payload 操作集 —— 与调度层 _apply_servo 保持一致。
+_SERVO_OPS = frozenset({"set", "map", "drop"})
 
 
 class DefinitionsMixin:
@@ -38,6 +42,20 @@ class DefinitionsMixin:
             raise InvariantError(f"unknown card: {kind}/{card_id}")
         return max(slot)
 
+    @staticmethod
+    def _normalize_tools(tools) -> list[dict[str, Any]]:
+        """工具声明允许两种形状：裸字符串名，或 {name, description, ...}。"""
+        out = []
+        for t in tools:
+            if isinstance(t, str):
+                out.append({"name": t})
+            elif isinstance(t, Mapping):
+                out.append(dict(t))
+            else:
+                raise InvariantError(
+                    f"工具声明必须是字符串名或映射：{t!r}")
+        return out
+
     def compile_agent_spec(self, spec_id, *, model, cards=(), tools=()) -> Mapping[str, Any]:
         """cards 元素为 (kind, id)（跟随最新）或 (kind, id, version)（显式 pin）。"""
         declared: list[tuple[str, str, int | None]] = []
@@ -53,10 +71,14 @@ class DefinitionsMixin:
             "spec_id": spec_id,
             "model": model,
             "declared_cards": declared,
-            "tools": list(tools),
+            "tools": self._normalize_tools(tools),
         }
         self._specs[spec_id] = spec
-        return self._resolve_spec(spec_id)
+        resolved = self._resolve_spec(spec_id)
+        # 编译期就校验工具全集：内核保留名 / 跨来源重名（#8），
+        # 而不是等到第一次 claim 才在 prompt 编译里炸。
+        self._collect_tools(resolved)
+        return resolved
 
     def register_character(self, character_id, *, cards, tools=()) -> str:
         """装配面对象（边界 Ch）：命名的卡片组合，**不是内核类型**。
@@ -84,7 +106,7 @@ class DefinitionsMixin:
                 declared.append((kind, cid, ver))
         self._characters[character_id] = {
             "cards": declared,
-            "tools": list(tools),
+            "tools": self._normalize_tools(tools),
         }
         return character_id
 
@@ -111,6 +133,57 @@ class DefinitionsMixin:
             "tools": list(spec["tools"]),
         }
 
+    def _collect_tools(self, resolved) -> list[dict[str, Any]]:
+        """把显式声明工具与 MCP 卡片工具合并成工具全集。
+
+        编译规则归内核：显式 tools 与 mcp 卡的工具地位相同，全部编译期定型；
+        内核保留名不可占用，跨来源重名显式报错，不依赖加载顺序（#8）。
+        """
+        tools: list[dict[str, Any]] = []
+        claimed: dict[str, str] = {}
+
+        def _add(name: Any, description: Any, source: str) -> None:
+            if not isinstance(name, str) or not name:
+                raise InvariantError(
+                    f"{source} 的工具名必须是字符串：{name!r}")
+            if name in self.KERNEL_TOOL_NAMES:
+                raise InvariantError(
+                    f"{source} 的工具 {name!r} 占用了内核保留名；"
+                    f"保留名：{sorted(self.KERNEL_TOOL_NAMES)}")
+            if name in claimed:
+                raise InvariantError(
+                    f"工具名冲突：{name!r} 同时来自 {claimed[name]} 与 {source}；"
+                    f"请在卡片/spec 里改名，不要依赖加载顺序")
+            claimed[name] = source
+            tools.append({
+                "name": name,
+                "description": str(description or ""),
+                "source": source,
+                # 不变量 X：工具集编译期声明齐全，运行期只启用不新增
+                "defer_loading": True,
+                # 有显式 input schema 就带上，否则给一个开放对象 schema；
+                # driver 层负责把它翻译成各家 API 的 parameters。
+                "parameters": dict(t.get("parameters") or t.get("input_schema")
+                                   or {"type": "object", "properties": {}}),
+            })
+
+        # [t] 显式工具（spec / character 展开后同构）—— 与 mcp 卡片工具同级
+        for t in sorted(resolved.get("tools") or [],
+                        key=lambda t: str(t.get("name", ""))):
+            _add(t.get("name"), t.get("description"),
+                 f"spec/{resolved.get('spec_id', '?')}")
+
+        # [c] mcp 卡片工具：只带名称 + 摘要，不含全量 schema
+        by_kind: dict[str, list[tuple[str, int]]] = {}
+        for key, ver in resolved.get("cards", {}).items():
+            kind, cid = key.split("/", 1)
+            by_kind.setdefault(kind, []).append((cid, ver))
+        for cid, v in sorted(by_kind.get("mcp", [])):
+            body = self.card_body("mcp", cid, v)
+            for t in body.get("tools", []):
+                _add(t.get("name"), t.get("summary"), f"mcp/{cid}@{v}")
+        return tools
+
     def _compile_agent_prompt(self, resolved, node) -> tuple[str, list[dict]]:
         by_kind: dict[str, list[tuple[str, int]]] = {}
         for key, ver in resolved.get("cards", {}).items():
@@ -118,7 +191,7 @@ class DefinitionsMixin:
             by_kind.setdefault(kind, []).append((cid, ver))
 
         parts: list[str] = []
-        tools: list[dict[str, Any]] = []
+        tools: list[dict[str, Any]] = self._collect_tools(resolved)
 
         # [a] rules 全量前置 —— 必须遵守
         rules = [self.card_body("rules", c, v).get("text", "")
@@ -138,31 +211,10 @@ class DefinitionsMixin:
 
         # [c] mcp 可用列表：名称 + 摘要，**不含全量 schema**
         mcp_lines: list[str] = []
-        claimed: dict[str, str] = {}
         for cid, v in sorted(by_kind.get("mcp", [])):
             body = self.card_body("mcp", cid, v)
             for t in body.get("tools", []):
-                name = t["name"]
-                # #8 工具命名：内核保留名不可占用，跨卡片重名不可静默覆盖
-                if name in self.KERNEL_TOOL_NAMES:
-                    raise InvariantError(
-                        f"mcp/{cid}@{v} 的工具 {name!r} 占用了内核保留名；"
-                        f"保留名：{sorted(self.KERNEL_TOOL_NAMES)}"
-                    )
-                if name in claimed:
-                    raise InvariantError(
-                        f"工具名冲突：{name!r} 同时来自 {claimed[name]} 与 mcp/{cid}@{v}；"
-                        f"请在卡片里改名，不要依赖加载顺序"
-                    )
-                claimed[name] = f"mcp/{cid}@{v}"
-                mcp_lines.append(f"- {name}：{t.get('summary', '')}")
-                tools.append({
-                    "name": t["name"],
-                    "description": t.get("summary", ""),
-                    "source": f"mcp/{cid}@{v}",
-                    # 不变量 X：工具集编译期声明齐全，运行期只启用不新增
-                    "defer_loading": True,
-                })
+                mcp_lines.append(f"- {t['name']}：{t.get('summary', '')}")
         if mcp_lines:
             parts.append("# 可用 MCP 工具\n" + "\n".join(mcp_lines))
 
@@ -193,6 +245,41 @@ class DefinitionsMixin:
 
         return "\n\n".join(parts), tools
 
+    def _emit_schema_for(self, node) -> dict[str, Any]:
+        """由 emit 端点契约推导 OutputContract.schema（INTERFACES §2.3）。
+
+        产出的是 emit 工具**参数**的 JSON Schema：port 枚举 + 每个有契约的
+        端口一个 oneOf 变体（payload 必须满足该端口契约）。没有契约时退化为
+        自由对象。apply_execution 仍会逐端口再做源契约取值校验。
+        """
+        endpoints = node.get("endpoints") or {}
+        ports = [ep for ep, d in endpoints.items()
+                 if isinstance(d, Mapping) and "emit" in d] or list(endpoints)
+        variants: list[dict[str, Any]] = []
+        for ep in sorted(ports):
+            ref = self._endpoint_ref(node, ep, "emit", "PUSH")
+            if not ref:
+                continue
+            payload_schema = dict(self._contract(ref))
+            payload_schema.setdefault("type", "object")
+            variants.append({
+                "type": "object",
+                "properties": {
+                    "port": {"const": ep},
+                    "payload": payload_schema,
+                },
+                "required": ["port", "payload"],
+                "x-nodeflow-contract": ref,
+            })
+        return {
+            "type": "object",
+            "properties": {
+                "port": {"type": "string", "enum": sorted(ports)},
+                "payload": {"oneOf": variants} if variants else {"type": "object"},
+            },
+            "required": ["port", "payload"],
+        }
+
     @staticmethod
     def prefix_fingerprint(spec: Mapping[str, Any]) -> str:
         """稳定前缀指纹。运行期发现若改变了它，就是违反不变量 X。"""
@@ -207,15 +294,22 @@ class DefinitionsMixin:
         return MappingProxyType(self._cards[(kind, card_id)][version])
 
     def register_graph_template(self, template_id, spec) -> str:
+        if "@" in template_id:
+            raise InvariantError(
+                f"模板 id 不得含 '@'（版本由内核追加）：{template_id!r}")
+        ref = f"{template_id}@1"
+        if ref in self._templates:
+            raise InvariantError(
+                f"模板已存在，发布后不可变：{ref}。"
+                f"要演进请注册新 id（如 {template_id}-v2）或走定义版本化通道")
         for node_id, node in spec.get("nodes", {}).items():
             kind = node.get("kind")
             if kind not in _ALLOWED_NODE_KINDS:
                 raise InvariantError(
                     f"unsupported node kind {kind!r} at {node_id!r}; "
-                    f"循环锚点是 strategy 的配置，不是节点种类（FOUNDATION §5.6）"
-                )
-        self._validate_edges(template_id, spec)     # 连接期校验
-        ref = f"{template_id}@1"
+                    f"循环锚点是 strategy 的配置，不是节点种类（FOUNDATION §5.6）")
+        self._validate_template(template_id, spec)      # 全引用校验
+        self._validate_edges(template_id, spec)         # 连接期校验
         # 定义层不可变：注册后调用方修改原 dict 不得影响模板（边界 B1/B6）。
         # _layout（画布坐标）不进入语义层（边界 Lb）：剥离存储。
         stored = copy.deepcopy(spec)
@@ -277,6 +371,191 @@ class DefinitionsMixin:
         out -= set(body.get("drop") or ())
         return out
 
+    def _validate_template(self, template_id: str, spec: Mapping) -> None:
+        """注册期全引用校验：模板应当一次注册就完整，而不是运行到一半才 KeyError。
+
+        校验项：节点必需字段、spec/policy/handler/slot/订阅/servo 引用都存在，
+        ALL_REQUIRED 的端点存在，FANOUT_TO_SLOT 的 slot 存在，WARM_POOL(n) 合法。
+        错误信息面向 LLM/画布。
+        """
+        nodes = spec.get("nodes") or {}
+        if not nodes:
+            raise InvariantError(f"模板 {template_id} 没有节点")
+        slots = spec.get("slots") or {}
+
+        def _ep_exists(node_id: str, ep: str, *, where: str) -> None:
+            node = nodes.get(node_id)
+            if node is None:
+                raise InvariantError(
+                    f"{where}：节点 {node_id!r} 不存在。可用节点：{sorted(nodes)}")
+            if ep not in (node.get("endpoints") or {}):
+                raise InvariantError(
+                    f"{where}：节点 {node_id!r} 没有端点 {ep!r}。"
+                    f"可用端点：{sorted((node.get('endpoints') or {}))}")
+
+        for node_id, node in nodes.items():
+            kind = node.get("kind")
+            endpoints = node.get("endpoints")
+            if not isinstance(endpoints, Mapping) or not endpoints:
+                raise InvariantError(
+                    f"节点 {node_id!r} 必须声明非空 endpoints（统一端点模型）")
+            if kind == "agent":
+                spec_id = node.get("spec")
+                if spec_id not in self._specs:
+                    raise InvariantError(
+                        f"节点 {node_id!r} 引用的 agent spec {spec_id!r} 未注册；"
+                        f"先 compile_agent_spec。可用 spec：{sorted(self._specs)}")
+            elif kind == "plain":
+                if node.get("handler") not in self._handlers:
+                    raise InvariantError(
+                        f"节点 {node_id!r} 引用的 handler {node.get('handler')!r} 未注册；"
+                        f"可用 handler：{sorted(self._handlers)}")
+            elif kind == "strategy":
+                policy_id = node.get("policy")
+                if policy_id not in self._policies:
+                    raise InvariantError(
+                        f"节点 {node_id!r} 引用的 policy {policy_id!r} 未注册；"
+                        f"可用 policy：{sorted(self._policies)}")
+                ev = node.get("evaluator") or {}
+                if ev.get("kind") == "model":
+                    if ev.get("spec") not in self._specs:
+                        raise InvariantError(
+                            f"节点 {node_id!r} 的 model evaluator 引用了未注册 spec "
+                            f"{ev.get('spec')!r}")
+                elif node.get("handler") not in self._handlers:
+                    raise InvariantError(
+                        f"节点 {node_id!r} 引用的 handler {node.get('handler')!r} 未注册；"
+                        f"model evaluator 请声明 evaluator.kind='model'")
+                policy = self._policies[policy_id]
+                readiness = policy.get("readiness", "ANY")
+                if readiness not in ("ANY", "ALL_REQUIRED"):
+                    raise InvariantError(
+                        f"节点 {node_id!r} 的 policy 未实现的 readiness：{readiness!r}")
+                selection = policy.get("selection") or (
+                    "ONE_PER_INPUT" if readiness == "ALL_REQUIRED" else "FIRST")
+                if selection not in ("FIRST", "TOP_ONE", "ONE_PER_INPUT", "CROSS_ALL"):
+                    raise InvariantError(
+                        f"节点 {node_id!r} 的 policy 未实现的 selection：{selection!r}")
+                needs_required = (readiness == "ALL_REQUIRED"
+                                  or selection in ("ONE_PER_INPUT", "CROSS_ALL"))
+                required = policy.get("required_inputs")
+                if needs_required:
+                    if not isinstance(required, (list, tuple)) or not required:
+                        raise InvariantError(
+                            f"节点 {node_id!r}：{readiness}/{selection} 必须给出 "
+                            f"required_inputs")
+                    for ep in required:
+                        _ep_exists(node_id, ep,
+                                   where=f"节点 {node_id!r} 的 required_inputs")
+                if selection == "CROSS_ALL" and len(required) != 2:
+                    raise InvariantError(
+                        f"节点 {node_id!r}：CROSS_ALL 要求恰好两个 required_inputs，"
+                        f"得到 {list(required)}")
+                if selection == "TOP_ONE":
+                    if not isinstance(policy.get("rankField", "rank"), str):
+                        raise InvariantError(
+                            f"节点 {node_id!r}：TOP_ONE 的 rankField 必须是字符串")
+                    if policy.get("unselected", "RETAIN") not in ("RETAIN", "DISCARD"):
+                        raise InvariantError(
+                            f"节点 {node_id!r}：TOP_ONE 的 unselected 必须是 "
+                            f"RETAIN | DISCARD")
+                out = policy.get("output") or {}
+                mode = out.get("mode")
+                if mode == "FANOUT_TO_SLOT":
+                    slot_id = out.get("slot")
+                    if slot_id not in slots:
+                        raise InvariantError(
+                            f"节点 {node_id!r}：FANOUT_TO_SLOT 指向未声明的 slot "
+                            f"{slot_id!r}。可用 slots：{sorted(slots)}")
+                    cap = out.get("max_items")
+                    if cap is not None and (not isinstance(cap, int) or cap <= 0):
+                        raise InvariantError(
+                            f"节点 {node_id!r}：max_items 必须是正整数，得到 {cap!r}")
+                elif mode == "WAIT_ALL":
+                    req_outs = out.get("required_outputs")
+                    if not isinstance(req_outs, (list, tuple)) or not req_outs:
+                        raise InvariantError(
+                            f"节点 {node_id!r}：WAIT_ALL 必须给出 required_outputs")
+                    for ep in req_outs:
+                        _ep_exists(node_id, ep,
+                                   where=f"节点 {node_id!r} 的 required_outputs")
+                elif mode == "CROSS":
+                    for key in ("left", "right", "target"):
+                        if not isinstance(out.get(key), str):
+                            raise InvariantError(
+                                f"节点 {node_id!r}：CROSS 必须给出字符串 {key}")
+                    _ep_exists(node_id, out["target"],
+                               where=f"节点 {node_id!r} 的 CROSS target")
+                elif mode not in (None, "EMIT_EACH"):
+                    raise InvariantError(
+                        f"节点 {node_id!r}：未实现的 output mode {mode!r}")
+            elif kind == "subflow":
+                slot_id = node.get("slot")
+                if slot_id not in slots:
+                    raise InvariantError(
+                        f"节点 {node_id!r} 引用的 slot {slot_id!r} 未声明；"
+                        f"可用 slots：{sorted(slots)}")
+                rp = node.get("return_port", "reply")
+                if rp != "reply":
+                    _ep_exists(node_id, rp,
+                               where=f"节点 {node_id!r} 的 return_port")
+            elif kind == "start":
+                _ep_exists(node_id, node.get("emit", "io"),
+                           where=f"节点 {node_id!r} 的 emit")
+            elif kind == "approval":
+                allowed = node.get("authorized_actors")
+                if allowed is not None and not isinstance(allowed, (list, tuple)):
+                    raise InvariantError(
+                        f"节点 {node_id!r} 的 authorized_actors 必须是列表")
+
+        for slot_id, slot in slots.items():
+            if not isinstance(slot, Mapping):
+                raise InvariantError(f"slot {slot_id!r} 必须是映射")
+            child_ref = slot.get("template")
+            child = self._templates.get(child_ref)
+            if child is None:
+                raise InvariantError(
+                    f"slot {slot_id!r} 引用的模板 {child_ref!r} 未注册（先注册子模板）；"
+                    f"可用模板：{sorted(self._templates)}")
+            mode = slot.get("instantiation", "PER_CALL")
+            m = re.fullmatch(r"WARM_POOL\((\d+)\)", str(mode))
+            if mode not in ("PER_CALL", "SINGLETON") and not m:
+                raise InvariantError(
+                    f"slot {slot_id!r} 的 instantiation {mode!r} 不合法；"
+                    f"应为 PER_CALL | WARM_POOL(n) | SINGLETON")
+            if m and int(m.group(1)) <= 0:
+                raise InvariantError(f"slot {slot_id!r} 的 WARM_POOL(n) 需要 n>0")
+            entry = slot.get("entry")
+            if not isinstance(entry, str) or "." not in entry:
+                raise InvariantError(f"slot {slot_id!r} 的 entry 必须形如 node.endpoint")
+            enode, eep = entry.split(".", 1)
+            cnode = (child.get("nodes") or {}).get(enode)
+            if cnode is None or eep not in (cnode.get("endpoints") or {}):
+                raise InvariantError(
+                    f"slot {slot_id!r} 的 entry {entry!r} 在子模板 "
+                    f"{child_ref} 中不存在")
+            exit_decl = slot.get("exit")
+            if exit_decl:
+                xep = (exit_decl.get("endpoint") or "").split(".", 1)
+                if len(xep) != 2 or xep[0] not in (child.get("nodes") or {}) \
+                        or xep[1] not in ((child.get("nodes") or {}).get(xep[0], {})
+                                          .get("endpoints") or {}):
+                    raise InvariantError(
+                        f"slot {slot_id!r} 的 exit.endpoint 在子模板中不存在："
+                        f"{exit_decl.get('endpoint')!r}")
+
+        for sub in spec.get("subscriptions", []):
+            topic = sub.get("topic")
+            if topic not in self._topics:
+                raise InvariantError(
+                    f"订阅引用了未注册的 topic {topic!r}；先 register_topic。"
+                    f"可用 topic：{sorted(self._topics)}")
+            endpoint = sub.get("endpoint")
+            if not isinstance(endpoint, str) or "." not in endpoint:
+                raise InvariantError(f"订阅 endpoint 必须形如 node.endpoint：{endpoint!r}")
+            nid, ep = endpoint.split(".", 1)
+            _ep_exists(nid, ep, where=f"订阅 {topic} 的 endpoint")
+
     def _validate_edges(self, template_id: str, spec: Mapping) -> None:
         """连接期校验：边一旦画上就要能跑通，而不是运行到一半才炸。"""
         nodes = spec.get("nodes", {})
@@ -297,6 +576,14 @@ class DefinitionsMixin:
             src_node_id, src_ep = edge["from"].split(".", 1)
             tgt_node_id, tgt_ep = edge["to"].split(".", 1)
 
+            # V4 close/end 定案：end 是终态汇点（只进不出）。
+            # 关闭/DRAIN 不在内核 —— 关闭走控制面 control(close)（留提交事实），
+            # 用户排空语义由编排自行表达（test_boundaries close 实验1）。
+            if nodes.get(src_node_id, {}).get("kind") == "end":
+                raise InvariantError(
+                    f"边 {eid} 不合法：end 是终态汇点，不得有出边；"
+                    f"关闭语义由控制面 control(close) 承担")
+
             for node_id, ep in ((src_node_id, src_ep), (tgt_node_id, tgt_ep)):
                 node = nodes.get(node_id)
                 if node is None:
@@ -312,6 +599,26 @@ class DefinitionsMixin:
 
             src_ref = self._endpoint_ref(nodes[src_node_id], src_ep, "emit", op)
             tgt_ref = self._endpoint_ref(nodes[tgt_node_id], tgt_ep, "receive", op)
+
+            # Servo 本体校验独立于契约是否声明：契约未声明 = 未约束，
+            # 但非法 Servo 任何时候都必须被拒。
+            servo = edge.get("servo")
+            if servo is not None:
+                transform = self._transforms.get(servo)
+                if transform is None:
+                    raise InvariantError(
+                        f"边 {eid} 不合法：Servo {servo!r} 未注册。"
+                        f"可用 transform：{sorted(self._transforms)}")
+                if transform["role"] != "EDGE_SERVO":
+                    raise InvariantError(
+                        f"边 {eid} 不合法：只有 EDGE_SERVO 能绑边，"
+                        f"{servo} 的 role={transform['role']!r}")
+                illegal = set(transform["body"]) - _SERVO_OPS
+                if illegal:
+                    raise InvariantError(
+                        f"边 {eid} 不合法：Servo 只能改 payload，"
+                        f"不得触碰路由/操作/契约/关联：{sorted(illegal)}")
+
             if src_ref is None or tgt_ref is None:
                 if strict:
                     raise InvariantError(
@@ -322,7 +629,6 @@ class DefinitionsMixin:
 
             src_all, _ = self._fields_of(self._contract(src_ref))
             tgt_all, tgt_req = self._fields_of(self._contract(tgt_ref))
-            servo = edge.get("servo")
             after = self._servo_fields(src_all, servo)
             missing = tgt_req - after
             if missing:
@@ -335,6 +641,10 @@ class DefinitionsMixin:
                 )
 
     def register_topic(self, topic_id, *, request_contract, reply_contract=None) -> str:
+        if topic_id in self._topics:
+            raise InvariantError(
+                f"topic 已存在，不可覆盖：{topic_id!r}。"
+                f"要演进请注册新 id 或走定义版本化通道")
         self._topics[topic_id] = {
             "request_contract": copy.deepcopy(request_contract),
             "reply_contract": copy.deepcopy(reply_contract),
@@ -343,14 +653,24 @@ class DefinitionsMixin:
         return topic_id
 
     def register_transform(self, transform_id, *, role, body) -> str:
+        if transform_id in self._transforms:
+            raise InvariantError(
+                f"transform 已存在，不可覆盖：{transform_id!r}")
         self._transforms[transform_id] = {"role": role, "body": copy.deepcopy(body)}
         return transform_id
 
     def register_policy(self, policy_id, spec) -> str:
+        if policy_id in self._policies:
+            raise InvariantError(
+                f"policy 已存在，不可覆盖：{policy_id!r}")
         self._policies[policy_id] = copy.deepcopy(spec)   # 边界 B1c：快照
         return policy_id
 
     def register_handler(self, name: str, fn: Callable[..., Any]) -> str:
+        if name in self._handlers:
+            raise InvariantError(
+                f"handler 已存在，不可覆盖：{name!r}。"
+                f"测试/装配若要替换，请用新名字")
         self._handlers[name] = fn
         return name
 

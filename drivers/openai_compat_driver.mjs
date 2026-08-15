@@ -92,28 +92,48 @@ function compileMessages(req) {
   return msgs;
 }
 
-/** allowed_emit_ports → 一个 emit 工具。Agent 只能选，不能构造。 */
+/** allowed_emit_ports → emit 工具 + agent_spec.tools 声明的工具全集。
+ *
+ * 不变量：暴露给模型的工具集 == {emit} ∪ agent_spec.tools，一个不多。
+ * 声明的工具若没有本地执行器，调用时返回**可观测错误**而不是静默吞掉；
+ * 执行器本身在后续阶段接入（MCP → 本地实现）。
+ */
 function buildTools(req) {
   const ports = req.output_contract?.allowed_emit_ports ?? [];
-  return [
-    {
-      type: "function",
-      function: {
-        name: "emit",
-        description:
-          "输出本轮结果。完成任务后必须调用一次。port 只能取给定枚举值之一。",
-        parameters: {
-          type: "object",
-          properties: {
-            port: { type: "string", enum: ports },
-            payload: { type: "object", description: "结果内容" },
-          },
-          required: ["port", "payload"],
-          additionalProperties: false,
+  const emitTool = {
+    type: "function",
+    function: {
+      name: "emit",
+      description:
+        "输出本轮结果。完成任务后必须调用一次。port 只能取给定枚举值之一。",
+      parameters: {
+        type: "object",
+        properties: {
+          port: { type: "string", enum: ports },
+          payload: { type: "object", description: "结果内容" },
         },
+        required: ["port", "payload"],
+        additionalProperties: false,
       },
     },
-  ];
+  };
+
+  const declared = (req.agent_spec?.tools ?? [])
+    // 内核 emit 永远由 output_contract 生成；重复声明按内核版本为准。
+    .filter((t) => t?.name && t.name !== "emit")
+    .map((t) => ({
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description ?? "",
+        parameters: t.parameters ?? t.input_schema ?? {
+          type: "object", properties: {},
+        },
+      },
+    }));
+
+  const all = [emitTool, ...declared];
+  return { all, names: new Set(all.map((t) => t.function.name)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +159,6 @@ async function handleRun(req) {
     received_system: req.agent_spec?.systemPrompt ?? null,
     model: CFG.model,
   };
-
   // 探针专用：不打 API 的可控挂起，用于验证取消链路（不烧 token）
   if (req.agent_spec?.probe_hang) {
     const ac = new AbortController();
@@ -160,7 +179,14 @@ async function handleRun(req) {
   inflight.set(id, ac);
   const started = Date.now();
   const messages = compileMessages(req);
-  const tools = buildTools(req);
+  const built = buildTools(req);
+  const tools = built.all;
+  const declaredNames = built.names;
+  // 判据 B1/B1′ 的证据：模型**实际**收到的工具集，而不是我们宣称给的。
+  diagnostics.actual_tools = tools.map((t) => ({
+    name: t.function.name,
+    parameters: t.function.parameters,
+  }));
   let termination = "DONE";
 
   try {
@@ -205,19 +231,27 @@ async function handleRun(req) {
         } catch { /* 保留空对象，下面按非法处理 */ }
 
         const isEmit = call.function?.name === "emit";
+        const isDeclared = declaredNames.has(call.function?.name);
         const record = {
           kind: "tool_call",
           name: call.function?.name,
-          gated: isEmit,                 // 我们能拦的只有自己声明的工具
+          // 我们能拦的：内核 emit + 编译期声明的工具。
+          // 声明但尚无执行器的工具仍可被 gate（拒绝并回传理由）。
+          gated: isEmit || isDeclared,
           input: args,
         };
         observations.push(record);
         observe(id, record);
 
         let toolResult;
-        if (!isEmit) {
+        if (!isEmit && !isDeclared) {
           // 未声明的工具 —— 拒绝，理由回传模型（◇B2 纵深防御）
           toolResult = `错误：工具 ${call.function?.name} 未声明，不可调用。`;
+        } else if (!isEmit) {
+          // 已声明、但本 driver 还没有执行器：显式失败优于静默吞掉。
+          toolResult =
+            `错误：工具 ${call.function?.name} 已声明，但当前 driver 未接入执行器；` +
+            `请由控制面接入 MCP/本地执行器后再用。`;
         } else if (!ports.includes(args.port)) {
           // ★第一不变量：只能选，不能构造
           toolResult = `错误：port "${args.port}" 未声明。允许值：${ports.join(", ")}`;

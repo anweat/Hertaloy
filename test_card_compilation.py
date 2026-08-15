@@ -58,9 +58,9 @@ class CompileTestCase(unittest.TestCase):
                                               {"name": "git_diff",
                                                "summary": "查看改动"}]})
 
-    def _job(self, *, cards=None, endpoints=None, node_prompt=None):
+    def _job(self, *, cards=None, endpoints=None, node_prompt=None, tools=()):
         self.rt.compile_agent_spec(
-            "w", model="m",
+            "w", model="m", tools=tools,
             cards=cards if cards is not None else [
                 ("rules", "py", 1), ("prompt", "coder", 1),
                 ("skill", "openapi", 1), ("mcp", "git", 2)],
@@ -176,6 +176,16 @@ class TestPrefixStability(CompileTestCase):
         self.assertEqual(names, {"git_log", "git_diff"})
         self.assertTrue(all(t["defer_loading"] for t in spec["tools"]))
         self.assertTrue(all(t["source"] == "mcp/git@2" for t in spec["tools"]))
+
+    def test_X2b_explicit_tools_are_rendered_beside_mcp_tools(self):
+        """spec/character 显式声明的工具与 mcp 卡工具同级进入工具全集。"""
+        job = self._job(tools=[{"name": "run_tests", "description": "跑测试"}])
+        spec = self._spec_after_run(job)
+        by_name = {t["name"]: t for t in spec["tools"]}
+        self.assertEqual(set(by_name), {"git_log", "git_diff", "run_tests"})
+        self.assertEqual(by_name["run_tests"]["source"], "spec/w")
+        self.assertEqual(by_name["run_tests"]["description"], "跑测试")
+        self.assertTrue(by_name["run_tests"]["defer_loading"])
 
     def test_X3_prefix_changes_only_when_cards_change(self):
         """卡片变了前缀才该变 —— 否则缓存失效就是无谓损失。"""

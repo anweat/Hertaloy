@@ -57,20 +57,27 @@ class SchedulingMixin:
                 kind = node["kind"]
 
                 if kind == "strategy":
-                    batch = self._select_for_strategy(inst, node_id, node)
+                    batch, discard, sel_ctx = self._select_for_strategy(
+                        inst, node_id, node)
                     if batch is None:
                         continue                  # 未就绪，让给别的消息
                     for m in batch:
                         m.state = "CLAIMED"
+                    for m in discard:
+                        m.state = "CLAIMED"       # DISCARD 同批消费，不进 handler
                     ev = node.get("evaluator") or {}
                     if ev.get("kind") == "model":
                         # 模型驱动的判断也是一次执行，必须走三段式在锁外跑
                         eid = self._claim(inst, node_id, node, batch,
                                           spec_id=ev["spec"])
                         unit = _Unit("model_strategy", inst, node_id, node,
-                                     batch=batch, execution_id=eid)
+                                     batch=batch, execution_id=eid,
+                                     discard=tuple(discard),
+                                     selection_ctx=sel_ctx)
                     else:
-                        unit = _Unit("strategy", inst, node_id, node, batch=batch)
+                        unit = _Unit("strategy", inst, node_id, node, batch=batch,
+                                     discard=tuple(discard),
+                                     selection_ctx=sel_ctx)
                 elif kind == "agent":
                     eid = self._claim(inst, node_id, node, [msg])
                     unit = _Unit("agent", inst, node_id, node, msg=msg,
@@ -128,6 +135,8 @@ class SchedulingMixin:
                                 unit.inst, unit.node_id, unit.node, unit.batch,
                                 decision={"emit": {p: pl for p, pl in result.emissions}},
                                 trusted=False,
+                                discard=unit.discard,
+                                selection_ctx=unit.selection_ctx,
                             )
                         except InvariantError:
                             self._release(unit.execution_id, "FAILED",
@@ -135,7 +144,9 @@ class SchedulingMixin:
             elif unit.kind == "strategy":
                 with self._lock:
                     self._handle_strategy(unit.inst, unit.node_id, unit.node,
-                                          unit.batch)
+                                          unit.batch,
+                                          discard=unit.discard,
+                                          selection_ctx=unit.selection_ctx)
             else:
                 with self._lock:
                     self._handle(unit.msg)
@@ -186,27 +197,72 @@ class SchedulingMixin:
         if errors:
             raise errors[0]
 
-    def _select_for_strategy(self, inst, node_id, node) -> list[_Message] | None:
+    def _select_for_strategy(self, inst, node_id, node):
+        """按 policy 的 readiness + selection 原子选取消息。
+
+        返回 (batch, discard, selection_ctx)。
+          batch      进入 handler 的消息（payloads 由此构造）
+          discard    TOP_ONE unselected=DISCARD 时同批消费、不进 handler 的消息
+          ctx        CROSS_ALL 等选择期上下文（crossPairs 等）
+        """
         policy = self._policies[node["policy"]]
         by_ep: dict[str, list[_Message]] = {}
         for m in self._messages.values():
             if m.state == "QUEUED" and m.target[0] == inst.gid and m.target[1] == node_id:
                 by_ep.setdefault(m.target[2], []).append(m)
         if not by_ep:
-            return None
-        if policy.get("readiness", "ANY") == "ALL_REQUIRED":
+            return None, [], {}
+        readiness = policy.get("readiness", "ANY")
+        if readiness == "ALL_REQUIRED":
             required = policy["required_inputs"]
             if not all(by_ep.get(ep) for ep in required):
-                return None
-            # ONE_PER_INPUT：每个必需端点原子取一条
-            return [by_ep[ep][0] for ep in required]
-        return [next(iter(by_ep.values()))[0]]
+                return None, [], {}
+        # 兼容 V4 既有模板：ALL_REQUIRED 未声明 selection 时默认 ONE_PER_INPUT
+        # （即 B5/R9 的"每个必需端点各取一条"），ANY 默认 FIRST。
+        selection = policy.get("selection") or (
+            "ONE_PER_INPUT" if readiness == "ALL_REQUIRED" else "FIRST")
+        ctx: dict[str, Any] = {"selection": selection}
+        discard: list[_Message] = []
+
+        if selection == "FIRST":
+            batch = [next(iter(by_ep.values()))[0]]
+        elif selection == "TOP_ONE":
+            candidates = [m for msgs in by_ep.values() for m in msgs]
+            rank_field = policy.get("rankField", "rank")
+            try:
+                selected = max(candidates,
+                               key=lambda m: m.payload[rank_field])
+            except (KeyError, TypeError) as exc:
+                raise InvariantError(
+                    f"TOP_ONE 按 {rank_field!r} 排序失败：{exc}；"
+                    f"请检查 policy.rankField 与消息 payload")
+            batch = [selected]
+            if policy.get("unselected", "RETAIN") == "DISCARD":
+                discard = [m for m in candidates if m is not selected]
+        elif selection == "ONE_PER_INPUT":
+            required = policy["required_inputs"]
+            batch = [by_ep[ep][0] for ep in required]
+        elif selection == "CROSS_ALL":
+            required = policy["required_inputs"]
+            if len(required) != 2:
+                raise InvariantError(
+                    f"CROSS_ALL 当前要求恰好两个 required_inputs，得到 {required}")
+            left = by_ep[required[0]]
+            right = by_ep[required[1]]
+            batch = list(left) + list(right)
+            ctx["crossPairs"] = [
+                (l.payload, r.payload) for l in left for r in right
+            ]
+        else:
+            raise InvariantError(f"unsupported strategy selection: {selection}")
+        return batch, discard, ctx
 
     DECISION_KEYS = frozenset({"emit", "items", "annotate"})
 
     MODEL_DECISION_KEYS = frozenset({"emit"})
 
-    def _guard_decision(self, node, policy, decision, *, trusted: bool):
+    def _guard_decision(self, node, policy, decision, *, trusted: bool,
+                        extra_ports=()):
         """校验 evaluator 的返回，拒绝一切未声明的东西。
 
         受信 handler（我们自己写的 Python）可返回三种键；
@@ -224,7 +280,7 @@ class SchedulingMixin:
                 + ("" if trusted else "（模型驱动的 evaluator 只能选择端口，不能构造）")
             )
 
-        declared = set(node.get("endpoints", {}))
+        declared = set(node.get("endpoints", {})) | set(extra_ports)
         emit = decision.get("emit") or {}
         if not isinstance(emit, Mapping):
             raise InvariantError("decision.emit 必须是 {port: payload}")
@@ -262,29 +318,65 @@ class SchedulingMixin:
         return decision
 
     def _handle_strategy(self, inst, node_id, node, batch, *,
-                         decision=None, trusted=True) -> None:
+                         decision=None, trusted=True, discard=(),
+                         selection_ctx=None) -> None:
         tpl = self._templates[inst.template_ref]
         for m in batch:
             m.state = "CLAIMED"
-        payloads = {m.target[2]: m.payload for m in batch}
+        for m in discard:
+            m.state = "CLAIMED"
         policy = self._policies[node["policy"]]
+        readiness = policy.get("readiness", "ANY")
+        selection = policy.get("selection") or (
+            "ONE_PER_INPUT" if readiness == "ALL_REQUIRED" else "FIRST")
+        if selection == "CROSS_ALL":
+            # CROSS_ALL：handler 收到每个端点的**全量列表**，配 crossPairs。
+            payloads: dict[str, Any] = {}
+            for m in batch:
+                payloads.setdefault(m.target[2], []).append(m.payload)
+        else:
+            # FIRST / TOP_ONE / ONE_PER_INPUT：每个端点恰好一条，给单值。
+            payloads = {m.target[2]: m.payload for m in batch}
+        ctx = self._node_ctx(inst, node_id)
+        ctx["selection"] = selection
+        if selection_ctx and "crossPairs" in selection_ctx:
+            ctx["crossPairs"] = selection_ctx["crossPairs"]
 
         if decision is None:
             evaluator = self._handlers.get(node.get("handler"))
-            decision = (
-                evaluator(payloads, self._node_ctx(inst, node_id)) if evaluator else {}
-            ) or {}
-        decision = self._guard_decision(node, policy, decision, trusted=trusted)
+            decision = (evaluator(payloads, ctx) if evaluator else {}) or {}
 
         out_policy = policy.get("output", {})
+        out_mode = out_policy.get("mode")
+        if out_mode == "CROSS":
+            # CROSS 的 left/right 是**候选集合**，不是路由端口：只允许
+            # 受信 handler 经它们提交候选，target 才必须是声明端口。
+            decision = self._guard_decision(
+                node, policy, decision, trusted=trusted,
+                extra_ports={out_policy.get("left"), out_policy.get("right")})
+        else:
+            decision = self._guard_decision(node, policy, decision, trusted=trusted)
+        emit = dict(decision.get("emit") or {})
+        out_mode = out_policy.get("mode")
+        staged_ids: list[str] = []
+        if out_mode == "WAIT_ALL":
+            emit, staged_ids = self._stage_strategy_outputs(
+                inst, node_id, out_policy, emit, batch)
+        elif out_mode == "CROSS":
+            emit = self._cross_strategy_outputs(out_policy, emit)
+        # 默认 / EMIT_EACH / FANOUT_TO_SLOT：emit 原样路由。
+
         spawned: list[str] = []
         # 先把全部端口 prepare 完（纯函数，可能抛）—— 校验失败时
         # 子容器还没实例化，扇出与路由一起保持原子。
+        # 列表 payload 按 V2 语义逐项扇出（CROSS/WAIT_ALL/CROSS_ALL 的结果列表）。
         prepared: list[tuple] = []
-        for port, payload in (decision.get("emit") or {}).items():
-            prepared += self._prepare_route(tpl, node_id, port, payload)
+        for port, payload in emit.items():
+            drafts = payload if isinstance(payload, (list, tuple)) else [payload]
+            for draft in drafts:
+                prepared += self._prepare_route(tpl, node_id, port, draft)
 
-        if out_policy.get("mode") == "FANOUT_TO_SLOT":
+        if out_mode == "FANOUT_TO_SLOT":
             slot_id = out_policy["slot"]
             slot = tpl["slots"][slot_id]
             entry_node, entry_ep = slot["entry"].split(".")
@@ -313,6 +405,8 @@ class SchedulingMixin:
 
         for m in batch:
             m.state = "CONSUMED"
+        for m in discard:
+            m.state = "CONSUMED"
         inst.seq += 1
         self._append_object(
             f"run/{inst.gid}",
@@ -321,6 +415,9 @@ class SchedulingMixin:
                 "node": node_id,
                 "endpoint": ",".join(sorted(payloads)),
                 "message": ",".join(m.mid for m in batch),
+                "discarded": ",".join(m.mid for m in discard),
+                "staged_message_ids": staged_ids,
+                "selection": selection,
                 "topic": None,
                 "edges_traversed": traversed,
                 "spawned": spawned,
@@ -330,6 +427,53 @@ class SchedulingMixin:
                 graph_instance_id=inst.gid, node_id=node_id, at_seq=inst.seq
             ),
         )
+
+    def _stage_strategy_outputs(self, inst, node_id, out_policy, emit, batch):
+        """WAIT_ALL：结果暂存于 Strategy 节点 state；全部具备后一起发射。"""
+        required = out_policy.get("required_outputs") or []
+        if not required:
+            raise InvariantError("WAIT_ALL 需要 required_outputs")
+        policy_state = inst.nodes[node_id].persistent.setdefault(
+            "policy_state", {})
+        staged = policy_state.setdefault("staged_outputs", {})
+        staged_ids = policy_state.setdefault("staged_message_ids", [])
+        for port, raw in emit.items():
+            items = raw if isinstance(raw, (list, tuple)) else [raw]
+            staged.setdefault(port, []).extend(items)
+        for m in batch:
+            if m.mid not in staged_ids:
+                staged_ids.append(m.mid)
+        if any(not staged.get(port) for port in required):
+            return {}, list(staged_ids)
+        ready = {port: list(staged[port]) for port in required}
+        policy_state["staged_outputs"] = {}
+        policy_state["staged_message_ids"] = []
+        return ready, staged_ids
+
+    def _cross_strategy_outputs(self, out_policy, emit) -> dict[str, Any]:
+        """CROSS(left,right,target)：同一轮 handler 返回的两组候选做笛卡尔积。"""
+        left_name = out_policy.get("left")
+        right_name = out_policy.get("right")
+        target_name = out_policy.get("target")
+        if not (left_name and right_name and target_name):
+            raise InvariantError("CROSS 需要 left/right/target")
+        left_key = out_policy.get("leftKey", "left")
+        right_key = out_policy.get("rightKey", "right")
+        left_raw = emit.get(left_name)
+        right_raw = emit.get(right_name)
+        if left_raw is None or right_raw is None:
+            raise InvariantError(
+                f"CROSS 需要 handler 同时返回 {left_name!r} 与 {right_name!r}")
+        left_items = left_raw if isinstance(left_raw, (list, tuple)) else [left_raw]
+        right_items = right_raw if isinstance(right_raw, (list, tuple)) else [right_raw]
+        out = dict(emit)
+        out.pop(left_name, None)
+        out.pop(right_name, None)
+        out[target_name] = [
+            {left_key: l, right_key: r}
+            for l in left_items for r in right_items
+        ]
+        return out
 
     def _handle_subflow(self, inst, tpl, node_id, node, msg) -> dict[str, Any]:
         """调用式复用：引用节点在父图里是普通节点，内部实例化/投递/等待。
@@ -410,10 +554,6 @@ class SchedulingMixin:
         tpl = self._templates[inst.template_ref]
         node = tpl["nodes"][node_id]
         kind = node["kind"]
-        if kind == "agent":
-            # agent 走 claim / execute / apply 三段，自带提交与快照
-            self._run_agent_full(inst, node_id, node, msg)
-            return
         if kind == "approval":
             # 停在此处等待授权主体答复；不提交、不路由
             msg.state = "AWAITING"
@@ -431,6 +571,9 @@ class SchedulingMixin:
         elif kind == "subflow":
             outputs = self._handle_subflow(inst, tpl, node_id, node, msg)
         elif kind == "end":
+            # V4 定案：end 是终态汇点 —— 消费到达的数据消息、记录一次终态提交。
+            # 关闭与 DRAIN 不在内核：instance 关闭只能由控制面 control(close)
+            # 授权执行（G3），用户在关闭前自行编排排空（close 实验1）。
             outputs = {}
         else:
             raise NotImplementedError(f"node kind not implemented yet: {kind}")
@@ -561,19 +704,6 @@ class SchedulingMixin:
             "publish": lambda oid, body: self._append_object(oid, body),
         }
 
-    def _run_agent_full(self, inst, node_id, node, msg) -> None:
-        eid = self._claim(inst, node_id, node, [msg])
-        rec = self._records[eid]
-        result = self._execute_with_retry(rec)
-        if result.termination == "CANCELLED":
-            self._release(eid, "CANCELLED")
-            return
-        if result.termination in ("FAILED", "INVALID_OUTPUT", "BUDGET"):
-            # 执行面耗尽重试仍不合格 —— 不产生任何提交
-            self._release(eid, "FAILED")
-            return
-        self.apply_execution(eid, result)
-
     def _claim(self, inst, node_id, node, msgs, *, spec_id=None) -> str:
         """commit A —— 锁定输入，写 RUNNING 记录，推进节点级版本。"""
         if self._backend is None:
@@ -605,6 +735,7 @@ class SchedulingMixin:
             context=ctx,
             origin=(inst.gid, node_id),
             output_contract=OutputContract(
+                schema=self._emit_schema_for(node),
                 allowed_emit_ports=tuple(node.get("endpoints", {}))
             ),
             resume_handle=st.session_handle,
@@ -651,17 +782,22 @@ class SchedulingMixin:
             raise InvariantError("node-scoped base changed since claim")
 
         tpl = self._templates[inst.template_ref]
+        node = tpl["nodes"][rec.node_id]
         allowed = rec.request.output_contract.allowed_emit_ports
+        claimed = [self._messages[mid] for mid in rec.claimed]
+        has_callback = any(m.callback for m in claimed)
         outputs: dict[str, Any] = {}
         for port, payload in result.emissions:
-            if port not in allowed and port != "reply":
-                raise InvariantError(f"agent emitted undeclared port: {port}")
+            if port not in allowed:
+                # "reply" 是**回程通道**，不是可自由选择的端口：只有本次输入
+                # 确实携带 callback 时才放行；否则与其它端口同规（须声明）。
+                if not (port == "reply" and has_callback):
+                    raise InvariantError(f"agent emitted undeclared port: {port}")
             outputs[port] = payload
 
         # ---- 校验段：全部纯函数，任一失败都不留副作用 --------------------
         # 顺序很关键：artifact 落库、REPLY 投递、边路由必须**同生共死**。
         # 逐项边做边校验会出现"执行记录 FAILED，下游却已跑起来"。
-        claimed = [self._messages[mid] for mid in rec.claimed]
         reply: tuple | None = None
         if "reply" in outputs:
             cb = next((m.callback for m in claimed if m.callback), None)
@@ -677,6 +813,10 @@ class SchedulingMixin:
                 reply = (cb, payload)
         prepared: list[tuple] = []
         for port, payload in outputs.items():
+            # 第一不变量的取值维度：即使该端口没有出边，emit 契约也必须在
+            # apply 阶段校验（有边时 _prepare_route 会再验一遍目标端）。
+            src_ref = self._endpoint_ref(node, port, "emit", "PUSH")
+            self._validate_payload(src_ref, payload, where=f"端口 {port} 源端")
             prepared += self._prepare_route(tpl, rec.node_id, port, payload)
         for kind_, oid, body in result.artifacts:
             if kind_ in self.store.KERNEL_KINDS or                     oid.startswith("run/") or oid.startswith("annotation/"):

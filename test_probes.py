@@ -145,18 +145,21 @@ class ProbeSuite:
     # ---- P3 ◇B1 -----------------------------------------------------------
 
     def test_P3_tool_set_is_exactly_what_we_gave(self):
-        """◇B1：暴露给模型的工具集应恰好等于 agent_spec.tools。
+        """◇B1：暴露给模型的工具集应恰好等于 {emit} ∪ agent_spec.tools。
 
-        做不到 ⇒ 退到 B1′（至少能观测实际可用工具）。
+        断言的是 driver 回传的 **actual_tools**（真正发给 API 的集合）；
+        只回显 received_tools 的 backend 无法通过本条（那只是我们宣称给的）。
         """
         tools = [{"name": "emit"}, {"name": "read_artifact"}]
         be = self.make_backend()
         res = be.run(self.request(tools=tools, echoContext=True,
                                   emit=[{"port": "out", "payload": {}}]))
+        actual = res.diagnostics.get("actual_tools")
         received = res.diagnostics.get("received_tools")
-        if received is None:
+        if actual is None and received is None:
             self.skipTest("该 backend 不回报工具集；见 P4 的观测降级")
-        self.assertEqual([t["name"] for t in received], ["emit", "read_artifact"])
+        names = [t["name"] for t in (actual if actual is not None else received)]
+        self.assertEqual(names, ["emit", "read_artifact"])
 
     # ---- P4 ○B6 -----------------------------------------------------------
 
@@ -373,6 +376,11 @@ PI_DRIVER = os.path.join(HERE, "drivers", "pi_driver.mjs")
     "pi driver 未就绪或未设 PROBE_PI=1",
 )
 class TestPi(ProbeSuite, unittest.TestCase):
+    """pi 低层 Agent API 接线验证（fauxProvider 脚本响应）。
+
+    验证的是我们的接口 → pi Agent 的**形状**：构造、transformContext、
+    beforeToolCall、工具全集、cancel、无状态。真实供应商集成仍是待办。
+    """
     supports_forced_compaction = False
     supports_hang = False
 
@@ -389,8 +397,8 @@ class TestPi(ProbeSuite, unittest.TestCase):
         return be
 
     def fake(self, **kw):
-        # 真实 backend：行为由模型决定，探针只提供意图不提供剧本
-        return {}
+        # faux 验证模式：把探针意图作为脚本传给 driver（同 fake_driver 协议）
+        return {"fake": kw} if kw else {}
 
 
 # TODO: TestClaudeAgentSDK / TestCodex —— 同一 ProbeSuite，换 driver 即可

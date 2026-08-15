@@ -6,9 +6,10 @@ config/*.local.json
 
 # Node
 node_modules/
-package-lock.json
+# package-lock.json 入库以锁定 pi 验证环境的精确版本
 
 # Python
 __pycache__/
 *.pyc
 .pytest_cache/
+.coverage

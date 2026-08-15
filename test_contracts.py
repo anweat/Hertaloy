@@ -38,12 +38,13 @@ class ContractTestCase(unittest.TestCase):
         self.rt.register_contract("PlanResult", 2, PLAN)
         self.rt.register_contract("CodeTask", 3, TASK)
 
-    def _tpl(self, *, servo=None, strict=False, tgt_required=("specRef",)):
+    def _tpl(self, *, servo=None, strict=False, tgt_required=("specRef",),
+             planner_handler="noop"):
         task = dict(TASK, required=list(tgt_required))
         ref = self.rt.register_contract("Target", len(self.rt._contracts), task)
         spec = {
             "nodes": {
-                "planner": {"kind": "plain", "handler": "noop", "endpoints": {
+                "planner": {"kind": "plain", "handler": planner_handler, "endpoints": {
                     "io": {}, "out": {"emit": {"PUSH": {"contract": "PlanResult@2"}}},
                 }},
                 "coder": {"kind": "plain", "handler": "record", "endpoints": {
@@ -160,26 +161,28 @@ class TestConnectionTime(ContractTestCase):
 
 class TestRuntimeValidation(ContractTestCase):
 
-    def _run(self, payload, *, servo=None):
+    def _run(self, payload, *, servo=None, planner_handler="noop"):
         self.rt.register_transform("bridge", role="EDGE_SERVO",
                                    body={"map": {"planRef": "specRef"}})
-        tpl = self.rt.register_graph_template("live", self._tpl(servo=servo or "bridge"))
+        tpl = self.rt.register_graph_template(
+            "live", self._tpl(servo=servo or "bridge",
+                              planner_handler=planner_handler))
         job = self.rt.instantiate(tpl, owner="service:job")
         self.rt.send((job, "planner", "io"), payload)
         self.rt.drain(job)
         return job
 
     def test_R1_valid_payload_flows_through(self):
-        self.rt.register_handler("noop", lambda p, c: {"out": p})
-        job = self._run({"planRef": "plan@1"})
+        self.rt.register_handler("passthrough", lambda p, c: {"out": p})
+        job = self._run({"planRef": "plan@1"}, planner_handler="passthrough")
         self.assertEqual(self.rt.node_persistent_state(job, "coder")["last"],
                          {"specRef": "plan@1"})
 
     def test_R2_source_contract_violation_is_caught_before_servo(self):
         """源端不合契约 —— 在 Servo 之前就拒绝。"""
-        self.rt.register_handler("noop", lambda p, c: {"out": {"wrong": 1}})
+        self.rt.register_handler("bad-out", lambda p, c: {"out": {"wrong": 1}})
         with self.assertRaises(InvariantError) as cm:
-            self._run({})
+            self._run({}, planner_handler="bad-out")
         self.assertIn("源端", str(cm.exception))
         self.assertIn("planRef", str(cm.exception))
 
@@ -199,10 +202,10 @@ class TestRuntimeValidation(ContractTestCase):
         })
         self.rt.register_transform("bridge2", role="EDGE_SERVO",
                                    body={"map": {"planRef": "specRef"}})
-        self.rt.register_handler("noop", lambda p, c: {"out": p})
+        self.rt.register_handler("pass2", lambda p, c: {"out": p})
         tpl = self.rt.register_graph_template("loose-bridge", {
             "nodes": {
-                "planner": {"kind": "plain", "handler": "noop", "endpoints": {
+                "planner": {"kind": "plain", "handler": "pass2", "endpoints": {
                     "io": {}, "out": {"emit": {"PUSH": {"contract": "PlanLoose@1"}}},
                 }},
                 "coder": {"kind": "plain", "handler": "record", "endpoints": {
@@ -222,8 +225,9 @@ class TestRuntimeValidation(ContractTestCase):
 
     def test_R4_validator_never_silently_fills_fields(self):
         """★ 只接受或拒绝，不暗中补字段。"""
-        self.rt.register_handler("noop", lambda p, c: {"out": p})
-        job = self._run({"planRef": "plan@1", "tasks": []})
+        self.rt.register_handler("pass4", lambda p, c: {"out": p})
+        job = self._run({"planRef": "plan@1", "tasks": []},
+                        planner_handler="pass4")
         got = self.rt.node_persistent_state(job, "coder")["last"]
         self.assertNotIn("includeTests", got)      # 契约里有，但没人给，就不该出现
 
@@ -238,6 +242,103 @@ class TestContractIdentity(ContractTestCase):
         self.assertIn("精确到版本", str(cm.exception))
         with self.assertRaises(InvariantError):
             self.rt._contract("PlanResult@9")      # 不存在的版本
+
+
+class TestAgentOutputContract(ContractTestCase):
+
+    def _agent_env(self, *, with_edge=False, emit_contract=True):
+        self.rt.register_card(kind="rules", card_id="base", version=1, body={})
+        self.rt.compile_agent_spec("w", model="m", cards=[("rules", "base")])
+        out_ep = {"emit": {"PUSH": {"contract": "PlanResult@2"}}} if emit_contract else {}
+        nodes = {
+            "worker": {"kind": "agent", "spec": "w",
+                       "endpoints": {"io": {}, "out": out_ep}},
+        }
+        edges = []
+        if with_edge:
+            nodes["sink"] = {"kind": "plain", "handler": "record",
+                             "endpoints": {"io": {}}}
+            edges = [{"id": "e1", "from": "worker.out", "to": "sink.io"}]
+        tpl = self.rt.register_graph_template(
+            f"a-{with_edge}-{emit_contract}-{len(self.rt._templates)}",
+            {"nodes": nodes, "edges": edges})
+        return self.rt.instantiate(tpl, owner="service:job")
+
+    def test_OC1_output_contract_schema_is_derived_from_emit_endpoints(self):
+        """★ OutputContract.schema 不是空壳：从 emit 端点契约推导 port 枚举与 payload 约束。"""
+        from nodeflow_v4 import ExecutionResult
+        job = self._agent_env(with_edge=True)
+        self.rt.send((job, "worker", "io"), {"task": "t"})
+        eid, req = self.rt.begin_execution(job, "worker")
+        schema = req.output_contract.schema
+        self.assertEqual(schema["properties"]["port"]["enum"], ["out"])
+        self.assertIn("oneOf", schema["properties"]["payload"])
+        variant = schema["properties"]["payload"]["oneOf"][0]
+        self.assertEqual(variant["properties"]["port"], {"const": "out"})
+        self.assertIn("planRef", variant["properties"]["payload"]["required"])
+        self.rt.apply_execution(
+            eid, ExecutionResult(execution_id=eid,
+                                 emissions=(("out", {"planRef": "p@1"}),)))
+
+    def test_OC2_emit_contract_is_enforced_even_without_an_edge(self):
+        """声明了 emit 契约的端口，即使没有出边也要在 apply 拒绝违约 payload。"""
+        from nodeflow_v4 import ExecutionResult
+        job = self._agent_env(with_edge=False)
+        backend = self.rt._backend
+        backend.on("w", lambda req: ExecutionResult(
+            execution_id=req.execution_id, emissions=(("out", {"wrong": 1}),)))
+        self.rt.send((job, "worker", "io"), {"task": "t"})
+        self.rt.drain(job)                       # 不再穿透 drain
+        recs = self.rt.node_executions(job, "worker")
+        self.assertEqual([r.status for r in recs], ["FAILED"])
+        self.assertTrue(all(m.state == "FAILED"
+                            for m in self.rt._messages.values()
+                            if m.target[0] == job))
+
+    def test_OC3_reply_is_only_a_callback_channel_not_a_free_port(self):
+        """裸 "reply" 端口不可自由选择：无 callback 时按未声明端口拒绝。"""
+        from nodeflow_v4 import ExecutionResult
+        job = self._agent_env(with_edge=False, emit_contract=False)
+        backend = self.rt._backend
+        backend.on("w", lambda req: ExecutionResult(
+            execution_id=req.execution_id, emissions=(("reply", {"x": 1}),)))
+        self.rt.send((job, "worker", "io"), {"task": "t"})
+        self.rt.drain(job)
+        self.assertEqual([r.status for r in self.rt.node_executions(job, "worker")],
+                         ["FAILED"])
+
+    def test_OC4_reply_with_callback_is_delivered_through_the_channel(self):
+        """携带 callback 的输入，其 "reply" 回程正常投递 —— 不变量 M3 不回归。"""
+        from nodeflow_v4 import ExecutionResult
+        self.rt.register_card(kind="rules", card_id="base", version=1, body={})
+        self.rt.compile_agent_spec("w", model="m", cards=[("rules", "base")])
+        self.rt.register_topic("svc", request_contract={"type": "object"})
+        tpl = self.rt.register_graph_template("oc-svc", {
+            "nodes": {"worker": {"kind": "agent", "spec": "w",
+                                 "endpoints": {"io": {}, "out": {}}}},
+            "edges": [],
+            "subscriptions": [{"topic": "svc", "endpoint": "worker.io"}],
+        })
+        job = self.rt.instantiate(tpl, owner="service:job")
+        backend = self.rt._backend
+        calls: list[bool] = []
+
+        def worker(req):
+            if not calls:
+                calls.append(True)
+                return ExecutionResult(
+                    execution_id=req.execution_id,
+                    emissions=(("reply", {"echo": req.context.messages[0]}),))
+            # REPLY 到达调用方端点后就是普通输入；这里空输出即可消费
+            return ExecutionResult(execution_id=req.execution_id)
+
+        backend.on("w", worker)
+        self.rt.publish("svc", {"q": 1}, callback=(job, "worker", "io"))
+        self.rt.drain(job)
+        replies = [m for m in self.rt._messages.values() if m.mkind == "REPLY"]
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].state, "CONSUMED")
+        self.assertEqual(replies[0].payload, {"echo": {"q": 1}})
 
 
 if __name__ == "__main__":

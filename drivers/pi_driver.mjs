@@ -1,34 +1,43 @@
 #!/usr/bin/env node
 /**
- * pi driver —— 骨架，**尚未验证**。
+ * pi driver —— 低层 Agent API 接线（faux provider 验证模式）
  *
- * 本文件按 pi 的 README/文档编写，未在装有 pi 的环境中跑过。
- * 带 [TODO-VERIFY] 的位置是我无法从文档确认的具体形状，装上 pi 后需核对：
- *
- *   npm i @earendil-works/pi-agent-core @earendil-works/pi-ai
- *   PROBE_PI=1 python -m unittest test_probes.TestPi -v
+ * 状态：**API 形状已验证**（@earendil-works/pi-agent-core@0.84.x +
+ *       @earendil-works/pi-ai，fauxProvider 驱动，PROBE_PI=1 跑 TestPi）。
+ * 真实供应商集成（OpenAI/Anthropic/Google）仍是待办：把下面 `scriptFor`
+ * 换成真实 `createModels` + provider 即可，协议与观测逻辑不变。
  *
  * 设计立场（HARNESS_EVALUATION §1）：只租用推理循环，不租用状态。
- *   - 用低层 `Agent`，**不用** `AgentHarness`（后者自带 lanes/tree/records，与编排面双份）
+ *   - 用低层 `Agent`，不用 `AgentHarness`（后者自带 lanes/tree/records，与编排面双份）
  *   - 不使用 pi 的 session 持久化；历史完全来自 request.context
  *   - 不使用 CBOR 协议 / server 包
  */
 
 import readline from "node:readline";
+import { Agent } from "@earendil-works/pi-agent-core";
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  fauxToolCall,
+} from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const observe = (id, observation) =>
   out({ type: "observation", execution_id: id, observation });
 
-// [TODO-VERIFY] 确认包名与导出符号
-let Agent, models;
-try {
-  ({ Agent } = await import("@earendil-works/pi-agent-core"));
-  models = await import("@earendil-works/pi-ai");
-} catch (err) {
-  out({ type: "error", message: `pi 未安装或导出不符: ${String(err)}` });
-  process.exit(1);
-}
+// ---------------------------------------------------------------------------
+// 验证模式：faux provider。真实供应商接好前，TestPi 用脚本响应验证
+// Agent 构造、transformContext、beforeToolCall、工具全集、取消/无状态接线。
+// ---------------------------------------------------------------------------
+
+const faux = fauxProvider();
+const models = createModels();
+models.setProvider(faux.provider);
+const model = faux.getModel();
+const streamFn = models.streamSimple.bind(models);
 
 const inflight = new Map(); // execution_id -> agent
 
@@ -38,7 +47,9 @@ function compileMessages(ctx) {
   for (const ref of ctx.head ?? [])
     msgs.push({ role: "user", content: `[head] ${ref}` });
   for (const m of ctx.messages ?? [])
-    msgs.push(typeof m === "object" && m.role ? m : { role: "user", content: JSON.stringify(m) });
+    msgs.push(
+      typeof m === "object" && m?.role ? m : { role: "user", content: JSON.stringify(m) }
+    );
   // 不变量 X：运行期发现的 skill/资料一律追加在**尾部**，保住缓存前缀
   for (const ref of ctx.tail ?? [])
     msgs.push({ role: "user", content: `[tail] ${ref}` });
@@ -47,80 +58,132 @@ function compileMessages(ctx) {
   return msgs;
 }
 
-/** allowed_emit_ports → 一个 emit 工具；agent 只能选，不能构造。 */
+/**
+ * allowed_emit_ports → emit 工具 + agent_spec.tools 声明的工具全集。
+ * declared 工具没有执行器：调用时在 beforeToolCall 被显式 gate 掉并回传理由，
+ * 不会静默吞掉。
+ */
 function buildTools(req, executionId, emissions) {
   const ports = req.output_contract?.allowed_emit_ports ?? [];
+  const portSchema = Type.Union(
+    (ports.length ? ports : ["out"]).map((p) => Type.Literal(p))
+  );
   const emitTool = {
     name: "emit",
+    label: "emit",
     description: `输出结果。port 必须是以下之一：${ports.join(", ")}`,
-    // [TODO-VERIFY] pi 用 TypeBox；确认 Type.Object 的导入与写法
-    parameters: {
-      type: "object",
-      properties: {
-        port: { type: "string", enum: ports },
-        payload: { type: "object" },
-      },
-      required: ["port", "payload"],
-    },
+    parameters: Type.Object({
+      port: portSchema,
+      payload: Type.Any(),
+    }),
     executionMode: "sequential",
-    execute: async (toolCallId, params /* , signal, onUpdate */) => {
-      emissions.push({ port: params.port, payload: params.payload });
+    execute: async (_id, params) => {
+      emissions.push({ port: params.port, payload: params.payload ?? {} });
       return { content: [{ type: "text", text: "ok" }], details: {} };
     },
   };
-  return [emitTool];
+
+  const declared = (req.agent_spec?.tools ?? [])
+    .filter((t) => t?.name && t.name !== "emit")
+    .map((t) => ({
+      name: t.name,
+      label: t.name,
+      description: t.description ?? "",
+      parameters: Type.Any(),
+      executionMode: "sequential",
+      execute: async () => {
+        throw new Error(`工具 ${t.name} 已声明但未接入执行器（pi driver 待办）`);
+      },
+    }));
+  return { tools: [emitTool, ...declared] };
+}
+
+/** 探针/测试模式：request.agent_spec.fake 把剧本翻译成 faux 脚本响应。 */
+function scriptFor(fake) {
+  const blocks = [];
+  for (const c of fake.toolCalls ?? [])
+    blocks.push(fauxToolCall(c.name, c.input ?? {}));
+  for (const e of fake.emit ?? [])
+    blocks.push(fauxToolCall("emit", { port: e.port, payload: e.payload ?? {} }));
+  if (blocks.length) {
+    faux.setResponses([fauxAssistantMessage(blocks, { stopReason: "toolUse" })]);
+    return;
+  }
+  faux.setResponses([fauxAssistantMessage(fauxText("done"))]);
 }
 
 async function handleRun(req) {
   const id = req.execution_id;
   const emissions = [];
   const observations = [];
+  const fake = req.agent_spec?.fake ?? {};
+  scriptFor(fake);
+
+  const built = buildTools(req, id, emissions);
+  const declaredNames = new Set(built.tools.map((t) => t.name));
 
   const agent = new Agent({
     initialState: {
       systemPrompt: req.agent_spec?.systemPrompt ?? "",
-      model: req.agent_spec?.model,
-      tools: buildTools(req, id, emissions),
-      messages: compileMessages(req.context),
+      model,
+      tools: built.tools,
     },
-    // [TODO-VERIFY] streamFn 的绑定方式
-    streamFn: models.streamSimple?.bind(models),
+    streamFn,
 
     // ★A3：绝不擅自压缩 —— 上下文完全由编排面决定
     transformContext: async (messages) => messages,
 
     // ◇B2：纵深防御。第一不变量在 apply_execution 已强制，这里是第二道
     beforeToolCall: async ({ toolCall, args }) => {
-      const gated = toolCall.name === "emit";
+      const name = toolCall.name;
+      const gated = name === "emit" || declaredNames.has(name);
       observations.push({
         kind: "tool_call",
-        name: toolCall.name,
+        name,
         gated,
         input: args ?? {},
       });
       observe(id, observations[observations.length - 1]);
-      if (gated && !(req.output_contract?.allowed_emit_ports ?? []).includes(args?.port)) {
-        return { block: true, reason: `port ${args?.port} 未声明，请从允许集合中选择` };
+      if (name === "emit") {
+        const ports = req.output_contract?.allowed_emit_ports ?? [];
+        if (!ports.includes(args?.port)) {
+          return {
+            block: true,
+            terminate: true,
+            reason: `port ${args?.port} 未声明，请从允许集合中选择`,
+          };
+        }
+        return undefined;
       }
-      return undefined;
+      if (declaredNames.has(name)) {
+        return { block: true, terminate: true,
+                 reason: `工具 ${name} 已声明但未接入执行器，已拦截` };
+      }
+      return { block: true, terminate: true,
+               reason: `工具 ${name} 未声明，不可调用` };
     },
   });
 
   inflight.set(id, agent);
 
-  agent.subscribe(async (event) => {
+  agent.subscribe((event) => {
     // ○B6 / ○C2：内部 tool 拦不住也要能看见
     if (event.type?.startsWith("tool_execution")) {
-      observe(id, { kind: "tool_event", type: event.type, name: event.name });
+      const rec = { kind: "tool_event", type: event.type, name: event.name };
+      observations.push(rec);
+      observe(id, rec);
     }
   });
 
   let termination = "DONE";
+  let errorMessage = null;
   try {
-    await agent.waitForIdle?.(); // [TODO-VERIFY] 触发一轮的确切入口
+    await agent.prompt(compileMessages(req.context));  // 历史外来：完整 messages 是我们给的
+    await agent.waitForIdle?.();
   } catch (err) {
     termination = "FAILED";
-    observe(id, { kind: "error", message: String(err) });
+    errorMessage = String(err?.message ?? err);
+    observe(id, { kind: "error", message: errorMessage });
   } finally {
     inflight.delete(id);
   }
@@ -132,7 +195,7 @@ async function handleRun(req) {
       execution_id: id,
       emissions,
       artifacts: [],
-      // [TODO-VERIFY] pi 的 usage 字段名；compactions 若拿不到必须留 0 并在文档说明
+      // faux provider 不产生真实计量；真实供应商接入后在事件流里取 usage。
       usage: { in_tokens: 0, out_tokens: 0, cost: 0, wall_clock_seconds: 0,
                tool_calls: observations.length, compactions: 0 },
       termination,
@@ -140,26 +203,34 @@ async function handleRun(req) {
       observations,
       diagnostics: {
         received_context: req.context,
-        received_tools: (req.agent_spec?.tools ?? []),
+        received_tools: req.agent_spec?.tools ?? [],
+        actual_tools: built.tools.map((t) => ({ name: t.name })),
         received_system: req.agent_spec?.systemPrompt ?? null,
+        error: errorMessage,
       },
     },
   });
 }
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
-rl.on("line", async (line) => {
+rl.on("line", (line) => {
   if (!line.trim()) return;
   let msg;
   try {
     msg = JSON.parse(line);
   } catch (err) {
-    return out({ type: "error", message: `bad json: ${String(err)}` });
+    out({ type: "error", message: `bad json: ${String(err)}` });
+    return;
   }
-  if (msg.type === "run") return handleRun(msg.request);
+  if (msg.type === "run") {
+    handleRun(msg.request).catch((err) => {
+      out({ type: "error", execution_id: msg.request?.execution_id,
+            message: String(err?.message ?? err) });
+    });
+    return;
+  }
   if (msg.type === "cancel") {
-    const agent = inflight.get(msg.execution_id);
-    if (agent) agent.abort();          // ◇C1
+    inflight.get(msg.execution_id)?.abort();   // ◇C1
     return;
   }
   out({ type: "error", message: `unknown message type: ${msg.type}` });

@@ -83,7 +83,9 @@ CREATE TABLE IF NOT EXISTS messages (
     state    TEXT NOT NULL,
     callback TEXT,
     topic    TEXT,
-    mkind    TEXT NOT NULL
+    mkind    TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    exit_port TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_state ON messages(state);
 
@@ -113,9 +115,19 @@ class SqlitePersistence:
     def __init__(self, path: str = ":memory:") -> None:
         self.conn = sqlite3.connect(path)
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
         #: 每个 object_id 已落盘到第几版 —— 对象 append-only，只补写增量
         self._hwm: dict[str, int] = {}
+
+    def _migrate(self) -> None:
+        """对旧库补列：attempts（失败重试计数）与 exit_port（subflow 回程端口）。"""
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(messages)")}
+        if "attempts" not in cols:
+            self.conn.execute(
+                "ALTER TABLE messages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
+        if "exit_port" not in cols:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN exit_port TEXT")
 
     def close(self) -> None:
         self.conn.close()
@@ -166,10 +178,10 @@ class SqlitePersistence:
                 )
             for m in rt._messages.values():
                 c.execute(
-                    "INSERT OR REPLACE INTO messages VALUES (?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO messages VALUES (?,?,?,?,?,?,?,?,?)",
                     (m.mid, _J(list(m.target)), _J(m.payload), m.state,
                      _J(list(m.callback)) if m.callback else None,
-                     m.topic, m.mkind),
+                     m.topic, m.mkind, m.attempts, m.exit_port),
                 )
             for topic, entries in rt._subs.items():
                 for sid, target in entries:
@@ -229,13 +241,14 @@ class SqlitePersistence:
             )
 
         rt._messages.clear()
-        for mid, target, payload, state, callback, topic, mkind in c.execute(
-                "SELECT * FROM messages"):
+        for mid, target, payload, state, callback, topic, mkind, attempts, exit_port \
+                in c.execute("SELECT * FROM messages"):
             rt._messages[mid] = _Message(
                 mid=mid, target=tuple(json.loads(target)),
                 payload=json.loads(payload), state=state,
                 callback=tuple(json.loads(callback)) if callback else None,
                 topic=topic, mkind=mkind,
+                attempts=int(attempts or 0), exit_port=exit_port,
             )
 
         for sid, topic, target in c.execute("SELECT * FROM subscriptions"):

@@ -162,6 +162,30 @@ class TestToolNaming(KernelTestCase):
         self.assertIn("mcp/a@1", msg)
         self.assertIn("mcp/b@1", msg)
 
+    def test_T2b_explicit_tools_respect_the_same_naming_rules(self):
+        """显式 tools 与卡片工具同规：保留名不可用、重名显式报错。"""
+        with self.assertRaises(InvariantError) as cm:
+            self.rt.compile_agent_spec(
+                "t", model="m", cards=[],
+                tools=[{"name": "emit", "description": "劫持"}])
+        self.assertIn("保留名", str(cm.exception))
+
+        with self.assertRaises(InvariantError) as cm:
+            self.rt.compile_agent_spec(
+                "t", model="m", cards=[],
+                tools=[{"name": "x", "description": "a"},
+                       {"name": "x", "description": "b"}])
+        self.assertIn("冲突", str(cm.exception))
+        self.assertIn("spec/t", str(cm.exception))
+
+        self.rt.register_card(kind="mcp", card_id="m", version=1, body={
+            "server": "m", "tools": [{"name": "search", "summary": "卡片"}]})
+        with self.assertRaises(InvariantError) as cm:
+            self.rt.compile_agent_spec(
+                "t", model="m", cards=[("mcp", "m", 1)],
+                tools=[{"name": "search", "description": "显式"}])
+        self.assertIn("mcp/m@1", str(cm.exception))
+
     def test_T3_tools_carry_their_source_for_traceability(self):
         self.rt.register_card(kind="mcp", card_id="git", version=3, body={
             "server": "git", "tools": [{"name": "git_log", "summary": "历史"}]})
