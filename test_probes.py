@@ -404,5 +404,78 @@ class TestPi(ProbeSuite, unittest.TestCase):
 # TODO: TestClaudeAgentSDK / TestCodex —— 同一 ProbeSuite，换 driver 即可
 
 
+# ---------------------------------------------------------------------------
+# 候选：pi 真实供应商（DeepSeek）—— 需 PI_REAL=1 + DEEPSEEK_API_KEY
+# ---------------------------------------------------------------------------
+
+
+@unittest.skipUnless(
+    os.path.exists(PI_DRIVER) and os.environ.get("PI_REAL") == "1"
+    and os.environ.get("DEEPSEEK_API_KEY"),
+    "pi real 模式需要 PI_REAL=1 且 DEEPSEEK_API_KEY",
+)
+class TestPiReal(ProbeSuite, unittest.TestCase):
+    """pi 低层 Agent + deepseekProvider 的真实供应商行为验证。
+
+    断言原则同对照组：落在 backend 能力上，不落在模型顺从度上。
+    P2 用量有意保守（3k×8 turns）以省 token。
+    """
+    supports_forced_compaction = False
+    supports_hang = False
+    probe_context_chars = 3_000
+    probe_context_turns = 8
+
+    def setUp(self):
+        self._backends = []
+
+    def tearDown(self):
+        for be in self._backends:
+            be.close()
+
+    def make_backend(self):
+        be = SubprocessBackend([_node(), PI_DRIVER], cwd=HERE)
+        self._backends.append(be)
+        return be
+
+    def fake(self, **kw):
+        # 真实模式：行为由模型决定，探针意图只通过提示词表达
+        return {}
+
+    def request(self, *, messages=(), **kw):
+        if not messages:
+            messages = [{"role": "user",
+                         "content": "调用 emit 工具，port 用 out，"
+                                    'payload 填 {"n": 1}。'}]
+        return super().request(messages=messages, **kw)
+
+    def test_P2_no_unauthorized_compaction(self):
+        """★A3 保守版：更短上下文 + 明确停止指令。
+
+        判据不变：backend 不得擅自压缩/裁剪我们给的历史；若因长度报错，
+        错误必须可观测。加停止指令是为了不烧输出 token —— 这是测试成本
+        控制，不是放宽判据。
+        """
+        huge = [{"role": "user", "content": "x" * 2_000}
+                for _ in range(4)]
+        huge.append({"role": "user", "content":
+                     "忽略上面所有重复内容。不要调用任何工具，只回复 ok。"})
+        be = self.make_backend()
+        res = be.run(self.request(messages=huge,
+                                  emit=[{"port": "out", "payload": {}}]))
+        if res.usage.compactions:
+            self.fail(f"backend 擅自压缩了上下文（compactions={res.usage.compactions}）")
+        if res.termination == "FAILED":
+            self.assertIn("error", res.diagnostics)
+
+    def test_P6_runs_without_any_session_storage(self):
+        """★D1：无会话存储也要能跑。真实模型下只断言"跑通 + 端口受控"，
+        不断言 payload 与剧本一致（那是顺从度）。"""
+        be = self.make_backend()
+        res = be.run(self.request(emit=[{"port": "out", "payload": {"n": 1}}]))
+        self.assertEqual(res.termination, "DONE")
+        for port, _payload in res.emissions:
+            self.assertIn(port, ("out",), "emit 到了未声明端口")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

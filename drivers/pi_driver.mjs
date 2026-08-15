@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * pi driver —— 低层 Agent API 接线（faux provider 验证模式）
+ * pi driver —— 低层 Agent API 接线
  *
- * 状态：**API 形状已验证**（@earendil-works/pi-agent-core@0.84.x +
- *       @earendil-works/pi-ai，fauxProvider 驱动，PROBE_PI=1 跑 TestPi）。
- * 真实供应商集成（OpenAI/Anthropic/Google）仍是待办：把下面 `scriptFor`
- * 换成真实 `createModels` + provider 即可，协议与观测逻辑不变。
+ * 两种模式：
+ *   - faux（默认）：fauxProvider 脚本响应，验证接口形状（TestPi，5/3）
+ *   - real：PI_REAL=1 时用 deepseekProvider（DEEPSEEK_API_KEY 环境变量），
+ *     真实供应商行为（TestPiReal）。协议与观测逻辑两种模式完全一致。
  *
  * 设计立场（HARNESS_EVALUATION §1）：只租用推理循环，不租用状态。
  *   - 用低层 `Agent`，不用 `AgentHarness`（后者自带 lanes/tree/records，与编排面双份）
@@ -22,6 +22,7 @@ import {
   fauxText,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
+import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { Type } from "typebox";
 
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
@@ -29,14 +30,26 @@ const observe = (id, observation) =>
   out({ type: "observation", execution_id: id, observation });
 
 // ---------------------------------------------------------------------------
-// 验证模式：faux provider。真实供应商接好前，TestPi 用脚本响应验证
-// Agent 构造、transformContext、beforeToolCall、工具全集、取消/无状态接线。
+// provider 选择
 // ---------------------------------------------------------------------------
 
-const faux = fauxProvider();
+const REAL = process.env.PI_REAL === "1";
 const models = createModels();
-models.setProvider(faux.provider);
-const model = faux.getModel();
+let faux = null;
+let model = null;
+if (REAL) {
+  models.setProvider(deepseekProvider());
+  model = models.getModel("deepseek",
+                          process.env.PI_MODEL || "deepseek-v4-flash");
+  if (!model) {
+    out({ type: "error", message: "deepseek model 不可用（PI_MODEL 错误？）" });
+    process.exit(1);
+  }
+} else {
+  faux = fauxProvider();
+  models.setProvider(faux.provider);
+  model = faux.getModel();
+}
 const streamFn = models.streamSimple.bind(models);
 
 const inflight = new Map(); // execution_id -> agent
@@ -104,8 +117,9 @@ function buildTools(req, executionId, emissions) {
   return { tools: [emitTool, ...declared] };
 }
 
-/** 探针/测试模式：request.agent_spec.fake 把剧本翻译成 faux 脚本响应。 */
+/** faux 模式：request.agent_spec.fake 把剧本翻译成脚本响应。 */
 function scriptFor(fake) {
+  if (!faux) return;
   const blocks = [];
   for (const c of fake.toolCalls ?? [])
     blocks.push(fauxToolCall(c.name, c.input ?? {}));
@@ -201,13 +215,15 @@ async function handleRun(req) {
       execution_id: id,
       emissions,
       artifacts: [],
-      // faux provider 不产生真实计量；真实供应商接入后在事件流里取 usage。
+      // faux 无真实计量；real 模式 pi 的 Agent 事件流不暴露 usage 字段，
+      // 如实报 0 并在诊断中注明 —— 不伪造消耗。
       usage: { in_tokens: 0, out_tokens: 0, cost: 0, wall_clock_seconds: 0,
                tool_calls: observations.length, compactions: 0 },
       termination,
       session_handle: null,        // 不租用状态
       observations,
       diagnostics: {
+        provider_mode: REAL ? "deepseek-real" : "faux",
         received_context: req.context,
         received_tools: req.agent_spec?.tools ?? [],
         actual_tools: built.tools.map((t) => ({ name: t.name })),

@@ -101,27 +101,27 @@ harness 自己的 session 存储**保留作为调试与审计兜底**，但**不
 
 ## 3. 候选评估
 
-`✅` 已确认 ｜ `⚠️` 部分/有条件 ｜ `❔` 待实测 ｜ `❌` 不满足 ｜ `*` = 仅接线形状已验证（faux provider），真实供应商行为待实测
+`✅` 已确认 ｜ `⚠️` 部分/有条件 ｜ `❔` 待实测 ｜ `❌` 不满足
 
 | # | 判据 | **直连兼容端点**<br>（对照组·已实测） | **pi** | **Claude Agent SDK** | **Claude Code CLI** | **Codex** |
 |---|---|---|---|---|---|---|
-| ★A1 | system prompt 可替换 | ✅ P3 | ⚠️* | ✅ | ⚠️ | ❔ |
-| ★A2 | messages 可完全提供 | ✅ P1 | ⚠️* | ❔ | ❌ | ❔ |
-| ★A3 | 可禁用自动压缩 | ✅ P2（恒不压缩） | ⚠️* | ❔ | ❔ | ❔ |
-| ○A4 | 压缩可观测 | ✅ 恒为 0 | ⚠️* | ⚠️ | ⚠️ | ❔ |
-| ◇B1 | 工具集精确限定 | ✅ P3 | ⚠️* | ✅ | ⚠️ | ❔ |
-| ◇B2 | 调用前拦截 + 理由回传 | ✅ 两处拦截 | ⚠️* | ✅ | ⚠️ | ❔ |
+| ★A1 | system prompt 可替换 | ✅ P3 | ✅ | ✅ | ⚠️ | ❔ |
+| ★A2 | messages 可完全提供 | ✅ P1 | ✅ P1 | ❔ | ❌ | ❔ |
+| ★A3 | 可禁用自动压缩 | ✅ P2（恒不压缩） | ✅ P2 | ❔ | ❔ | ❔ |
+| ○A4 | 压缩可观测 | ✅ 恒为 0 | ⚠️ usage 事件不暴露，如实报 0 | ⚠️ | ⚠️ | ❔ |
+| ◇B1 | 工具集精确限定 | ✅ P3 | ✅ P3 | ✅ | ⚠️ | ❔ |
+| ◇B2 | 调用前拦截 + 理由回传 | ✅ 两处拦截 | ⚠️ 接线已验证，block 路径缺真实模型证据 | ✅ | ⚠️ | ❔ |
 | ○B6 | 内部 tool 可观测 | ➖ 无内部 tool（完全受控） | ❔ | ❔ | ❔ | ❔ |
-| ◇C1 | 取消 | ✅ P5 | ⚠️* | ✅ | ⚠️ | ❔ |
-| ★D1 | 可无状态调用 | ✅ P6 + P7 | ⚠️* | ❔ | ❌ | ❔ |
-| ◇D3 | 供应商中立 | ✅ 换 base_url 即可 | ⚠️* | ❌ | ❌ | ❌ |
+| ◇C1 | 取消 | ✅ P5 | ⚠️ `abort()` 已接线，真实中断未实测 | ✅ | ⚠️ | ❔ |
+| ★D1 | 可无状态调用 | ✅ P6 + P7 | ✅ P6 + P7 | ❔ | ❌ | ❔ |
+| ◇D3 | 供应商中立 | ✅ 换 base_url 即可 | ✅ DeepSeek 实测 | ❌ | ❌ | ❌ |
 
 **对照组实测：DeepSeek `deepseek-v4-flash`，8 条探针 6 过 2 合理跳过，连续三轮稳定。**
 跳过的两条是 `P2b`（受控 backend 无法被强制压缩）与 `P4`（完全受控，没有不可干预的内部
 tool）——都是"该 backend 不具备该情形"，不是缺陷。
 
-下表为详细判据。pi 列的 ✅ 表示**代码/文档确认**（其中 A1/A2/B1/B2/C1/D1 已被
-faux-provider 接线测试坐实）；真实供应商行为仍待实测（见 §3.1）。
+下表为详细判据。pi 列 ✅ = 代码确认 + 真实供应商探针已坐实（A1/A2/A3/B1/D1/D3）；
+⚠️ = 代码确认但该情形无法/尚未在真实模型下构造。
 
 | # | 判据 | **pi** | **Claude Agent SDK** | **Claude Code CLI** | **Codex** |
 |---|---|---|---|---|---|
@@ -144,17 +144,22 @@ faux-provider 接线测试坐实）；真实供应商行为仍待实测（见 §
 | D2 | 自有存储可作审计 | ✅ `~/.pi/agent/sessions/` JSONL | ✅ | ✅ | ❔ |
 | D3 | 供应商中立 | ✅ OpenAI / Anthropic / Google / 兼容端点 | ❌ Anthropic | ❌ Anthropic | ❌ OpenAI |
 
-### 3.1 pi —— 低层 API 接线已验证；真实供应商行为待实测
+### 3.1 pi —— 低层 API 接线 + 真实供应商（DeepSeek）均已验证
 
-> 证据（本仓库可复现）：`PROBE_PI=1 python -m unittest test_probes.TestPi -v`
-> 结果为 **5 passed / 3 skipped**（P2b 受控 backend 无法强制压缩、P4 无不可干预
-> internal tool、P5 无法构造可控挂起 —— 三条均为"该 backend 不具备该情形"，
-> 与对照组同款跳过，不是缺陷）。
+> 证据一（接线形状，faux provider）：`PROBE_PI=1 python -m unittest test_probes.TestPi -v`
+> = **5 passed / 3 skipped**。
 >
-> 验证的是**我们的接口 → pi 低层 Agent 的接线形状**：构造、`transformContext`、
-> `beforeToolCall`、工具全集、无状态、取消入口，全部走 `fauxProvider` 脚本响应。
-> **真实供应商（OpenAI/Anthropic/Google）下的 A2/A3/D1 仍待实测** —— 在跑出真实
-> 供应商证据前，pi 不得被宣称为"已实测满足全部否决项"。
+> 证据二（真实供应商）：设 `PI_REAL=1` 与 `DEEPSEEK_API_KEY`（key 不入库），
+> `python -m unittest test_probes.TestPiReal -v` = **5 passed / 3 skipped**
+> （P2b/P4/P5 是无法构造的情形，与对照组同款跳过）。
+>
+> 真实探针坐实：★A2（外来历史 P1）、★A3（不擅自压缩 P2，保守用量版）、
+> ◇B1（工具集恰为给定 P3）、★D1（无会话存储 P6 + 无隐藏状态 P7）、
+> D3（DeepSeek 端点）。P2 的保守版给模型加了"停止指令"以省输出 token ——
+> 判据不变，只是不再让模型对无意义长文本自由发挥。
+>
+> 仍待补的证据：B2 的 block 路径与 C1 的真实中断（代码已接线，缺真实模型
+> 构造手段）；A4 的 token 计量（pi Agent 事件流不暴露 usage，driver 如实报 0）。
 
 **用低层 `Agent`，不用 `AgentHarness`。**
 
@@ -266,7 +271,7 @@ class ExecutionBackend:
 
 ## 5. 选型结论
 
-1. **pi 低层 `Agent`** 为首个候选 backend —— 低层 API 接线已由 `TestPi`（faux provider，5/3）验证；真实供应商否决项待实测，未出证据前不宣称为最终选型。
+1. **pi 低层 `Agent`** 定为首个 backend —— 接线（faux 5/3）与真实供应商（DeepSeek 5/3）均已验证；B2 block 路径与 C1 真实中断仍是待补证据。
 2. **不用** `AgentHarness`、不用 CBOR 协议、不用其 CLI 层。
 3. **不依赖任何 backend 的会话存储**；历史与恢复自有，其存储仅作审计兜底。
 4. **Claude / Codex 待实测**，重点是 A2 / A3 / D1 三条否决项。

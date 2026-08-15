@@ -203,10 +203,11 @@ ExecutionResult {
 
 **托管路径的真实代价（要认）**：大型本地仓库需按会话挂载进远程沙箱，改动需回传。对主线场景是明确降级。设计上保留该 backend，但不作为默认。
 
-### 4.3.1 pi 接口核对结论（接线已验证；真实供应商待实测）
+### 4.3.1 pi 接口结论（faux 接线 + DeepSeek 真实探针均已验证）
 
-低层 Agent API 的**接线形状**已由 `TestPi`（faux provider，5 passed / 3 设计跳过）坐实；
-下表接口落点经代码确认（真实供应商下 A2/A3/D1 仍待实测，见 `HARNESS_EVALUATION.md §3.1`）：
+低层 Agent API 的**接线形状**由 `TestPi`（faux provider，5 passed / 3 设计跳过）
+坐实；**真实供应商行为**由 `TestPiReal`（deepseekProvider，5 passed / 3 设计跳过）
+坐实 A2/A3/B1/D1/D3。下表接口落点经代码确认：
 
 | 我们的接口 | pi 的落点 |
 |---|---|
@@ -483,8 +484,9 @@ JSON 是**编译目标**，画布是可视化与人工调整面，助手 AI 也�
 ## 10. 当前进度
 
 **验收集 52/52 绿**（`nodeflow_v4.py` + `test_foundation_v4.py`，内存实现，mock backend）。
-全仓当前 **316 条测试**：`PROBE_PI=1` 下 311 passed / 5 skipped（pi 未装或未设
-`PROBE_PI` 时其 8 条自动跳过）。
+全仓当前 **324 条测试**：常规全量 311 passed / 13 skipped（其中 `TestPiReal` 8 条
+在未设 `PI_REAL=1` + `DEEPSEEK_API_KEY` 时跳过；真实 key 下实测 5/3，见
+`HARNESS_EVALUATION.md §3.1`）。
 
 Phase 4 V4 收尾（2026-08-14）新增：
 
@@ -579,7 +581,8 @@ Phase 0 一致性收口（2026-08-14）新增的硬约束：
 7. ~~上下文裁剪与预算观测~~ ✅ —— 命题本身已可断言
 8. ~~控制面授权与终态~~ ✅
 
-9. ~~实测 harness 待验证清单~~ ✅ 对照组真实 API 全过；pi 低层 API 接线验证（faux provider 5/3），真实供应商待实测（见 `HARNESS_EVALUATION.md`）
+9. ~~实测 harness 待验证清单~~ ✅ 对照组真实 API 全过；pi faux 接线 5/3 +
+   真实 DeepSeek 探针 5/3（`TestPiReal`，key 不入库，见 `HARNESS_EVALUATION.md`）
 10. ~~实现第一个真 backend~~ ✅ `SubprocessBackend` + OpenAI 兼容 driver，
     已用 DeepSeek `deepseek-v4-flash` 跑通真实图执行（`test_live_graph.py`，4 条，三轮稳定）
 
@@ -603,7 +606,8 @@ Phase 0 一致性收口（2026-08-14）新增的硬约束：
 
 **仍未做（有意留白，不阻塞主线）：**
 
-- pi 真实供应商验证（驱动接线已 faux 验证 5/3，等 key）
+- pi 的 B2 block 路径 / C1 真实中断 / A4 真实 usage 计量（代码已接线，
+  真实模型下无法廉价构造该情形；DeepSeek 的 A2/A3/B1/D1/D3 已实测）
 - 真实外部助手通过 MCP 端到端生成图（传输层已测，缺一个真实客户端会话）
 - 大规模下的 GC / 真索引替换（search_annotations、search_cards 目前是线性投影）
 
