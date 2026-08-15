@@ -242,6 +242,26 @@ class TestWarmPoolOverlap(ClosedLoopFixTestCase):
             self.rt.drain()
         self.assertEqual(len(self.rt.children_of(job, "reviewers")), 2)
 
+    def test_T4c_overflow_orphans_are_registered_and_collectable(self):
+        """忙时扩容的孤儿实例：登记可见、空闲后可被 collect_orphans 回收。"""
+        job = self._env()
+        for i in range(5):
+            self.rt.send((job, "caller", "io"), {"round": i})
+        self.rt.drain()
+
+        orphans = self.rt.overflow_children(job, "reviewers")
+        self.assertEqual(len(orphans), 3, orphans)
+        self.assertTrue(all(self.rt.graph_status(k) == "OPEN" for k in orphans))
+
+        collected = self.rt.collect_orphans(job, slot_id="reviewers",
+                                            actor="service:x")
+        self.assertEqual(sorted(collected), sorted(orphans))
+        self.assertEqual(self.rt.overflow_children(job, "reviewers"), [])
+        self.assertTrue(all(self.rt.graph_status(k) == "CLOSED"
+                            for k in collected))
+        # 池 bucket 不变：孤儿不属于池
+        self.assertEqual(len(self.rt.children_of(job, "reviewers")), 2)
+
 
 # ---------------------------------------------------------------------------
 # ⑤ publish 跳过 CLOSED 订阅者

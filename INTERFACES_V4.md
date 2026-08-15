@@ -21,7 +21,7 @@
 | | `JsonTransformDefinition` | ✅ | 单类型 + role 枚举 |
 | | `StrategyPolicy` | ✅ | readiness / selection / output |
 | | `ContainerSlot` | ✅ | template + instantiation + entry + **exit** |
-| | `TopicDefinition` | ⚠️ | 独立索引；**contract 仍存而未校验**（见 §7 遗留） |
+| | `TopicDefinition` | ✅ | 独立索引；request/reply contract **运行期校验**；投递保证=单运行时（不做 broker） |
 | | `SubscriptionDefinition` | ✅ | 模板声明，实例化时解析 |
 | | `MessageContract` | ✅ | 不可变、精确版本；连接期符号校验 + 运行期取值校验 |
 | **实例** | `GraphInstance` | ✅ | 唯一工作实例身份 |
@@ -271,7 +271,9 @@ Backend 矩阵与待验证清单见 `FOUNDATION_V4.md §4.3`。
 | **授权器** | ✅ | control / approve 的 actor 校验 | principal 形式 ✅ |
 | **执行适配层** | ✅ | 三段式驱动 backend | session_handle 不透明 |
 | **经验检索投影** | ✅ | `search_annotations(tags/object_refs/fields/gid)` | 纯查询，不裁决、不引入新索引子系统 |
+| **卡片库检索** | ✅ | `search_cards(kind/tags/query)` + tag 索引 | 返回精确版本引用 |
 | **预置策略模板** | ✅ | fanout / review / fixed_rounds / threshold_loop / 人工放行 | policy+handler 配置组合，非内核类型（`nodeflow_presets.py`） |
+| **控制面 MCP** | ✅ | `nodeflow_control.ControlPlane` + `nodeflow_mcp` stdio（initialize/ping/tools/list/tools/call） | actor 由 `NODEFLOW_MCP_ACTOR` 可信边界注入 |
 
 ---
 

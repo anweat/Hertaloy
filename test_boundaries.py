@@ -261,6 +261,51 @@ class TestTerminalAirtightness(BoundaryTestCase):
                         [m.state for m in leftover])
         self.assertTrue(leftover)
 
+    def test_B2c_closed_instance_never_receives_error_routing(self):
+        """on_error 不得往 CLOSED 实例路由死信：错误只落快照并标记 dropped。"""
+        self.rt.compile_agent_spec("w", model="m", cards=[("rules", "base")])
+        tpl = self.rt.register_graph_template("tpl-b2c", {
+            "nodes": {
+                "worker": {"kind": "agent", "spec": "w",
+                           "on_error": "err",
+                           "endpoints": {"io": {}, "out": {}, "err": {}}},
+                "sink": {"kind": "plain", "handler": "record",
+                         "endpoints": {"io": {}}},
+            },
+            "edges": [{"id": "e-err", "from": "worker.err", "to": "sink.io"}],
+        })
+        job = self.rt.instantiate(tpl, owner="service:x")
+        self.backend.on("w", lambda req: _ok(req))
+        self.rt.send((job, "worker", "io"), {"task": "t1"})
+        eid, _req = self.rt.begin_execution(job, "worker")
+        self.rt.control(job, "close", actor="service:x")
+        with self.assertRaises(InvariantError):
+            self.rt.apply_execution(
+                eid, ExecutionResult(execution_id=eid, emissions=(("out", {}),)))
+        self.rt._release(eid, "FAILED", reason="APPLY_REJECTED")
+
+        self.assertEqual(
+            [m for m in self.rt._messages.values()
+             if m.target[0] == job and m.target[1] == "sink"], [],
+            "CLOSED 实例收到了 on_error 路由死信")
+        snap = self.rt.store.history(f"run/{job}")[-1]
+        self.assertEqual(snap.body["failure"].get("dropped"), "CLOSED")
+
+    def test_B2d_approve_after_close_is_rejected(self):
+        """审批也是提交路由：CLOSED 后必须拒绝，不得制造死信。"""
+        tpl = self.rt.register_graph_template("tpl-approve", {
+            "nodes": {"gate": {"kind": "approval",
+                               "authorized_actors": ["human:alice"],
+                               "endpoints": {"io": {}, "out": {}}}},
+            "edges": [],
+        })
+        job = self.rt.instantiate(tpl, owner="service:x",
+                                  controllers=("human:alice",))
+        self.rt.control(job, "close", actor="service:x")
+        with self.assertRaises(InvariantError) as cm:
+            self.rt.approve(job, "gate", actor="human:alice", decision="allow")
+        self.assertIn("终态气密", str(cm.exception))
+
 
 # ===========================================================================
 # M3b —— REPLY 关联显式化
@@ -374,6 +419,9 @@ class TestLayoutOrthogonal(BoundaryTestCase):
         ref1 = self.rt.register_graph_template("l1", make({"pos": [1, 2]}))
         ref2 = self.rt.register_graph_template("l2", make("just-a-string"))
         self.assertNotIn("_layout", self.rt._templates[ref1])   # 不进入语义层
+        # Phase 4：_layout 无损往返 —— 语义剥离，画布视图原样回读
+        self.assertEqual(self.rt.template_layout(ref1), {"pos": [1, 2]})
+        self.assertEqual(self.rt.template_layout(ref2), "just-a-string")
 
         j1 = self.rt.instantiate(ref1, owner="service:x")
         j2 = self.rt.instantiate(ref2, owner="service:y")

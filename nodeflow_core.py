@@ -36,6 +36,9 @@ class InvocationContext:
     messages: tuple[Any, ...] = ()
     tail: tuple[str, ...] = ()
     transient: tuple[Any, ...] = ()
+    #: 与 messages 对齐的**受保护信封元数据**（request_id/topic/mkind），
+    #: 不进 payload；驱动层负责以最小侵入方式呈现给模型。
+    meta: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -307,6 +310,7 @@ class AuthorizationError(InvariantError):
 class _NodeState:
     persistent: dict[str, Any] = field(default_factory=dict)
     tail: list[str] = field(default_factory=list)
+    transient: list[Any] = field(default_factory=list)   # 本轮临时，claim 后清空
     last_context: InvocationContext | None = None
     last_spec: dict[str, Any] | None = None
     version: int = 0                      # 冲突域：节点级，不是容器级
@@ -326,6 +330,8 @@ class _Instance:
     children: dict[str, list[str]] = field(default_factory=dict)
     pool_cursor: dict[str, int] = field(default_factory=dict)
     controllers: set[str] = field(default_factory=set)
+    #: WARM_POOL 忙时临时扩容的孤儿实例（隔离优先，不计入池 bucket）
+    overflow: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -372,6 +378,9 @@ class _Message:
     mkind: str = "DATA"        # DATA | REPLY
     attempts: int = 0          # 已失败次数（#7 重试策略）
     exit_port: str | None = None   # 子流程回程端口（#9，取代 "reply" 魔法串）
+    #: REQUEST 关联（#13）：同一请求的 REPLY 携带相同 request_id；
+    #: 这是信封字段，绝不写进 payload（M3b 不回归）。
+    request_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

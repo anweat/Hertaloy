@@ -516,6 +516,7 @@ class SchedulingMixin:
             msg.payload,
             callback=(inst.gid, node_id, msg.target[2]),
             exit_port=exit_port,
+            request_id=msg.request_id,
         )
         return {}
 
@@ -533,10 +534,11 @@ class SchedulingMixin:
                 child = bucket[cursor % cap]
                 if self._instance_busy(child):
                     # 池满且目标实例仍忙（上一次调用遗留 QUEUED/CLAIMED 消息）。
-                    # 隔离优先：不复用、不混消息 —— 临时新建独立实例，
-                    # 不复用状态与消息队列。池实例在空闲后仍会被轮转复用。
+                    # 隔离优先：不复用、不混消息 —— 临时新建独立实例并**登记**
+                    # 为 overflow 孤儿（collect_orphans 回收），不计入池 bucket。
                     child = self.instantiate(
                         slot["template"], owner=f"service:{inst.gid}")
+                    inst.overflow.setdefault(slot_id, []).append(child)
                     return child
                 inst.pool_cursor[slot_id] = cursor + 1
                 # 只复用执行资源，不复用状态：清空 persistentState（判据=暗示性）
@@ -552,7 +554,9 @@ class SchedulingMixin:
         不得滞留死信；跳过并留下失败痕迹，因果可审计。"""
         cb_gid = msg.callback[0]
         cb_inst = self._instances.get(cb_gid)
-        if cb_inst is None or cb_inst.status != "OPEN":
+        # PAUSED 不是终态：reply 照常投递并保留，resume 后消费；
+        # 只有 CLOSED / 不存在才不得滞留死信（R13）。
+        if cb_inst is None or cb_inst.status == "CLOSED":
             inst.seq += 1
             self._append_object(
                 f"run/{gid}",
@@ -564,7 +568,13 @@ class SchedulingMixin:
                                       at_seq=inst.seq),
             )
             return
-        self._new_message(msg.callback, payload, mkind="REPLY")
+        # 主题 reply contract 运行期校验（#13）
+        if msg.topic and msg.topic in self._topics:
+            self._validate_payload_schema(
+                self._topics[msg.topic].get("reply_contract"),
+                payload, where=f"topic {msg.topic} 回复")
+        self._new_message(msg.callback, payload, mkind="REPLY",
+                          request_id=msg.request_id)
 
     def _handle(self, msg: _Message) -> None:
         gid, node_id, ep = msg.target
@@ -623,25 +633,59 @@ class SchedulingMixin:
         )
 
     def _validate_payload(self, ref, payload, *, where) -> None:
-        """只接受或拒绝，绝不暗中补字段（V3 那条老规矩）。"""
-        schema = self._contract(ref)
-        if schema is None:
+        """按契约 ref 校验 payload —— 只接受或拒绝，绝不暗中补字段。"""
+        self._validate_payload_schema(self._contract(ref), payload, where=where)
+
+    def _validate_payload_schema(self, schema, payload, *, where, path="$") -> None:
+        """JSON Schema 子集校验器（Phase 3 补全）。
+
+        支持 type（含数组联合）/ properties / required / additionalProperties /
+        items / enum / const / pattern，错误信息面向 LLM 与画布：
+        路径 + 期望 + 实际 + 怎么修。
+        """
+        if not schema:
             return
+        types = schema.get("type")
+        if types:
+            allowed = {types} if isinstance(types, str) else set(types)
+            actual = ("null" if payload is None
+                      else "integer" if isinstance(payload, int) and not isinstance(payload, bool)
+                      else "boolean" if isinstance(payload, bool)
+                      else "number" if isinstance(payload, (int, float))
+                      else "array" if isinstance(payload, (list, tuple))
+                      else "object" if isinstance(payload, Mapping)
+                      else "string")
+            if actual not in allowed:
+                raise InvariantError(
+                    f"{where}{path}：类型应为 {sorted(allowed)}，"
+                    f"得到 {actual}（{type(payload).__name__}）")
+
+        self._check_value(schema, payload, where=f"{where}{path}")
+
         if schema.get("type") == "object":
             if not isinstance(payload, Mapping):
                 raise InvariantError(
-                    f"{where}：{ref} 要求对象，得到 {type(payload).__name__}")
+                    f"{where}{path}：要求对象，得到 {type(payload).__name__}")
             missing = [k for k in schema.get("required", []) if k not in payload]
             if missing:
-                raise InvariantError(f"{where}：{ref} 缺少必需字段 {missing}")
+                raise InvariantError(
+                    f"{where}{path}：缺少必需字段 {missing}")
             if schema.get("additionalProperties") is False:
                 extra = sorted(set(payload) - set(schema.get("properties", {})))
                 if extra:
-                    raise InvariantError(f"{where}：{ref} 不允许字段 {extra}")
-            # 取值维度（R10）：enum / const / pattern —— 只接受或拒绝
+                    raise InvariantError(
+                        f"{where}{path}：不允许字段 {extra}；"
+                        f"允许：{sorted(schema.get('properties', {}))}")
             for k, ps in (schema.get("properties") or {}).items():
                 if k in payload and isinstance(ps, Mapping):
-                    self._check_value(ps, payload[k], where=f"{where}.{k}")
+                    self._validate_payload_schema(
+                        ps, payload[k], where=where, path=f"{path}.{k}")
+        elif schema.get("type") == "array" and isinstance(payload, (list, tuple)):
+            items = schema.get("items")
+            if isinstance(items, Mapping):
+                for i, item in enumerate(payload):
+                    self._validate_payload_schema(
+                        items, item, where=where, path=f"{path}[{i}]")
 
     def _prepare_route(self, tpl, node_id, port, payload) -> list[tuple]:
         """路由第一段 —— 纯函数，零副作用。
@@ -738,7 +782,12 @@ class SchedulingMixin:
             head=inst.head,
             messages=tuple(m.payload for m in msgs),
             tail=tuple(st.tail),
+            transient=tuple(st.transient),
+            meta=tuple({"request_id": m.request_id, "topic": m.topic,
+                        "mkind": m.mkind} for m in msgs),
         )
+        # transient 是本轮临时：进入请求后立即清空，下一轮不残留
+        st.transient.clear()
         # 预算在调用**前**处理：超预算是编排面的事，不该丢给 harness 去压缩
         budget = (node.get("limits") or {}).get("token_budget")
         ctx, trims = self._fit_context(
@@ -825,17 +874,23 @@ class SchedulingMixin:
         # 逐项边做边校验会出现"执行记录 FAILED，下游却已跑起来"。
         reply: tuple | None = None
         if "reply" in outputs:
-            cb = next((m.callback for m in claimed if m.callback), None)
-            if cb is not None:
+            cb_msg = next((m for m in claimed if m.callback), None)
+            if cb_msg is not None:
                 # cb 为空时 "reply" 留在 outputs 里，按普通端口路由
+                cb = cb_msg.callback
                 payload = outputs.pop("reply")
+                # 主题 reply contract 运行期校验（#13）
+                if cb_msg.topic and cb_msg.topic in self._topics:
+                    self._validate_payload_schema(
+                        self._topics[cb_msg.topic].get("reply_contract"),
+                        payload, where=f"topic {cb_msg.topic} 回复")
                 cb_inst = self._instances.get(cb[0])
-                if cb_inst is None or cb_inst.status != "OPEN":
-                    # 终态气密（R13）：目标已关闭/不存在，不滞留死信
+                # PAUSED 保留投递，只有 CLOSED / 不存在才拒绝（R13）
+                if cb_inst is None or cb_inst.status == "CLOSED":
                     raise InvariantError(
                         f"REPLY 目标 {cb[0]} 已 {cb_inst.status if cb_inst else '不存在'}，"
                         f"拒绝提交回程消息")
-                reply = (cb, payload)
+                reply = (cb, payload, cb_msg.request_id)
         prepared: list[tuple] = []
         for port, payload in outputs.items():
             # 第一不变量的取值维度：即使该端口没有出边，emit 契约也必须在
@@ -864,7 +919,8 @@ class SchedulingMixin:
             produced.append(ov.ref)
         st.session_handle = result.session_handle      # 不透明，只存不解释
         if reply is not None:
-            self._new_message(reply[0], reply[1], mkind="REPLY")
+            self._new_message(reply[0], reply[1], mkind="REPLY",
+                              request_id=reply[2])
         traversed: list[str] = self._materialize_route(inst, prepared)
 
         for m in claimed:
@@ -920,7 +976,11 @@ class SchedulingMixin:
                                reason=reason or "FAILED", attempts=cap)
 
     def _raise_into_graph(self, inst, node_id, node, msgs, *, reason, attempts) -> None:
-        """失败沿边进入图 —— 由策略节点决定怎么办，而不是静默消失。"""
+        """失败沿边进入图 —— 由策略节点决定怎么办，而不是静默消失。
+
+        实例已非 OPEN（终态气密）时不再路由：错误只落 RunSnapshot，
+        绝不往 CLOSED 实例里制造永远不被消费的死信。
+        """
         payload = {
             "error": reason,
             "node": node_id,
@@ -930,8 +990,10 @@ class SchedulingMixin:
         err_port = node.get("on_error")
         tpl = self._templates[inst.template_ref]
         traversed = []
-        if err_port:
+        if err_port and inst.status == "OPEN":
             traversed = self._route(inst, tpl, node_id, err_port, payload)
+        elif err_port:
+            payload["dropped"] = inst.status
         inst.seq += 1
         self._append_object(
             f"run/{inst.gid}",

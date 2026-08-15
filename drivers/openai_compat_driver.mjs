@@ -80,9 +80,15 @@ function compileMessages(req) {
   for (const ref of ctx.head ?? [])
     msgs.push({ role: "user", content: `[head] ${ref}` });
 
-  for (const m of ctx.messages ?? []) {
-    if (m && typeof m === "object" && typeof m.role === "string") msgs.push(m);
-    else msgs.push({ role: "user", content: JSON.stringify(m) });
+  for (let i = 0; i < (ctx.messages ?? []).length; i++) {
+    const m = ctx.messages[i];
+    const meta = ctx.meta?.[i];
+    const tag = meta?.request_id ? `[request_id=${meta.request_id}] ` : "";
+    if (m && typeof m === "object" && typeof m.role === "string") {
+      msgs.push({ ...m, content: tag + String(m.content ?? "") });
+    } else {
+      msgs.push({ role: "user", content: tag + JSON.stringify(m) });
+    }
   }
 
   // 不变量 X：运行期发现的资料一律追加在尾部，保住缓存前缀

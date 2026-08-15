@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import copy
 import itertools
 import re
 import threading
@@ -32,9 +33,11 @@ class Runtime(DefinitionsMixin, ContextBudgetMixin, SchedulingMixin, Projections
     def __init__(self) -> None:
         self._ids = itertools.count(1)
         self._cards: dict[tuple[str, str], dict[int, Mapping[str, Any]]] = {}
+        self._card_tags: dict[str, set[tuple[str, str, int]]] = {}   # tag -> 卡版本集合
         self._characters: dict[str, dict[str, Any]] = {}
         self._specs: dict[str, dict[str, Any]] = {}
         self._templates: dict[str, Mapping[str, Any]] = {}
+        self._layouts: dict[str, Any] = {}    # ref -> 画布 _layout（不进语义）
         self._topics: dict[str, Mapping[str, Any]] = {}
         self._transforms: dict[str, dict[str, Any]] = {}
         self._contracts: dict[str, Mapping[str, Any]] = {}
@@ -140,12 +143,19 @@ class Runtime(DefinitionsMixin, ContextBudgetMixin, SchedulingMixin, Projections
                 raise InvariantError(f"instance {gid} is not OPEN（{inst.status}）")
             return self._new_message(target, payload)
 
-    def publish(self, topic_id, payload, *, sender=None, callback=None) -> str:
+    def publish(self, topic_id, payload, *, sender=None, callback=None,
+                request_id=None) -> str:
         with self._lock:
             if topic_id not in self._topics:
                 raise InvariantError(f"unknown topic: {topic_id}")
             if isinstance(payload, Mapping) and "edgeId" in payload:
                 raise InvariantError("消息不得指定下游边（不变量 M1）")
+            # 主题 request contract 运行期校验（#13）：声明了就执行，
+            # 只接受或拒绝，不暗中补字段。
+            self._validate_payload_schema(
+                self._topics[topic_id].get("request_contract"),
+                payload, where=f"topic {topic_id} 请求")
+            rid = request_id or self._nid("req")
             ids = []
             for _sid, target in self._subs.get(topic_id, []):
                 gid = target[0]
@@ -155,20 +165,23 @@ class Runtime(DefinitionsMixin, ContextBudgetMixin, SchedulingMixin, Projections
                     # 静默排队会让 queue 深度永远非零 —— 跳过。
                     # PAUSED 仍接收（恢复后会消费），仅 CLOSED 被过滤。
                     continue
-                # 每个订阅者拿独立 payload 副本
+                # 每个订阅者拿独立 payload 副本；同一请求共享 request_id
                 ids.append(
                     self._new_message(target, dict(payload),
-                                      callback=callback, topic=topic_id)
+                                      callback=callback, topic=topic_id,
+                                      request_id=rid)
                 )
             return ids[0] if ids else ""
 
     def _new_message(self, target, payload, *, callback=None, topic=None,
-                     mkind="DATA", exit_port=None) -> str:
+                     mkind="DATA", exit_port=None, request_id=None) -> str:
         with self._lock:
             mid = self._nid("msg")
+            # 入站快照：调用方事后修改原对象不得污染已入队的消息。
             self._messages[mid] = _Message(
-                mid=mid, target=target, payload=payload, callback=callback,
-                topic=topic, mkind=mkind, exit_port=exit_port,
+                mid=mid, target=target, payload=copy.deepcopy(payload),
+                callback=callback, topic=topic, mkind=mkind,
+                exit_port=exit_port, request_id=request_id,
             )
             return mid
 
@@ -199,6 +212,35 @@ class Runtime(DefinitionsMixin, ContextBudgetMixin, SchedulingMixin, Projections
         """运行期发现的卡片追加到该实例的 tail。不回写模板。"""
         with self._lock:
             self._instances[gid].nodes[node_id].tail.append(ref)
+
+    def append_context_transient(self, gid: str, node_id: str, item) -> None:
+        """本轮临时上下文：下一次 claim 时进入 transient，之后自动清空。"""
+        with self._lock:
+            self._instances[gid].nodes[node_id].transient.append(item)
+
+    def collect_orphans(self, gid, *, slot_id=None, actor) -> list[str]:
+        """回收 WARM_POOL 忙时扩容的 idle 孤儿实例。
+
+        只回收当前不忙（无 QUEUED/CLAIMED/AWAITING）的实例；每个回收都是
+        一次授权控制事实（CLOSED + RunSnapshot），不做旁路删除。
+        """
+        with self._lock:
+            inst = self._instances[gid]
+            self._authorize(inst, actor)
+            collected: list[str] = []
+            slots = [slot_id] if slot_id is not None else list(inst.overflow)
+            for sid in slots:
+                remaining = []
+                for child in inst.overflow.get(sid, []):
+                    if self._instance_busy(child):
+                        remaining.append(child)
+                        continue
+                    # 孤儿的 controllers 是 service:{父实例 gid} + system:core；
+                    # 父实例 owner 已授权本次回收，内部以父实例身份关闭子实例。
+                    self.control(child, "close", actor=f"service:{inst.gid}")
+                    collected.append(child)
+                inst.overflow[sid] = remaining
+            return collected
 
     def _authorize(self, inst, actor) -> Principal:
         """actor 由可信边界注入，payload 不能自封身份（#10）。"""
@@ -239,6 +281,9 @@ class Runtime(DefinitionsMixin, ContextBudgetMixin, SchedulingMixin, Projections
             inst = self._instances.get(gid)
             if inst is None:
                 raise InvariantError(f"未知实例：{gid}")
+            if inst.status != "OPEN":
+                raise InvariantError(
+                    f"{gid} 已 {inst.status}，拒绝审批路由（终态气密）")
             tpl = self._templates[inst.template_ref]
             node = tpl["nodes"][node_id]
             allowed = node.get("authorized_actors")

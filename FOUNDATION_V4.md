@@ -483,8 +483,26 @@ JSON 是**编译目标**，画布是可视化与人工调整面，助手 AI 也�
 ## 10. 当前进度
 
 **验收集 52/52 绿**（`nodeflow_v4.py` + `test_foundation_v4.py`，内存实现，mock backend）。
-全仓当前 **296 条测试**：`PROBE_PI=1` 下 291 passed / 5 skipped（pi 未装或未设
+全仓当前 **316 条测试**：`PROBE_PI=1` 下 311 passed / 5 skipped（pi 未装或未设
 `PROBE_PI` 时其 8 条自动跳过）。
+
+Phase 4 V4 收尾（2026-08-14）新增：
+
+- 投递与关联（#13 在单运行时内定案）：topic request/reply contract 运行期
+  校验；REQUEST 协议级 `request_id`（信封字段 + `context.meta`，绝不进
+  payload）；REPLY 到 PAUSED 保留、仅 CLOSED 丢弃留痕；send/publish 入站
+  payload 快照隔离（`test_delivery.py`）。
+- 终态气密补漏：CLOSED 后 `approve` 拒绝、`on_error` 不再路由死信
+  （B2c/B2d）；WARM_POOL 忙时孤儿登记 `overflow` + `collect_orphans`
+  回收（T4c）。
+- transient 生产路径：`append_context_transient` → 下一次 claim 进入请求、
+  之后清空；持久化保留（`test_transient.py`）。
+- JSON Schema 校验器补全：type/properties/required/additionalProperties/
+  items/enum/const/pattern，错误带 JSON 路径（`test_contracts.R6`）。
+- `_layout` 无损往返：语义剥离、侧表保存、`template_layout(ref)` 回读。
+- 卡片库：tag 索引 + `search_cards(kind/tags/query)`（`test_card_library.py`）。
+- 控制面 MCP stdio 传输层 `nodeflow_mcp.py`：initialize/ping/tools/list/
+  tools/call，actor 由 `NODEFLOW_MCP_ACTOR` 注入（`test_mcp.py`）。
 
 Phase 3 智能回环（2026-08-14）新增：
 
@@ -565,18 +583,29 @@ Phase 0 一致性收口（2026-08-14）新增的硬约束：
 10. ~~实现第一个真 backend~~ ✅ `SubprocessBackend` + OpenAI 兼容 driver，
     已用 DeepSeek `deepseek-v4-flash` 跑通真实图执行（`test_live_graph.py`，4 条，三轮稳定）
 
-**以下为剩余工作：**
+**以下为剩余/收口状态：**
 11. ~~持久化~~ ✅ `nodeflow_persistence.py` —— 对象 append-only 增量写，运行状态每次提交
     upsert，挂在 `Runtime.on_commit`。崩溃接管（帧 14）已是真能力（`test_persistence.py` S5）。
     定义层刻意不落盘：由装配面重新注册，handler 本就是函数存不了。
 12. ~~真并发~~ ✅ `drain_concurrent(workers=N)` —— 调度拆成"锁内选取/claim"与
     "锁外执行"两段；`test_concurrency.py` 8 条坐实了**冲突域节点级**这条设计
     （N3 是 E5 的真线程版本：同容器两节点并发提交，无一被作废）
-13. 消息投递保证等级（至少一次？谁负责重投？）
-14. 装配面实体：卡片库、标签索引、发现服务
-15. JSON schema 与校验器（含 LLM 友好的错误信息）
-16. 画布与 `_layout` 无损往返
-17. 控制面助手 AI（把 9–16 封装成 MCP）
+13. ~~消息投递保证等级~~ ✅ 单运行时内定案：入站快照、订阅投递、REQUEST request_id、
+    topic request/reply contract 运行期校验、执行失败重试上限；跨运行时 broker
+    仍不做（§8 单运行时）
+14. ~~装配面实体：卡片库、标签索引、发现服务~~ ✅ 卡片库 tag 索引 + `search_cards`；
+    发现服务 = 长期 OPEN 实例 + 订阅（C/D 组已钉住）
+15. ~~JSON schema 与校验器~~ ✅ type/properties/required/additionalProperties/items/
+    enum/const/pattern，错误带 JSON 路径
+16. ~~画布与 `_layout` 无损往返~~ ✅ `template_layout(ref)` 回读，语义与视图分离
+17. ~~控制面助手 AI（MCP）~~ ✅ `nodeflow_control.py` 工具层 + `nodeflow_mcp.py`
+    stdio 传输层；接入真实助手/MCP 客户端即可用
+
+**仍未做（有意留白，不阻塞主线）：**
+
+- pi 真实供应商验证（驱动接线已 faux 验证 5/3，等 key）
+- 真实外部助手通过 MCP 端到端生成图（传输层已测，缺一个真实客户端会话）
+- 大规模下的 GC / 真索引替换（search_annotations、search_cards 目前是线性投影）
 
 每加一个持久对象继续追问：
 

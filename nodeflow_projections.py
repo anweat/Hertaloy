@@ -34,6 +34,10 @@ class ProjectionsMixin:
     def children_of(self, gid, slot_id):
         return list(self._instances[gid].children.get(slot_id, []))
 
+    def overflow_children(self, gid, slot_id):
+        """WARM_POOL 忙时临时扩容、等待回收的孤儿实例。"""
+        return list(self._instances[gid].overflow.get(slot_id, []))
+
     def context_of(self, gid, node_id) -> InvocationContext:
         """该节点**当前**的上下文构成。想看某次调用实际收到的，读 backend 记录的请求。"""
         st = self._instances[gid].nodes[node_id]
@@ -61,9 +65,36 @@ class ProjectionsMixin:
     def artifact_versions(self, oid) -> list[int]:
         return [ov.version for ov in self.store.history(oid)]
 
+    def search_cards(self, *, kind=None, tags=(), query=None) -> list[str]:
+        """卡片库检索投影：kind 过滤 + tags 全命中 + query 模糊匹配 card_id/正文。
+
+        返回精确版本引用（kind/card@version），多版本并存时全部列出。
+        """
+        wanted = set(tags or ())
+        out: list[str] = []
+        for (k, cid), versions in sorted(self._cards.items()):
+            if kind is not None and k != kind:
+                continue
+            for version in sorted(versions):
+                card_tags = {t for t, refs in self._card_tags.items()
+                             if (k, cid, version) in refs}
+                if wanted and not wanted <= card_tags:
+                    continue
+                if query:
+                    body = versions[version]
+                    hay = f"{cid} {body.get('summary', '')} {body.get('text', '')}"
+                    if query.lower() not in hay.lower():
+                        continue
+                out.append(f"{k}/{cid}@{version}")
+        return out
+
     def graph_template_versions(self, template_id) -> Sequence[ObjectVersion]:
         """定义版本历史：graph_template/<id> 的 ObjectVersion 列表。"""
         return self.store.history(f"graph_template/{template_id}")
+
+    def template_layout(self, template_ref) -> Any:
+        """画布 _layout 无损回读（注册/publish 时从语义 spec 剥离保存）。"""
+        return self._layouts.get(template_ref, {})
 
     def graph_template_proposal(self, proposal_id) -> ObjectVersion:
         """提案当前状态（pending/approved）。"""

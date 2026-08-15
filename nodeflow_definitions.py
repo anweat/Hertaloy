@@ -35,7 +35,13 @@ class DefinitionsMixin:
         # 只读引用：正文冻结，不提供就地修改入口。
         # deepcopy：嵌套 dict 也不得被调用方事后修改（边界 B1c）。
         slot[version] = copy.deepcopy(body)
-        return f"{kind}/{card_id}@{version}"
+        ref = f"{kind}/{card_id}@{version}"
+        # 标签索引：自动化搭建/发现服务按 tag 反查（Phase 4）
+        for tag in tags:
+            if not isinstance(tag, str) or not tag:
+                raise InvariantError(f"card tag 必须是非空字符串：{tag!r}")
+            self._card_tags.setdefault(tag, set()).add((kind, card_id, version))
+        return ref
 
     def _latest(self, kind: str, card_id: str) -> int:
         slot = self._cards.get((kind, card_id))
@@ -312,10 +318,11 @@ class DefinitionsMixin:
         self._validate_template(template_id, spec)      # 全引用校验
         self._validate_edges(template_id, spec)         # 连接期校验
         # 定义层不可变：注册后调用方修改原 dict 不得影响模板（边界 B1/B6）。
-        # _layout（画布坐标）不进入语义层（边界 Lb）：剥离存储。
+        # _layout（画布坐标）不进入语义层（边界 Lb）：**无损存到侧表**。
         stored = copy.deepcopy(spec)
-        stored.pop("_layout", None)
+        layout = stored.pop("_layout", None)
         self._templates[ref] = stored
+        self._layouts[ref] = copy.deepcopy(layout) if layout is not None else {}
         # Phase 2：定义本身也是 ObjectVersion（可回溯、可被外层 AI 引用/审批）。
         self._append_object(
             f"graph_template/{template_id}",
@@ -338,7 +345,7 @@ class DefinitionsMixin:
         self._validate_template(template_id, spec)      # 全引用校验
         self._validate_edges(template_id, spec)         # 连接期校验
         stored = copy.deepcopy(spec)
-        stored.pop("_layout", None)
+        layout = stored.pop("_layout", None)
         oid = f"graph_template/{template_id}"
         # 定义级幂等按 spec 内容判断（template_ref 随版本变化，不能参与哈希）
         for ov in self.store.history(oid):
@@ -354,6 +361,7 @@ class DefinitionsMixin:
             provenance=Provenance(derived_from=tuple(derived_from)),
         )
         self._templates[ref] = stored
+        self._layouts[ref] = copy.deepcopy(layout) if layout is not None else {}
         return ref
 
     def propose_graph_template(self, proposal_id, *, template_id, spec,

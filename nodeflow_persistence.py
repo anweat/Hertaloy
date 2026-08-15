@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS instances (
     nodes        TEXT NOT NULL,
     children     TEXT NOT NULL,
     pool_cursor  TEXT NOT NULL,
+    overflow     TEXT NOT NULL,
     controllers  TEXT NOT NULL
 );
 
@@ -85,7 +86,8 @@ CREATE TABLE IF NOT EXISTS messages (
     topic    TEXT,
     mkind    TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
-    exit_port TEXT
+    exit_port TEXT,
+    request_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_state ON messages(state);
 
@@ -121,13 +123,20 @@ class SqlitePersistence:
         self._hwm: dict[str, int] = {}
 
     def _migrate(self) -> None:
-        """对旧库补列：attempts（失败重试计数）与 exit_port（subflow 回程端口）。"""
+        """对旧库补列：attempts/exit_port/request_id（消息）与 overflow（实例）。"""
         cols = {row[1] for row in self.conn.execute("PRAGMA table_info(messages)")}
         if "attempts" not in cols:
             self.conn.execute(
                 "ALTER TABLE messages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
         if "exit_port" not in cols:
             self.conn.execute("ALTER TABLE messages ADD COLUMN exit_port TEXT")
+        if "request_id" not in cols:
+            self.conn.execute("ALTER TABLE messages ADD COLUMN request_id TEXT")
+
+        icols = {row[1] for row in self.conn.execute("PRAGMA table_info(instances)")}
+        if "overflow" not in icols:
+            self.conn.execute(
+                "ALTER TABLE instances ADD COLUMN overflow TEXT NOT NULL DEFAULT '{}'")
 
     def close(self) -> None:
         self.conn.close()
@@ -162,13 +171,14 @@ class SqlitePersistence:
 
             for inst in rt._instances.values():
                 c.execute(
-                    "INSERT OR REPLACE INTO instances VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO instances VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (inst.gid, inst.template_ref, inst.owner, inst.status, inst.seq,
                      _J(dict(inst.params)), _J(list(inst.head)),
                      _J({n: {"persistent": s.persistent, "tail": s.tail,
+                             "transient": s.transient,
                              "version": s.version} for n, s in inst.nodes.items()}),
                      _J(inst.children), _J(inst.pool_cursor),
-                     _J(sorted(inst.controllers))),
+                     _J(inst.overflow), _J(sorted(inst.controllers))),
                 )
             for rec in rt._records.values():
                 c.execute(
@@ -178,10 +188,10 @@ class SqlitePersistence:
                 )
             for m in rt._messages.values():
                 c.execute(
-                    "INSERT OR REPLACE INTO messages VALUES (?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO messages VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (m.mid, _J(list(m.target)), _J(m.payload), m.state,
                      _J(list(m.callback)) if m.callback else None,
-                     m.topic, m.mkind, m.attempts, m.exit_port),
+                     m.topic, m.mkind, m.attempts, m.exit_port, m.request_id),
                 )
             for topic, entries in rt._subs.items():
                 for sid, target in entries:
@@ -216,18 +226,20 @@ class SqlitePersistence:
 
         rt._instances.clear()
         for (gid, tref, owner, status, seq, params, head,
-             nodes, children, cursor, controllers) in c.execute(
+             nodes, children, cursor, overflow, controllers) in c.execute(
                 "SELECT * FROM instances"):
             inst = _Instance(
                 gid=gid, template_ref=tref, owner=owner, status=status, seq=seq,
                 params=json.loads(params), head=tuple(json.loads(head)),
                 children=json.loads(children), pool_cursor=json.loads(cursor),
+                overflow=json.loads(overflow),
                 controllers=set(json.loads(controllers)),
             )
             for node_id, st in json.loads(nodes).items():
                 inst.nodes[node_id] = _NodeState(
                     persistent=st.get("persistent", {}),
                     tail=list(st.get("tail", [])),
+                    transient=list(st.get("transient", [])),
                     version=st.get("version", 0),
                 )
             rt._instances[gid] = inst
@@ -241,14 +253,15 @@ class SqlitePersistence:
             )
 
         rt._messages.clear()
-        for mid, target, payload, state, callback, topic, mkind, attempts, exit_port \
-                in c.execute("SELECT * FROM messages"):
+        for (mid, target, payload, state, callback, topic, mkind,
+             attempts, exit_port, request_id) in c.execute("SELECT * FROM messages"):
             rt._messages[mid] = _Message(
                 mid=mid, target=tuple(json.loads(target)),
                 payload=json.loads(payload), state=state,
                 callback=tuple(json.loads(callback)) if callback else None,
                 topic=topic, mkind=mkind,
                 attempts=int(attempts or 0), exit_port=exit_port,
+                request_id=request_id,
             )
 
         for sid, topic, target in c.execute("SELECT * FROM subscriptions"):

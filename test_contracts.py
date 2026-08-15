@@ -231,6 +231,46 @@ class TestRuntimeValidation(ContractTestCase):
         got = self.rt.node_persistent_state(job, "coder")["last"]
         self.assertNotIn("includeTests", got)      # 契约里有，但没人给，就不该出现
 
+    def test_R6_nested_type_and_items_are_checked_with_paths(self):
+        """schema 校验器补全：嵌套对象 / 数组 items / 类型错误都要给路径。"""
+        self.rt.register_contract("Nested", 1, {
+            "type": "object",
+            "required": ["spec"],
+            "properties": {
+                "spec": {"type": "object",
+                         "required": ["n"],
+                         "properties": {"n": {"type": "integer"}}},
+                "tags": {"type": "array",
+                         "items": {"type": "string"}},
+            },
+            "additionalProperties": False,
+        })
+        with self.assertRaises(InvariantError) as cm:
+            self.rt._validate_payload_schema(
+                self.rt._contract("Nested@1"),
+                {"spec": {"n": "not-int"}},
+                where="契约",
+            )
+        msg = str(cm.exception)
+        self.assertIn("spec.n", msg)
+        self.assertIn("integer", msg)
+
+        with self.assertRaises(InvariantError) as cm:
+            self.rt._validate_payload_schema(
+                self.rt._contract("Nested@1"),
+                {"spec": {"n": 1}, "tags": ["ok", 2]},
+                where="契约",
+            )
+        self.assertIn("tags[1]", str(cm.exception))
+        self.assertIn("string", str(cm.exception))
+
+        # 合法值放行
+        self.rt._validate_payload_schema(
+            self.rt._contract("Nested@1"),
+            {"spec": {"n": 1}, "tags": ["ok"]},
+            where="契约",
+        )
+
 
 class TestContractIdentity(ContractTestCase):
 
