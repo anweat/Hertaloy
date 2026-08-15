@@ -76,6 +76,39 @@ class ProjectionsMixin:
         """Annotation 就是 kind="annotation" 的 ObjectVersion。"""
         return self.store.history(f"annotation/{gid}")
 
+    def search_annotations(self, *, tags=(), object_refs=(), gid=None,
+                           fields=None) -> Sequence[ObjectVersion]:
+        """经验检索投影：按 tags / object_refs / 实例反查 annotation。
+
+        这是纯查询投影（线性扫描 store），不是新的索引子系统；
+        规模上来后再换真索引，查询语义不变。
+        """
+        wanted_tags = set(tags or ())
+        # object_refs 允许传 dict（name→ref，断言值）或 ref 序列
+        wanted_refs = set(
+            object_refs.values() if isinstance(object_refs, Mapping)
+            else object_refs or ())
+        wanted_fields = dict(fields or {})
+        out: list[ObjectVersion] = []
+        for oid, versions in self.store._by_object.items():
+            if not oid.startswith("annotation/"):
+                continue
+            if gid is not None and oid != f"annotation/{gid}":
+                continue
+            for ov in versions:
+                body = ov.body
+                ann_tags = set(body.get("fields", {}).get("tags") or ())
+                if wanted_tags and not wanted_tags <= ann_tags:
+                    continue
+                ann_refs = set((body.get("object_refs") or {}).values())
+                if wanted_refs and not wanted_refs <= ann_refs:
+                    continue
+                ann_fields = body.get("fields", {})
+                if any(ann_fields.get(k) != v for k, v in wanted_fields.items()):
+                    continue
+                out.append(ov)
+        return out
+
     def queue(self, topic_id) -> QueueView:
         with self._lock:
             if topic_id not in self._topics:

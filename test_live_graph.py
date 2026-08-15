@@ -301,6 +301,81 @@ class TestLiveGraph(unittest.TestCase):
             if last != {"ok": True}:
                 self.skipTest(f"模型 emit 的 payload 与剧本不同：{last!r}")
 
+    def test_L6_model_evaluator_chooses_between_declared_ports(self):
+        """★★ Phase 3：模型驱动的 evaluator 在声明端口中选择返工/通过。
+
+        编排不变量：judge 每轮只见单条 payload 切片、无历史累积；
+        usage/observations 进入 RunSnapshot；sink 最终收到返工后的产物。
+        模型不照指令选择端口属顺从度问题 —— 按既有规矩 skip。
+        """
+        self.rt.compile_agent_spec("judge", model="live",
+                                   cards=[("rules", "base")])
+
+        def coder(payload, ctx):
+            attempt = payload.get("attempt", 0) + 1
+            return {"out": {"attempt": attempt,
+                            "quality": "good" if attempt >= 2 else "bad"}}
+
+        self.rt.register_handler("coder", coder)
+        self.rt.register_policy("gate-policy", {"readiness": "ANY",
+                                                "output": {}})
+        judge_prompt = (
+            SYSTEM +
+            " 你是评审节点。检查最新消息 payload 的 quality 字段："
+            "若 quality 是 bad 就调用 emit 且 port 用 again；"
+            "否则调用 emit 且 port 用 done。payload 原样返回，不要加戏。"
+        )
+        tpl = self.rt.register_graph_template("live-judge", {
+            "nodes": {
+                "coder": {"kind": "plain", "handler": "coder",
+                          "endpoints": {"io": {}, "out": {}}},
+                "gate": {"kind": "strategy", "policy": "gate-policy",
+                         "evaluator": {"kind": "model", "spec": "judge"},
+                         "systemPrompt": judge_prompt,
+                         "endpoints": {"io": {}, "again": {}, "done": {}}},
+                "sink": {"kind": "plain", "handler": "record",
+                         "endpoints": {"io": {}}},
+            },
+            "edges": [
+                {"id": "e1", "from": "coder.out", "to": "gate.io"},
+                {"id": "e-again", "from": "gate.again", "to": "coder.io"},
+                {"id": "e-done", "from": "gate.done", "to": "sink.io"},
+            ],
+        })
+        job = self.rt.instantiate(tpl, owner="service:live")
+        self.rt.send((job, "coder", "io"),
+                     {"attempt": 0, "quality": "bad"})
+        self.rt.drain(job)
+
+        judge_reqs = self.backend.requests_for("judge")
+        if len(judge_reqs) < 2:
+            self.skipTest(f"模型 evaluator 未完成两轮判断（{len(judge_reqs)} 轮）")
+
+        # 每轮上下文都是重建的单条切片，不累积历史
+        for req in judge_reqs:
+            self.assertEqual(len(req.context.messages), 1)
+
+        gate_snaps = [s.body for s in self.rt.store.history(f"run/{job}")
+                      if s.body.get("node") == "gate"]
+        if len(gate_snaps) < 2:
+            self.skipTest(f"gate 只有 {len(gate_snaps)} 次提交")
+        first, second = gate_snaps[0], gate_snaps[1]
+        if "e-again" not in first["edges_traversed"]:
+            self.skipTest("模型第一轮没有选择 again（返工）")
+        if "e-done" not in second["edges_traversed"]:
+            self.skipTest("模型第二轮没有选择 done（通过）")
+
+        # Phase 3 计量：模型 evaluator 的 usage/observations 进入 RunSnapshot
+        self.assertIn("execution", first)
+        self.assertIn("usage", first)
+        self.assertIn("observations", first)
+        self.assertIn("context", first)
+        self.assertEqual(self.rt.usage(job).compactions, 0)
+
+        last = self.rt.node_persistent_state(job, "sink").get("last")
+        if not isinstance(last, dict) or last.get("attempt") != 2:
+            self.skipTest(f"返工产物与剧本不同：{last!r}")
+
 
 def _node() -> str:
     return os.environ.get("NODE_BIN", "node")

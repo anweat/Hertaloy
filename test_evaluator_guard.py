@@ -21,6 +21,7 @@ from nodeflow_v4 import (
     InvariantError,
     MockExecutionBackend,
     Runtime,
+    Usage,
 )
 
 
@@ -225,6 +226,33 @@ class TestModelEvaluator(GuardTestCase):
         self.rt.send((job, "gate", "io"), {})
         self.rt.drain(job)
         self.assertTrue(holder["acquired"], "模型 evaluator 执行时仍持有全局锁")
+
+    def test_M8_model_evaluator_usage_and_observations_enter_snapshot(self):
+        """模型 evaluator 也是一次执行：usage/compactions/observations/
+        上下文必须进 RunSnapshot，usage(gid) 与告警不得漏计。"""
+        job = self._graph(model_eval=True)
+        self.backend.on("judge", lambda req: _ok(
+            req,
+            emissions=(("out", {}),),
+            usage=Usage(in_tokens=12, compactions=1),
+            observations=({"kind": "tool_call", "name": "emit",
+                           "gated": True},),
+        ))
+        self.rt.send((job, "gate", "io"), {"task": "t"})
+        self.rt.drain(job)
+
+        self.assertEqual(self.rt.usage(job).in_tokens, 12)
+        self.assertEqual(self.rt.usage(job).compactions, 1)
+        alerts = self.rt.context_alerts(job)
+        self.assertTrue(any(a["kind"] == "compaction"
+                            and a["node"] == "gate" for a in alerts),
+                        alerts)
+
+        snap = next(s for s in reversed(self.rt.store.history(f"run/{job}"))
+                    if s.body["node"] == "gate")
+        self.assertIn("execution", snap.body)
+        self.assertEqual(snap.body["observations"][0]["name"], "emit")
+        self.assertEqual(snap.body["context"]["messages"], [{"task": "t"}])
 
 
 class TestModelCannotConstruct(GuardTestCase):

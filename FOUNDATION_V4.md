@@ -323,7 +323,9 @@ Strategy 节点
 
 内核只需要提供已有的三件事：策略节点可读写 persistentState、可引用 ObjectVersion、提交时可附带标注。**没有 CheckpointRecord，没有 seal 协议，没有 cyclePath 字段。**
 
-"Checkpoint 循环"因此降级为**几种预置的策略配置模板**（固定轮次 / 条件退出 / 评分阈值 / 人工放行），随产品附带，用户可改可弃。
+"Checkpoint 循环"因此降级为**几种预置的策略配置模板**（固定轮次 / 条件退出 / 评分阈值 / 人工放行），随产品附带，用户可改可弃 —— 落地为
+`nodeflow_presets.py` 的 `fanout` / `review` / `fixed_rounds` /
+`threshold_loop` / `approval_node_preset`，全部是 policy+handler 的普通组合。
 
 **fork 也随之消失**：用某条 Annotation 里的 objectRefs 作为初始化参数实例化一个新图，就是 fork。不需要专门的 fork 语义、不需要定义 Workspace 共享关系。
 
@@ -481,8 +483,21 @@ JSON 是**编译目标**，画布是可视化与人工调整面，助手 AI 也�
 ## 10. 当前进度
 
 **验收集 52/52 绿**（`nodeflow_v4.py` + `test_foundation_v4.py`，内存实现，mock backend）。
-全仓当前 **286 条测试**：`PROBE_PI=1` 下 281 passed / 5 skipped（pi 未装或未设
+全仓当前 **296 条测试**：`PROBE_PI=1` 下 291 passed / 5 skipped（pi 未装或未设
 `PROBE_PI` 时其 8 条自动跳过）。
+
+Phase 3 智能回环（2026-08-14）新增：
+
+- 模型 evaluator 的 usage / observations / 上下文 / 裁剪进入 RunSnapshot
+  （`_handle_strategy(execution_meta=…)`），`usage(gid)` 与
+  `context_alerts` 不再漏计模型判断（test_evaluator_guard M8）。
+- 真实模型返工闭环：`test_live_graph.L6` —— 模型 evaluator 在声明端口
+  again/done 之间选择，两轮判断每轮只见单条切片，sink 收到返工产物。
+- 经验检索投影 `search_annotations(tags/object_refs/fields/gid)`：纯查询，
+  不引入新索引子系统（test_annotation_search）。
+- 预置策略模板 `nodeflow_presets.py`：fanout / review / fixed_rounds /
+  threshold_loop / 人工放行（approval 节点片段），全部是 policy+handler
+  配置组合（test_presets）。
 
 Phase 2 自我编程基座（2026-08-14）新增：
 

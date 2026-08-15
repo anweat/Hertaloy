@@ -130,13 +130,26 @@ class SchedulingMixin:
                     else:
                         try:
                             rec.status = "APPLIED"
-                            # 模型的输出提案 → decision.emit，其余一律不接受
+                            # 模型的输出提案 → decision.emit，其余一律不接受。
+                            # 计量与观测必须随本次策略提交进入 RunSnapshot：
+                            # 否则 usage/compactions 告警对模型 evaluator 失效。
                             self._handle_strategy(
                                 unit.inst, unit.node_id, unit.node, unit.batch,
                                 decision={"emit": {p: pl for p, pl in result.emissions}},
                                 trusted=False,
                                 discard=unit.discard,
                                 selection_ctx=unit.selection_ctx,
+                                execution_meta={
+                                    "execution": unit.execution_id,
+                                    "usage": asdict(result.usage),
+                                    "observations": list(result.observations),
+                                    "context_trims": list(rec.context_trims),
+                                    "context": {
+                                        "head": list(rec.request.context.head),
+                                        "messages": list(rec.request.context.messages),
+                                        "tail": list(rec.request.context.tail),
+                                    },
+                                },
                             )
                         except InvariantError:
                             self._release(unit.execution_id, "FAILED",
@@ -319,7 +332,7 @@ class SchedulingMixin:
 
     def _handle_strategy(self, inst, node_id, node, batch, *,
                          decision=None, trusted=True, discard=(),
-                         selection_ctx=None) -> None:
+                         selection_ctx=None, execution_meta=None) -> None:
         tpl = self._templates[inst.template_ref]
         for m in batch:
             m.state = "CLAIMED"
@@ -408,21 +421,26 @@ class SchedulingMixin:
         for m in discard:
             m.state = "CONSUMED"
         inst.seq += 1
+        snapshot = {
+            "seq": inst.seq,
+            "node": node_id,
+            "endpoint": ",".join(sorted(payloads)),
+            "message": ",".join(m.mid for m in batch),
+            "discarded": ",".join(m.mid for m in discard),
+            "staged_message_ids": staged_ids,
+            "selection": selection,
+            "topic": None,
+            "edges_traversed": traversed,
+            "spawned": spawned,
+            "payload": payloads,
+        }
+        if execution_meta:
+            # 模型 evaluator 也是一次执行：usage/observations/上下文裁剪
+            # 必须进入 RunSnapshot，usage(gid) 与 context_alerts 才不漏计。
+            snapshot.update(execution_meta)
         self._append_object(
             f"run/{inst.gid}",
-            {
-                "seq": inst.seq,
-                "node": node_id,
-                "endpoint": ",".join(sorted(payloads)),
-                "message": ",".join(m.mid for m in batch),
-                "discarded": ",".join(m.mid for m in discard),
-                "staged_message_ids": staged_ids,
-                "selection": selection,
-                "topic": None,
-                "edges_traversed": traversed,
-                "spawned": spawned,
-                "payload": payloads,
-            },
+            snapshot,
             provenance=Provenance(
                 graph_instance_id=inst.gid, node_id=node_id, at_seq=inst.seq
             ),

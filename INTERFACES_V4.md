@@ -270,6 +270,8 @@ Backend 矩阵与待验证清单见 `FOUNDATION_V4.md §4.3`。
 | **实例池** | ✅ | PER_CALL / WARM_POOL / SINGLETON | WARM_POOL 每次清空 persistentState |
 | **授权器** | ✅ | control / approve 的 actor 校验 | principal 形式 ✅ |
 | **执行适配层** | ✅ | 三段式驱动 backend | session_handle 不透明 |
+| **经验检索投影** | ✅ | `search_annotations(tags/object_refs/fields/gid)` | 纯查询，不裁决、不引入新索引子系统 |
+| **预置策略模板** | ✅ | fanout / review / fixed_rounds / threshold_loop / 人工放行 | policy+handler 配置组合，非内核类型（`nodeflow_presets.py`） |
 
 ---
 
