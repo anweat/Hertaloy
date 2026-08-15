@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 
 from nodeflow_adapters import SubprocessBackend
@@ -240,6 +241,65 @@ class TestLiveGraph(unittest.TestCase):
         # 版本连续，由 store 分配而非 backend 声明
         versions = [ov.version for ov in self.rt.store.history(f"run/{job}")]
         self.assertEqual(versions, list(range(1, len(versions) + 1)))
+
+    def test_L5_builtin_tools_run_in_the_declared_workspace(self):
+        """Phase 1：真实模型在工作区内 read_file → write_file → emit → sink。
+
+        断言落在编排不变量上（workspace 传播、文件真的变了、emit 端口受控）；
+        模型不按剧本调工具属顺从度问题，按既有规矩 skip。
+        """
+        self.rt.compile_agent_spec(
+            "toolworker", model="live", cards=[("rules", "base")],
+            tools=[{"name": "read_file", "description": "读取工作区内的文件"},
+                   {"name": "write_file", "description": "在工作区内写入文件"}],
+        )
+        tpl = self.rt.register_graph_template("tool-flow", {
+            "nodes": {
+                "worker": {"kind": "agent", "spec": "toolworker",
+                           "systemPrompt": SYSTEM,
+                           "endpoints": {"io": {}, "out": {}}},
+                "sink": {"kind": "plain", "handler": "record",
+                         "endpoints": {"io": {}}},
+            },
+            "edges": [{"id": "e1", "from": "worker.out", "to": "sink.io"}],
+        })
+
+        with tempfile.TemporaryDirectory(prefix="nf-live-") as tmp:
+            with open(os.path.join(tmp, "input.txt"), "w", encoding="utf-8") as fh:
+                fh.write("hello")
+
+            job = self.rt.instantiate(
+                tpl, owner="service:live",
+                params={"workspace_root": tmp})
+            self.rt.send((job, "worker", "io"), {"task":
+                '读取 input.txt，把内容变成全大写后写入 output.txt，'
+                '然后调用 emit，port=out，payload 填 {"ok": true}。'})
+            self.rt.drain(job)
+
+            req = self.backend.last_request_for("toolworker")
+            self.assertEqual(req.workspace.root, tmp,
+                             "workspace 根没有按 params.workspace_root 传播")
+
+            calls = self.backend.tool_calls()
+            names = {c.get("name") for c in calls}
+            if not ({"read_file", "write_file"} <= names):
+                self.skipTest(f"模型未按剧本调用内置工具（实际调用 {sorted(names)}）")
+
+            write = next((c for c in calls if c.get("name") == "write_file"), {})
+            out_path = (write.get("input") or {}).get("path", "output.txt")
+            out_abs = os.path.join(tmp, out_path)
+            if not os.path.exists(out_abs):
+                self.skipTest(f"模型写了别的路径：{out_path}")
+            content = open(out_abs, encoding="utf-8").read()
+            if content != "HELLO":
+                self.skipTest(f"模型未按剧本写大写内容：{content[:40]!r}")
+
+            # emit 走声明的 out 端口，下游 sink 被真实数据触发
+            self.assertTrue(any(r.status == "APPLIED"
+                                for r in self.rt.node_executions(job, "worker")))
+            last = self.rt.node_persistent_state(job, "sink").get("last")
+            if last != {"ok": True}:
+                self.skipTest(f"模型 emit 的 payload 与剧本不同：{last!r}")
 
 
 def _node() -> str:

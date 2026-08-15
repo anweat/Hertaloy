@@ -481,8 +481,18 @@ JSON 是**编译目标**，画布是可视化与人工调整面，助手 AI 也�
 ## 10. 当前进度
 
 **验收集 52/52 绿**（`nodeflow_v4.py` + `test_foundation_v4.py`，内存实现，mock backend）。
-全仓当前 **273 条测试**：`PROBE_PI=1` 下 268 passed / 5 skipped（pi 未装或未设
+全仓当前 **278 条测试**：`PROBE_PI=1` 下 273 passed / 5 skipped（pi 未装或未设
 `PROBE_PI` 时其 8 条自动跳过）。
+
+Phase 1 真实工具执行闭环（2026-08-14）新增：
+
+- `openai_compat_driver.mjs` 内置执行器 `read_file` / `write_file` / `list_dir` /
+  `run_shell`（模块 `drivers/tool_executors.mjs`）：工作区根限制、越界拒绝、
+  输出截断、超时；`run_shell` 需 `NODEFLOW_ALLOW_SHELL=1` 显式启用。
+- 编排面把工作区根传入 `ExecutionRequest.workspace.root`：
+  `node.workspace` > `instance.params.workspace_root` > `"."`（`test_workspace.py`）。
+- 真实模型 L5：temp 工作区内 `read_file → write_file → emit → sink` 已跑通，
+  `test_live_graph.py` 现为 5 条。
 
 | 组 | 覆盖 | 关键结论 |
 |---|---|---|

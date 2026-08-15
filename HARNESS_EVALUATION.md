@@ -276,13 +276,14 @@ class ExecutionBackend:
 
 ## 6. 探针（已可执行）
 
-装置已就位，**结果待补**：
+装置已就位（对照组真实 API 6/6 过 + 2 设计跳过；pi faux 接线 5/3）：
 
 | 文件 | 作用 | 状态 |
 |---|---|---|
 | `nodeflow_adapters.py` | `SubprocessBackend` —— 边界固定在 JSON 上，不绑定实现语言 | ✅ |
 | `drivers/fake_driver.mjs` | 假 driver，用于验证探针与适配层本身 | ✅ 8/8 绿 |
 | `test_probes.py` | `ProbeSuite` 混入 —— 换 driver 即换候选 | ✅ |
+| `drivers/openai_compat_driver.mjs` | OpenAI 兼容对照组；内置工作区工具执行器（`tool_executors.mjs`） | ✅ 探针 6/6 + live graph 5 条 |
 | `drivers/pi_driver.mjs` | pi 的 driver | ✅ faux-provider 接线验证（TestPi 5/3）；真实供应商集成待办 |
 
 ```bash

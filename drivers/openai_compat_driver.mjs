@@ -24,6 +24,8 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 
+import { builtinTool, clip } from "./tool_executors.mjs";
+
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const observe = (id, observation) =>
   out({ type: "observation", execution_id: id, observation });
@@ -95,11 +97,14 @@ function compileMessages(req) {
 /** allowed_emit_ports → emit 工具 + agent_spec.tools 声明的工具全集。
  *
  * 不变量：暴露给模型的工具集 == {emit} ∪ agent_spec.tools，一个不多。
- * 声明的工具若没有本地执行器，调用时返回**可观测错误**而不是静默吞掉；
- * 执行器本身在后续阶段接入（MCP → 本地实现）。
+ * 声明的工具名若命中 BUILTIN_TOOLS 则使用内置执行器与 schema；
+ * 其余声明工具调用时返回**可观测错误**（执行器待 MCP 适配接入）。
  */
 function buildTools(req) {
   const ports = req.output_contract?.allowed_emit_ports ?? [];
+  const payloadSchema =
+    req.output_contract?.schema?.properties?.payload ??
+    { type: "object", description: "结果内容" };
   const emitTool = {
     type: "function",
     function: {
@@ -110,7 +115,7 @@ function buildTools(req) {
         type: "object",
         properties: {
           port: { type: "string", enum: ports },
-          payload: { type: "object", description: "结果内容" },
+          payload: payloadSchema,
         },
         required: ["port", "payload"],
         additionalProperties: false,
@@ -121,16 +126,19 @@ function buildTools(req) {
   const declared = (req.agent_spec?.tools ?? [])
     // 内核 emit 永远由 output_contract 生成；重复声明按内核版本为准。
     .filter((t) => t?.name && t.name !== "emit")
-    .map((t) => ({
-      type: "function",
-      function: {
-        name: t.name,
-        description: t.description ?? "",
-        parameters: t.parameters ?? t.input_schema ?? {
-          type: "object", properties: {},
+    .map((t) => {
+      const builtin = builtinTool(t.name);
+      return {
+        type: "function",
+        function: {
+          name: t.name,
+          description: t.description ?? builtin?.description ?? "",
+          parameters: builtin?.parameters ?? t.parameters ?? t.input_schema ?? {
+            type: "object", properties: {},
+          },
         },
-      },
-    }));
+      };
+    });
 
   const all = [emitTool, ...declared];
   return { all, names: new Set(all.map((t) => t.function.name)) };
@@ -244,21 +252,44 @@ async function handleRun(req) {
         observe(id, record);
 
         let toolResult;
+        let toolError = false;
         if (!isEmit && !isDeclared) {
           // 未声明的工具 —— 拒绝，理由回传模型（◇B2 纵深防御）
           toolResult = `错误：工具 ${call.function?.name} 未声明，不可调用。`;
+          toolError = true;
         } else if (!isEmit) {
-          // 已声明、但本 driver 还没有执行器：显式失败优于静默吞掉。
-          toolResult =
-            `错误：工具 ${call.function?.name} 已声明，但当前 driver 未接入执行器；` +
-            `请由控制面接入 MCP/本地执行器后再用。`;
+          const builtin = builtinTool(call.function?.name);
+          if (builtin) {
+            try {
+              toolResult = await builtin.execute(args, req);
+            } catch (err) {
+              toolResult = `错误：${String(err?.message ?? err)}`;
+              toolError = true;
+            }
+          } else {
+            // 已声明、但本 driver 还没有执行器：显式失败优于静默吞掉。
+            toolResult =
+              `错误：工具 ${call.function?.name} 已声明，但当前 driver 未接入执行器；` +
+              `请由控制面接入 MCP/本地执行器后再用。`;
+            toolError = true;
+          }
         } else if (!ports.includes(args.port)) {
           // ★第一不变量：只能选，不能构造
           toolResult = `错误：port "${args.port}" 未声明。允许值：${ports.join(", ")}`;
+          toolError = true;
         } else {
           emissions.push({ port: args.port, payload: args.payload ?? {} });
           toolResult = "ok";
         }
+        // 执行结果必须可观测：成功/失败、输出内容都进 observations（判据 B6）。
+        const resultRecord = {
+          kind: "tool_result",
+          name: call.function?.name,
+          error: toolError,
+          output: clip(toolResult),
+        };
+        observations.push(resultRecord);
+        observe(id, resultRecord);
         messages.push({
           role: "tool",
           tool_call_id: call.id,

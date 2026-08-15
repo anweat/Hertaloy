@@ -18,7 +18,7 @@ from typing import Any, Mapping
 from nodeflow_core import (
     ExecutionRequest, ExecutionResult,
     InvariantError, InvocationContext, OutputContract, Provenance, _Message,
-    _Record, _Unit,
+    _Record, _Unit, WorkspaceScope,
 )
 
 
@@ -729,11 +729,18 @@ class SchedulingMixin:
         )
         st.last_context, st.last_spec = ctx, resolved
         eid = self._nid("exec")
+        # 工作区根：节点显式声明 > 实例 params.workspace_root > 当前目录。
+        workspace_root = (
+            node.get("workspace")
+            or inst.params.get("workspace_root")
+            or "."
+        )
         req = ExecutionRequest(
             execution_id=eid,
             agent_spec=resolved,
             context=ctx,
             origin=(inst.gid, node_id),
+            workspace=WorkspaceScope(root=str(workspace_root)),
             output_contract=OutputContract(
                 schema=self._emit_schema_for(node),
                 allowed_emit_ports=tuple(node.get("endpoints", {}))
