@@ -61,6 +61,14 @@ class ProjectionsMixin:
     def artifact_versions(self, oid) -> list[int]:
         return [ov.version for ov in self.store.history(oid)]
 
+    def graph_template_versions(self, template_id) -> Sequence[ObjectVersion]:
+        """定义版本历史：graph_template/<id> 的 ObjectVersion 列表。"""
+        return self.store.history(f"graph_template/{template_id}")
+
+    def graph_template_proposal(self, proposal_id) -> ObjectVersion:
+        """提案当前状态（pending/approved）。"""
+        return self.store.head(f"graph_template_proposal/{proposal_id}")
+
     def artifact(self, oid, version) -> Mapping[str, Any]:
         return self.store.get(oid, version).body
 

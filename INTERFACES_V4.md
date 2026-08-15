@@ -13,7 +13,8 @@
 |---|---|---|---|
 | **装配** | `AssetCard` | ✅ | skill/mcp/rules/prompt 四种卡，稳定 ID + 版本 |
 | | `AgentSpec` | ✅ | 卡片编译产物：五段 prompt + 工具全集 + `prefix_hash` |
-| **定义** | `GraphTemplate` | ✅ | 节点 + 边 + 策略 + 槽 + 订阅，发布不可变 |
+| **定义** | `GraphTemplate` | ✅ | 节点 + 边 + 策略 + 槽 + 订阅，发布不可变；**定义本身是 ObjectVersion**（`register=@1`，`publish=@2…`） |
+| | `GraphTemplateProposal` | ✅ | 提案只落版本不注册；审批 = 校验 + 发布 + approved 事实 |
 | | `NodeDefinition` | ✅ | 7 种 kind |
 | | `EndpointDefinition` | ✅ | `{ep: {emit/receive: {OP: {contract}}}}`；未声明 = 未约束 |
 | | `EdgeDefinition` | ✅ | 固定 from/to + operation + servo |

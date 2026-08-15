@@ -187,7 +187,8 @@ class ObjectStore:
     kind="annotation" / kind="run"，因此自动获得 provenance 与 lineage。
     """
 
-    KERNEL_KINDS = ("run", "annotation", "context_summary")
+    KERNEL_KINDS = ("run", "annotation", "context_summary",
+                    "graph_template", "graph_template_proposal")
 
     def __init__(self) -> None:
         self._by_object: dict[str, list[ObjectVersion]] = {}

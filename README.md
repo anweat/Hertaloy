@@ -3,7 +3,7 @@
 > **版本导航（2026-08-14）**：
 > - **当前实现入口 = V4**：概念见 [FOUNDATION_V4.md](./FOUNDATION_V4.md)，
 >   接口见 [INTERFACES_V4.md](./INTERFACES_V4.md)，代码 `nodeflow_v4.py` 及
->   `nodeflow_*` 模块，测试 `python -m pytest -q`（278 条）。
+>   `nodeflow_*` 模块，测试 `python -m pytest -q`（286 条）。
 > - **本文档与 `runtime_v2.py` 是 V2 历史证据**（37 条行为测试仍随全量跑），
 >   不代表当前 V4 行为；V4 对 V2 的取舍见 FOUNDATION §6。
 

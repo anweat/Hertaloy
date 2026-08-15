@@ -17,7 +17,8 @@ import re
 from typing import Any, Callable, Mapping
 
 from nodeflow_core import (
-    InvariantError, _ALLOWED_NODE_KINDS,
+    AuthorizationError, InvariantError, Principal, Provenance,
+    _ALLOWED_NODE_KINDS,
 )
 
 #: 边 Servo 允许的 payload 操作集 —— 与调度层 _apply_servo 保持一致。
@@ -301,7 +302,7 @@ class DefinitionsMixin:
         if ref in self._templates:
             raise InvariantError(
                 f"模板已存在，发布后不可变：{ref}。"
-                f"要演进请注册新 id（如 {template_id}-v2）或走定义版本化通道")
+                f"要演进请用 publish_graph_template（版本化通道）")
         for node_id, node in spec.get("nodes", {}).items():
             kind = node.get("kind")
             if kind not in _ALLOWED_NODE_KINDS:
@@ -315,6 +316,110 @@ class DefinitionsMixin:
         stored = copy.deepcopy(spec)
         stored.pop("_layout", None)
         self._templates[ref] = stored
+        # Phase 2：定义本身也是 ObjectVersion（可回溯、可被外层 AI 引用/审批）。
+        self._append_object(
+            f"graph_template/{template_id}",
+            {"template_id": template_id, "template_ref": ref, "spec": stored},
+            kind="graph_template",
+            provenance=Provenance(),
+        )
+        return ref
+
+    def publish_graph_template(self, template_id, spec, *,
+                               derived_from=()) -> str:
+        """版本化发布通道：同一 template_id 演进为 @2、@3…；旧 ref 保持可用。
+
+        已有实例通过精确 ref 继续使用旧定义（不变量 V4 的同款规则）。
+        内容寻址幂等：重复发布相同内容返回既有版本。
+        """
+        if "@" in template_id:
+            raise InvariantError(
+                f"模板 id 不得含 '@'（版本由内核追加）：{template_id!r}")
+        self._validate_template(template_id, spec)      # 全引用校验
+        self._validate_edges(template_id, spec)         # 连接期校验
+        stored = copy.deepcopy(spec)
+        stored.pop("_layout", None)
+        oid = f"graph_template/{template_id}"
+        # 定义级幂等按 spec 内容判断（template_ref 随版本变化，不能参与哈希）
+        for ov in self.store.history(oid):
+            if ov.body.get("spec") == stored:
+                return ov.body["template_ref"]
+        next_version = len(self.store.history(oid)) + 1
+        ref = f"{template_id}@{next_version}"
+        ov = self._append_object(
+            oid,
+            {"template_id": template_id, "template_ref": ref,
+             "spec": stored},
+            kind="graph_template",
+            provenance=Provenance(derived_from=tuple(derived_from)),
+        )
+        self._templates[ref] = stored
+        return ref
+
+    def propose_graph_template(self, proposal_id, *, template_id, spec,
+                               proposer, required_approvers=(),
+                               derived_from=()) -> str:
+        """定义提案：**只落 ObjectVersion，不注册**。审批前不进入运行注册表。
+
+        提案是版本化对象（kind=graph_template_proposal），proposer/审批人
+        必须是可信边界注入的 Principal。
+        """
+        if "@" in template_id or "@" in proposal_id:
+            raise InvariantError("template_id / proposal_id 不得含 '@'")
+        principal = Principal.parse(proposer)
+        oid = f"graph_template_proposal/{proposal_id}"
+        existing = self.store.history(oid)
+        if existing and existing[-1].body.get("status") == "pending":
+            raise InvariantError(
+                f"提案已存在且仍在 pending：{proposal_id}；"
+                f"先审批或新建 proposal_id")
+        ov = self._append_object(
+            oid,
+            {
+                "proposal_id": proposal_id,
+                "template_id": template_id,
+                "spec": copy.deepcopy(spec),
+                "status": "pending",
+                "proposer": str(principal),
+                "required_approvers": [str(Principal.parse(a))
+                                       for a in required_approvers],
+                "derived_from": list(derived_from),
+            },
+            kind="graph_template_proposal",
+            provenance=Provenance(derived_from=tuple(derived_from)),
+        )
+        return ov.ref
+
+    def approve_graph_template(self, proposal_id, *, actor,
+                               modifications=None) -> str:
+        """审批提案：校验 → 版本化发布 → 提案落 approved 事实。全留痕。"""
+        oid = f"graph_template_proposal/{proposal_id}"
+        head = self.store.head(oid)
+        body = head.body
+        if body.get("status") != "pending":
+            raise InvariantError(
+                f"提案 {proposal_id} 已 {body.get('status')}，不可重复审批")
+        principal = Principal.parse(actor)
+        required = body.get("required_approvers") or []
+        if required and str(principal) not in required:
+            raise AuthorizationError(
+                f"principal {principal} 不在提案 {proposal_id} 的审批名单内："
+                f"{required}")
+        spec = body["spec"] if modifications is None else modifications
+        template_id = body["template_id"]
+        ref = self.publish_graph_template(
+            template_id, spec, derived_from=(head.ref, *body.get("derived_from", ())))
+        self._append_object(
+            oid,
+            {**body,
+             "status": "approved",
+             "approver": str(principal),
+             "template_ref": ref},
+            kind="graph_template_proposal",
+            provenance=Provenance(
+                graph_instance_id=None, node_id=None,
+                derived_from=(head.ref,)),
+        )
         return ref
 
     def register_contract(self, contract_id, version, schema) -> str:

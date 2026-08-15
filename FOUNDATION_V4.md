@@ -481,8 +481,21 @@ JSON 是**编译目标**，画布是可视化与人工调整面，助手 AI 也�
 ## 10. 当前进度
 
 **验收集 52/52 绿**（`nodeflow_v4.py` + `test_foundation_v4.py`，内存实现，mock backend）。
-全仓当前 **278 条测试**：`PROBE_PI=1` 下 273 passed / 5 skipped（pi 未装或未设
+全仓当前 **286 条测试**：`PROBE_PI=1` 下 281 passed / 5 skipped（pi 未装或未设
 `PROBE_PI` 时其 8 条自动跳过）。
+
+Phase 2 自我编程基座（2026-08-14）新增：
+
+- GraphTemplate 进 ObjectStore：`register_graph_template` 发布 `id@1`，
+  `publish_graph_template` 演进 `id@2…`；旧 ref 与旧实例不受影响；
+  定义级幂等按 spec 内容判断。
+- 定义提案/审批：`propose_graph_template` 只落
+  `kind=graph_template_proposal` 的 ObjectVersion，不注册；
+  `approve_graph_template` 校验+发布+落 approved 事实；`required_approvers`
+  可选；proposer/actor 只信可信边界注入。
+- 控制面工具层 `nodeflow_control.py`：15 个 MCP 形状 tool schema +
+  单一 `ControlPlane.dispatch(tool, arguments, actor=...)`；
+  提案→审批→实例化→跑通已由 `test_definition_approval.py`（8 条）走通。
 
 Phase 1 真实工具执行闭环（2026-08-14）新增：
 
