@@ -48,6 +48,11 @@ export interface ContainerInstance {
    * 远端可能已经在返回路上。截断时推进 generation，迟到的结果因为对不上而必然作废。
    */
   readonly generation: number;
+  /**
+   * 提交序号。**只由提交推进**（apply / 同步 commit），claim 不推进 ——
+   * 否则 RunSnapshot 的 seq 会出现空洞。
+   */
+  readonly seq: number;
 }
 
 export class InstanceRegistry {
@@ -156,6 +161,14 @@ export class InstanceRegistry {
     return next;
   }
 
+  /** 推进提交序号，返回**新**序号。 */
+  bumpSeq(trace: TraceId): number {
+    const current = this.get(trace);
+    const next: ContainerInstance = { ...current, seq: current.seq + 1 };
+    this.#instances.set(trace, Object.freeze(next));
+    return next.seq;
+  }
+
   /** 推进截断栅栏（L3）。截断的第 0 步。 */
   bumpGeneration(trace: TraceId): ContainerInstance {
     const current = this.get(trace);
@@ -176,6 +189,7 @@ export class InstanceRegistry {
       status: "OPEN" as const,
       nodes,
       generation: 0,
+      seq: 0,
     });
     this.#instances.set(trace, instance);
     return instance;

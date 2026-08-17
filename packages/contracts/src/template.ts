@@ -11,7 +11,7 @@
 
 import { z } from "zod";
 import { Ref, TraceId, Tunnel, isDescendantOf } from "./identity.js";
-import { BindBlock } from "./variable.js";
+import { BindBlock, declaredBudget } from "./variable.js";
 import { PortMap, allowedEmitPorts } from "./port.js";
 import { NodeId } from "./message.js";
 
@@ -29,6 +29,11 @@ const HandlerNodeShape = z
     agent: AgentSpec.optional(),
     bind: BindBlock.optional(),
     ports: PortMap,
+    /**
+     * 本节点的上下文预算（不变量 B1 的阈值）。
+     * 声明了 `long` / `ref` 变量的节点**必须**给出预算，否则注册期无从求和。
+     */
+    budget: z.object({ tokens: z.number().int().positive() }).strict().optional(),
   })
   .strict();
 
@@ -211,6 +216,53 @@ export function validateContainerTemplate(
             }`,
         });
       }
+    }
+  }
+
+  // 变量命名冲突 + 预算求和（不变量 B1 的注册期落点）
+  for (const [nodeId, node] of Object.entries(tpl.nodes)) {
+    if (node.kind !== "handler") continue;
+
+    const seen = new Map<string, string>();
+    const bounded: { type: string; max_tokens?: number | undefined }[] = [];
+
+    for (const [name, decl] of Object.entries(node.bind ?? {})) {
+      seen.set(name, "bind");
+      bounded.push(decl);
+    }
+    for (const [portName, port] of Object.entries(node.ports)) {
+      if (port.direction !== "receive" || port.servo === undefined) continue;
+      for (const [name, decl] of Object.entries(port.servo.vars)) {
+        const prior = seen.get(name);
+        if (prior !== undefined) {
+          issues.push({
+            where: `nodes.${nodeId}.ports.${portName}.servo.vars.${name}`,
+            message:
+              `变量名 \`${name}\` 与 ${prior === "bind" ? "bind 段" : `端口 ${prior}`}冲突。` +
+              `同一节点的变量共用一张表，名字必须唯一`,
+          });
+        }
+        seen.set(name, portName);
+        bounded.push(decl);
+      }
+    }
+
+    const total = declaredBudget(bounded as never);
+    const declaredBound = bounded.some((v) => v.max_tokens !== undefined);
+    if (declaredBound && node.budget === undefined) {
+      issues.push({
+        where: `nodes.${nodeId}.budget`,
+        message:
+          `节点声明了 long/ref 变量（合计上界 ${total} tokens），必须给出 ` +
+          `\`budget.tokens\` —— 不声明阈值就无法在注册期校验预算（不变量 B1）`,
+      });
+    } else if (node.budget !== undefined && total > node.budget.tokens) {
+      issues.push({
+        where: `nodes.${nodeId}.budget`,
+        message:
+          `变量声明上界合计 ${total} tokens，超出节点预算 ${node.budget.tokens}。` +
+          `这说明图切得太粗 —— 拆节点，或调小某个变量的 max_tokens`,
+      });
     }
   }
 

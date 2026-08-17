@@ -182,11 +182,54 @@ packages/kernel      33 条    errors · store · instances · extract · runtim
 - 容器工具、自修改、提案审批、权限
 - MCP、服务端、实时事件、画布、真实 backend
 
-### 下一轮顺序（不向外铺服务端/画布）
+## 2.10 RunSnapshot + Task 6 + Checkpoint B（2026-08-17）
 
-1. RunSnapshot：提交时记录输入集 → 输出集，成为因果权威
-2. Task 6：bind 进请求 + 模板总预算求和 + 运行期上界拒绝
-3. 一条完整主线场景重新验收 Checkpoint B
+**128 条测试绿**（contracts 51 / kernel 77），typecheck 绿。
+
+### RunSnapshot —— 欠账已还
+
+每次提交写 `ObjectVersion(kind="run", object_id="run/<traceid>")`，
+body 含 `{seq, node, consumed[], produced[], artifacts?, termination?, usage?}`。
+
+- **`consumed → produced` 就是因果边** —— 这正是 traceid 表达不了的那一半
+  （扇出后子消息 traceid 相同却各有前因；汇聚时一条输出有多个前因）
+- `causesOf(messageId)` 从 `produced` 反查 `consumed`
+- `seq` **只由提交推进**，claim 单独写 ExecutionRecord ⇒ 快照序列无空洞（有测试断言）
+
+至此 `FOUNDATION_V5.md §3.3`"因果由 RunSnapshot 承担、信封不存 causation_ids"这句成立。
+
+### Task 6 —— B1 两半都落地
+
+| 半 | 落点 |
+|---|---|
+| 注册期 | `Σ(long/ref 声明的 max_tokens) ≤ node.budget.tokens`，超了拒绝注册；**声明了 long/ref 却不给 budget 也拒绝**（否则 B1 不可执行）|
+| 运行期 | 单个变量实际填充超过它声明的上界 → **直接失败**。不截断、不降级、不按优先级裁剪 |
+
+- `bind` 段进 `ExecutionRequest.vars`：卡片按精确版本解析正文，与端口 servo 变量合并
+- 变量名冲突（bind × 端口、端口 × 端口）在注册期拒绝 —— 同节点共用一张变量表
+- `limits.tokenBudget` 由节点声明填入，不再是空对象
+- token 估算沿用 V4 校准系数（拉丁 2.2 / CJK 0.9 字符每 token）
+
+### 写场景暴露的真 bug
+
+`HandlerContext` 原来不带入站端口，handler 分不清"新任务来了"和"我要的回复到了"。
+REQUEST 的回复落回同一节点 → handler 再发一次请求 → **无限循环**，`drain` 撞上限。
+现在 ctx 带 `port` 与 `requestId`。这条不是测试问题，是端到端场景才照出来的设计缺口。
+
+### Checkpoint B —— 通过
+
+`test/checkpoint-b.test.ts` 主线一条走通：
+**建子容器 → 传变量 → REQUEST/REPLY → agent 三段式 → 产出版本化对象 → 自然结束**。
+失败路径全覆盖：注册期预算越界 / 缺预算 / 变量名冲突、运行期上界越界、
+强制截断 + 反向清账、终态拒新工作。
+
+### 仍未做
+
+- 策略节点只有 schema，无执行器（汇聚、循环、批量消息因此都还没有）
+- `approval` / `timer` / `manual` 三类锁只有类型，无真实路径
+- 持久化、崩溃恢复、claim 接管
+- 容器工具、自修改、提案审批、权限
+- MCP、服务端、实时事件、画布、真实 backend（pi / OpenAI / tool executors）
 
 ## 3. 后续阶段
 

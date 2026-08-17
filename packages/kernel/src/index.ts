@@ -2,6 +2,7 @@ export * from "./errors.js";
 export * from "./store.js";
 export * from "./instances.js";
 export * from "./locks.js";
+export * from "./context.js";
 export * from "./extract.js";
 export * from "./routing.js";
 export * from "./runtime.js";

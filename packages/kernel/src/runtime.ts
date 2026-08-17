@@ -23,6 +23,7 @@ import {
   type Json,
   type MessageContract,
   type NodeDefinition,
+  type ObjectVersion,
   NON_RETRYABLE,
   type Port,
   type Termination,
@@ -36,6 +37,7 @@ import {
   validateContract,
 } from "@nodeflow/contracts";
 import { InvariantError, invariant } from "./errors.js";
+import { compileContext, formatContextFailures } from "./context.js";
 import { type VarBag, extractPortVars, formatExtractionFailures } from "./extract.js";
 import { type ContainerInstance, InstanceRegistry } from "./instances.js";
 import { LockLedger } from "./locks.js";
@@ -67,6 +69,16 @@ export interface Message {
 export interface HandlerContext {
   readonly traceid: TraceId;
   readonly nodeId: string;
+  /**
+   * 本次消息从哪个 receive 端口进来。
+   *
+   * 缺了这个，多入端口的节点无法区分"新任务来了"和"我要的回复到了" ——
+   * 写 Checkpoint B 场景时才暴露：REQUEST 的回复落回同一节点，
+   * handler 分不清就会再发一次请求，自己给自己造无限循环。
+   */
+  readonly port: string;
+  /** 本次消息若是 REQUEST，其 id；否则 undefined。 */
+  readonly requestId?: string;
 }
 
 export type BuiltinHandler = (
@@ -339,13 +351,26 @@ export class Runtime {
     });
     this.#records.set(executionId, record);
 
-    const limits: ExecutionLimits = {};
+    // bind 段进请求（不变量 X 的稳定前缀）+ 运行期上界校验（B1 的运行期一半）
+    const compiled = compileContext(this.#store, node, extraction.vars);
+    if (!compiled.ok) {
+      this.#busy.delete(key);
+      this.#records.delete(executionId);
+      this.#setState(input.id, "QUEUED");
+      return {
+        kind: "rejected",
+        failure: this.#fail(input, `上下文编译失败：${formatContextFailures(compiled.failures)}`),
+      };
+    }
+
+    const limits: ExecutionLimits =
+      node.budget === undefined ? {} : { tokenBudget: node.budget.tokens };
     const request: ExecutionRequest = {
       executionId,
       traceid,
       nodeId,
       agentSpec: (node.agent ?? {}) as never,
-      vars: extraction.vars,
+      vars: compiled.vars,
       outputContract: { allowedEmitPorts: allowedEmitPorts(node.ports) },
       limits,
     };
@@ -439,6 +464,12 @@ export class Runtime {
       ...record,
       status: "APPLIED",
       ...(result.usage === undefined ? {} : { usage: result.usage }),
+    });
+    this.#recordSnapshot(record.traceid, record.nodeId, [input.id], delivered, {
+      execution: record.executionId,
+      termination: result.termination,
+      artifacts: (result.artifacts ?? []).map((a) => a.object_id),
+      ...(result.usage === undefined ? {} : { usage: result.usage as never }),
     });
 
     return {
@@ -671,7 +702,12 @@ export class Runtime {
     invariant(node.kind === "handler" && node.handler !== undefined, `节点 ${nodeId} 不是内置 handler`);
     const fn = this.#handlers.get(node.handler);
     invariant(fn !== undefined, `未注册的内置 handler：${node.handler}`);
-    const outputs = fn(extraction.vars, { traceid, nodeId });
+    const outputs = fn(extraction.vars, {
+      traceid,
+      nodeId,
+      port: input.target.port,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+    });
 
     assertDeclaredPorts(node, nodeId, outputs);
     for (const [portName, value] of Object.entries(outputs)) {
@@ -689,6 +725,7 @@ export class Runtime {
 
     const delivered = this.#commitPlan(outcome.plan);
     this.#setState(input.id, "CONSUMED");
+    this.#recordSnapshot(traceid, nodeId, [input.id], delivered, {});
     return {
       consumed: input.id,
       traceid,
@@ -697,6 +734,58 @@ export class Runtime {
       dangling: outcome.plan.dangling,
       vars: extraction.vars,
     };
+  }
+
+  /**
+   * RunSnapshot —— **因果权威**（不变量 C2 的另一半）。
+   *
+   * 每次提交记下"本次消费了哪些输入、产出了哪些输出"，那就是因果边。
+   * 所以消息信封里不存 `causation_ids`：同一事实在这里已经有了，
+   * 再存一份是冗余，而且两处会漂移。
+   *
+   * `seq` 只在这里推进 —— claim 单独写 ExecutionRecord，不推进 seq，
+   * 因此快照序列没有空洞。
+   */
+  #recordSnapshot(
+    trace: TraceId,
+    nodeId: string,
+    consumed: readonly string[],
+    produced: readonly string[],
+    extra: Readonly<Record<string, Json>>,
+  ): void {
+    const seq = this.#registry.bumpSeq(trace);
+    this.#store.put(
+      `run/${trace}`,
+      "run",
+      { seq, node: nodeId, consumed: [...consumed], produced: [...produced], ...extra },
+      { traceid: trace, node_id: nodeId, at_seq: seq, derived_from: [] },
+    );
+  }
+
+  /** 某实例的全部提交快照，按 seq 升序。 */
+  snapshots(trace: TraceId): readonly ObjectVersion[] {
+    return this.#store.history(`run/${trace}`);
+  }
+
+  /**
+   * 因果查询：这条消息是由哪些消息导致的。
+   *
+   * 从快照的 `produced → consumed` 反查 —— 这就是 traceid 表达不了、
+   * 而 RunSnapshot 承担的那一半（扇出后子消息 traceid 相同却各有前因；
+   * 汇聚时一条输出有多个前因）。
+   */
+  causesOf(messageId: string): readonly string[] {
+    const root = this.#registry.rootTrace;
+    if (root === null) return [];
+    for (const instance of this.#registry.subtree(root)) {
+      for (const snap of this.snapshots(instance.traceid)) {
+        const produced = snap.body.produced as readonly string[] | undefined;
+        if (produced?.includes(messageId) === true) {
+          return snap.body.consumed as readonly string[];
+        }
+      }
+    }
+    return [];
   }
 
   #stageContext(
