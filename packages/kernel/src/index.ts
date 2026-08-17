@@ -3,4 +3,5 @@ export * from "./store.js";
 export * from "./instances.js";
 export * from "./locks.js";
 export * from "./extract.js";
+export * from "./routing.js";
 export * from "./runtime.js";

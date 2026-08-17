@@ -7,3 +7,4 @@ export * from "./port.js";
 export * from "./message.js";
 export * from "./contract.js";
 export * from "./template.js";
+export * from "./execution.js";
