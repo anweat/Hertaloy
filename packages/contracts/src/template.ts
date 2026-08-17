@@ -10,7 +10,7 @@
  */
 
 import { z } from "zod";
-import { Ref } from "./identity.js";
+import { Ref, TraceId, Tunnel } from "./identity.js";
 import { BindBlock } from "./variable.js";
 import { PortMap, allowedEmitPorts } from "./port.js";
 import { NodeId } from "./message.js";
@@ -79,11 +79,24 @@ export type EdgeDefinition = z.infer<typeof EdgeDefinition>;
 export const ChildSlot = z.object({ template: Ref }).strict();
 export type ChildSlot = z.infer<typeof ChildSlot>;
 
+/**
+ * 网关入口：本容器订阅哪条隧道，投到哪个端点。
+ *
+ * `scope` 是 traceid 前缀 —— 省略表示不限作用域。
+ * 声明 `scope: "job-1"` 表示**只收 job-1 这棵子树里发出的消息**（不变量 M2）。
+ */
+export const SubscriptionDeclaration = z
+  .object({ tunnel: Tunnel, scope: TraceId.optional(), to: PortRef })
+  .strict();
+
+export type SubscriptionDeclaration = z.infer<typeof SubscriptionDeclaration>;
+
 export const ContainerTemplate = z
   .object({
     nodes: z.record(NodeId, NodeDefinition).default({}),
     edges: z.record(Ident, EdgeDefinition).default({}),
     children: z.record(Ident, ChildSlot).default({}),
+    subscriptions: z.record(Ident, SubscriptionDeclaration).default({}),
   })
   .strict();
 
@@ -151,6 +164,49 @@ export function validateContainerTemplate(
                 }`),
         });
       }
+    }
+  }
+
+  // 网关请求端口的 callback 必须落在**本节点已声明的 receive 端口**（不变量 M3）
+  for (const [nodeId, node] of Object.entries(tpl.nodes)) {
+    for (const [portName, port] of Object.entries(node.ports)) {
+      if (port.direction !== "emit" || port.callback === undefined) continue;
+      const target = node.ports[port.callback];
+      if (target === undefined || target.direction !== "receive") {
+        issues.push({
+          where: `nodes.${nodeId}.ports.${portName}.callback`,
+          message:
+            `回复落点 \`${port.callback}\` 必须是本节点已声明的 receive 端口。可用：` +
+            `${
+              Object.entries(node.ports)
+                .filter(([, p]) => p.direction === "receive")
+                .map(([n]) => n)
+                .sort()
+                .join(", ") || "（无）"
+            }`,
+        });
+      }
+    }
+  }
+
+  // 订阅投递点必须是已声明的 receive 端口
+  for (const [subId, sub] of Object.entries(tpl.subscriptions)) {
+    const node = tpl.nodes[sub.to.node];
+    if (node === undefined) {
+      issues.push({
+        where: `subscriptions.${subId}.to`,
+        message:
+          `节点 \`${sub.to.node}\` 不存在。可用节点：` +
+          `${Object.keys(tpl.nodes).sort().join(", ") || "（无）"}`,
+      });
+      continue;
+    }
+    const port = node.ports[sub.to.port];
+    if (port === undefined || port.direction !== "receive") {
+      issues.push({
+        where: `subscriptions.${subId}.to`,
+        message: `\`${sub.to.node}.${sub.to.port}\` 必须是已声明的 receive 端口`,
+      });
     }
   }
 

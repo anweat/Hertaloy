@@ -10,7 +10,7 @@
 
 import { z } from "zod";
 import { Json } from "./json.js";
-import { TraceId } from "./identity.js";
+import { TraceId, Tunnel } from "./identity.js";
 import { PortName } from "./port.js";
 
 export const NODE_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -29,15 +29,6 @@ export const Endpoint = z
 export type Endpoint = z.infer<typeof Endpoint>;
 
 export const MESSAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-
-/** 隧道标签：统一标识符，用于匹配队列与消息（与 traceid 作用域正交）。 */
-export const TUNNEL_PATTERN = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/;
-
-export const Tunnel = z
-  .string()
-  .regex(TUNNEL_PATTERN, "隧道标签必须是小写点分标识符，如 `skill.discovery`");
-
-export type Tunnel = z.infer<typeof Tunnel>;
 
 export const MessageEnvelope = z
   .object({

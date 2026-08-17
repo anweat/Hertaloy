@@ -41,6 +41,13 @@ export interface ContainerInstance {
   readonly templateRef: Ref;
   readonly status: InstanceStatus;
   readonly nodes: ReadonlyMap<string, NodeInstance>;
+  /**
+   * 截断栅栏（设计门 4 / 不变量 L3）。
+   *
+   * 强制截断的气密性靠这个数，不靠 `backend.cancel` —— 后者只是 best effort，
+   * 远端可能已经在返回路上。截断时推进 generation，迟到的结果因为对不上而必然作废。
+   */
+  readonly generation: number;
 }
 
 export class InstanceRegistry {
@@ -149,6 +156,14 @@ export class InstanceRegistry {
     return next;
   }
 
+  /** 推进截断栅栏（L3）。截断的第 0 步。 */
+  bumpGeneration(trace: TraceId): ContainerInstance {
+    const current = this.get(trace);
+    const next: ContainerInstance = { ...current, generation: current.generation + 1 };
+    this.#instances.set(trace, Object.freeze(next));
+    return next;
+  }
+
   #materialize(trace: TraceId, templateRef: Ref): ContainerInstance {
     const template = this.#template(templateRef);
     const nodes = new Map<string, NodeInstance>();
@@ -160,6 +175,7 @@ export class InstanceRegistry {
       templateRef,
       status: "OPEN" as const,
       nodes,
+      generation: 0,
     });
     this.#instances.set(trace, instance);
     return instance;
