@@ -11,12 +11,17 @@
  *
  * **锁不承担正确性。** 强制截断永远可用（§9.1），所以锁记错了不会卡死系统，
  * 只会导致本该自动回收的没自动回收 —— 安全方向的失败。因此这里刻意零配置：
- * 只有内核在这 5 个位置记账，agent 没有任何 API 能碰锁表。
+ * 只有内核在这 2 个位置记账，agent 没有任何 API 能碰锁表。
+ *
+ * 早期稿有 5 种，另外三种被证伪：`approval` 本来就是 `request` 锁（人是服务方）；
+ * `timer` 因为内核不读时钟（L0）而不存在；`manual` 因为强制截断永远可用、
+ * 暂停不承担正确性而删除。
  */
 
 import type { TraceId } from "@nodeflow/contracts";
+import type { Snapshotable } from "./tx.js";
 
-export const LOCK_KINDS = ["request", "child", "approval", "timer", "manual"] as const;
+export const LOCK_KINDS = ["request", "child"] as const;
 export type LockKind = (typeof LOCK_KINDS)[number];
 
 export interface Lock {
@@ -28,7 +33,7 @@ export interface Lock {
   /** 哪个节点发起的 —— **仅供展示，不参与调度门控**。 */
   readonly originNode?: string;
   readonly kind: LockKind;
-  /** request_id / 子实例 traceid / 审批单号 …… */
+  /** request_id / 子实例 traceid */
   readonly key: string;
   readonly since: number;
 }
@@ -41,10 +46,23 @@ export interface AcquireInput {
   readonly originNode?: string;
 }
 
-export class LockLedger {
+export class LockLedger implements Snapshotable {
   readonly #locks = new Map<string, Lock>();
   #seq = 0;
   #clock = 0;
+
+  /** 锁都是冻结对象，浅拷贝即完整快照。 */
+  snapshot(): unknown {
+    return { locks: new Map(this.#locks), seq: this.#seq, clock: this.#clock };
+  }
+
+  restore(snap: unknown): void {
+    const s = snap as { locks: Map<string, Lock>; seq: number; clock: number };
+    this.#locks.clear();
+    for (const [k, v] of s.locks) this.#locks.set(k, v);
+    this.#seq = s.seq;
+    this.#clock = s.clock;
+  }
 
   acquire(input: AcquireInput): Lock {
     this.#seq += 1;

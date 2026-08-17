@@ -1,12 +1,15 @@
 /**
  * 容器模板契约。
  *
- * 对应 FOUNDATION_V5.md §5（容器八部分）与 §6（节点两类）。
+ * 对应 FOUNDATION_V5.md §5（容器八部分）与 §6（节点只有一类）。
  * 本文件目前覆盖第 1 部分（实例创建模板）与第 4 部分（内网）；
  * 网关 / 工具 / 版本 / 权限 / 生命周期 / 观测随后续 Task 增量加入。
  *
- * **判别式冻结（设计门 8）**：`kind ∈ {"handler","strategy"}`，只有两个值。
- * agent 不是第三个 kind —— 由 `agent` 段的**存在性**判别，不引入 `runtime` 枚举。
+ * **判别式：`kind: "handler"`**，只有一个值。
+ * agent 由 `agent` 段的**存在性**判别，不引入枚举。
+ *
+ * 策略节点已删除（FOUNDATION §6.1）：它原本要干的活——循环计数、汇聚、择优——
+ * 全部由「版本历史即状态」承担（C5），条件与路由由受信 handler 代码承担。
  */
 
 import { z } from "zod";
@@ -37,34 +40,23 @@ const HandlerNodeShape = z
   })
   .strict();
 
-/** 策略节点是唯一有控制流的地方（不变量 S2）。语句表随后续 Task 加入。 */
-const StrategyNodeShape = z
-  .object({
-    kind: z.literal("strategy"),
-    ports: PortMap,
-  })
-  .strict();
-
 function checkExecutionBody(
-  v: { readonly kind: string; readonly handler?: unknown; readonly agent?: unknown },
+  v: { readonly handler?: unknown; readonly agent?: unknown },
   ctx: z.RefinementCtx,
 ): void {
-  if (v.kind !== "handler") return;
   const declared = [v.handler !== undefined, v.agent !== undefined].filter(Boolean).length;
   if (declared !== 1) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "handler 节点必须恰好声明一个执行体：内置 `handler` 或 `agent` 段",
+      message: "节点必须恰好声明一个执行体：内置 `handler` 或 `agent` 段",
     });
   }
 }
 
 export const HandlerNode = HandlerNodeShape.superRefine(checkExecutionBody);
-export const StrategyNode = StrategyNodeShape;
 
-export const NodeDefinition = z
-  .discriminatedUnion("kind", [HandlerNodeShape, StrategyNodeShape])
-  .superRefine(checkExecutionBody);
+/** 只有一种节点。判别式保留 `kind` 字段是为了将来可扩展，但当前只接受 `"handler"`。 */
+export const NodeDefinition = HandlerNode;
 
 export type NodeDefinition = z.infer<typeof NodeDefinition>;
 
@@ -221,8 +213,6 @@ export function validateContainerTemplate(
 
   // 变量命名冲突 + 预算求和（不变量 B1 的注册期落点）
   for (const [nodeId, node] of Object.entries(tpl.nodes)) {
-    if (node.kind !== "handler") continue;
-
     const seen = new Map<string, string>();
     const bounded: { type: string; max_tokens?: number | undefined }[] = [];
 

@@ -24,6 +24,9 @@ import {
   type MessageContract,
   type NodeDefinition,
   type ObjectVersion,
+  type JsonObject,
+  type Ref,
+  isKernelKind,
   NON_RETRYABLE,
   type Port,
   type Termination,
@@ -49,7 +52,8 @@ import {
   stageOutputs,
   undeclaredPorts,
 } from "./routing.js";
-import { ObjectStore } from "./store.js";
+import { ObjectStore, refOf } from "./store.js";
+import { type Snapshotable, transact } from "./tx.js";
 
 export type MessageState = "QUEUED" | "CLAIMED" | "CONSUMED" | "FAILED" | "DISCARDED";
 
@@ -79,6 +83,19 @@ export interface HandlerContext {
   readonly port: string;
   /** 本次消息若是 REQUEST，其 id；否则 undefined。 */
   readonly requestId?: string;
+
+  /**
+   * 版本层的读写 —— 第四次归约的落点（不变量 C5）。
+   *
+   * 汇聚 / 计数 / 择优全部靠 `history`：三路各写一版，读到满三条才往下；
+   * `plan@3` 就是第三轮。节点里不再有 persistent 状态。
+   *
+   * 受信 handler 直给；agent 拿不到 ctx，它走已声明的内核工具。
+   */
+  read(ref: Ref): ObjectVersion;
+  history(objectId: string): readonly ObjectVersion[];
+  /** 写资产。随本次提交一起落，提交回滚则一并撤销。 */
+  put(objectId: string, kind: string, body: JsonObject): Ref;
 }
 
 export type BuiltinHandler = (
@@ -153,7 +170,7 @@ type ClaimOutcome =
       readonly request: ExecutionRequest;
     };
 
-export class Runtime {
+export class Runtime implements Snapshotable {
   readonly #store: ObjectStore;
   readonly #registry: InstanceRegistry;
   readonly #ledger = new LockLedger();
@@ -179,6 +196,112 @@ export class Runtime {
 
   get locks(): LockLedger {
     return this.#ledger;
+  }
+
+  /** 消息/记录都是冻结对象，浅拷贝即完整快照（§10.1）。 */
+  snapshot(): unknown {
+    return {
+      messages: new Map(this.#messages),
+      order: [...this.#order],
+      pending: new Map(this.#pending),
+      records: new Map(this.#records),
+      seq: this.#seq,
+      requestSeq: this.#requestSeq,
+      executionSeq: this.#executionSeq,
+    };
+  }
+
+  restore(snap: unknown): void {
+    const s = snap as {
+      messages: Map<string, Message>;
+      order: string[];
+      pending: Map<string, StagedRequest>;
+      records: Map<string, ExecutionRecord>;
+      seq: number;
+      requestSeq: number;
+      executionSeq: number;
+    };
+    this.#messages.clear();
+    for (const [k, v] of s.messages) this.#messages.set(k, v);
+    this.#order.length = 0;
+    this.#order.push(...s.order);
+    this.#pending.clear();
+    for (const [k, v] of s.pending) this.#pending.set(k, v);
+    this.#records.clear();
+    for (const [k, v] of s.records) this.#records.set(k, v);
+    this.#seq = s.seq;
+    this.#requestSeq = s.requestSeq;
+    this.#executionSeq = s.executionSeq;
+  }
+
+  /**
+   * 跨四套状态机的约束检查（§10 / DBMS 的 CHECK constraint 位置）。
+   *
+   * 这些规则以前散在各处的 if 里，没有一处声明。测试每次提交后跑一遍，
+   * 半状态就会当场暴露而不是等到某个下游断言莫名其妙地挂。
+   */
+  checkInvariants(): void {
+    const problems: string[] = [];
+
+    // 消息 CLAIMED ⟺ 存在引用它的 RUNNING 记录
+    const claimedByRecord = new Set<string>();
+    for (const rec of this.#records.values()) {
+      if (rec.status !== "RUNNING") continue;
+      for (const id of rec.claimed) claimedByRecord.add(id);
+    }
+    for (const msg of this.#messages.values()) {
+      if (msg.state === "CLAIMED" && !claimedByRecord.has(msg.id)) {
+        problems.push(`消息 ${msg.id} 是 CLAIMED，但没有 RUNNING 记录引用它`);
+      }
+    }
+    for (const id of claimedByRecord) {
+      const msg = this.#messages.get(id);
+      if (msg !== undefined && msg.state !== "CLAIMED") {
+        problems.push(`RUNNING 记录引用了 ${id}，但它是 ${msg.state}`);
+      }
+    }
+
+    const root = this.#registry.rootTrace;
+    if (root !== null) {
+      for (const inst of this.#registry.subtree(root)) {
+        if (inst.status !== "TERMINAL") continue;
+        // TERMINAL ⇒ 无在途消息、无在途执行、无持有锁
+        const live = [...this.#messages.values()].filter(
+          (m) =>
+            m.target.traceid === inst.traceid &&
+            (m.state === "QUEUED" || m.state === "CLAIMED"),
+        );
+        if (live.length > 0) {
+          problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍有 ${live.length} 条在途消息`);
+        }
+        if (this.#ledger.held(inst.traceid).length > 0) {
+          problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍持有锁`);
+        }
+        for (const rec of this.#records.values()) {
+          if (rec.traceid === inst.traceid && rec.status === "RUNNING") {
+            problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍有 RUNNING 执行 ${rec.executionId}`);
+          }
+        }
+      }
+      // child 锁存在 ⇒ 子实例未终态
+      for (const lock of this.#ledger.all()) {
+        if (lock.kind !== "child") continue;
+        if (!this.#registry.has(lock.key)) {
+          problems.push(`child 锁指向不存在的实例 ${lock.key}`);
+        } else if (this.#registry.get(lock.key).status === "TERMINAL") {
+          problems.push(`child 锁仍在，但子实例 ${lock.key} 已 TERMINAL`);
+        }
+      }
+    }
+
+    if (problems.length > 0) {
+      throw new InvariantError(["状态不变量被破坏：", ...problems].join("\n  "));
+    }
+  }
+
+  /** 本次提交涉及的全部可回滚部件。 */
+  get #parts(): readonly Snapshotable[] {
+    return [this, this.#ledger, this.#registry, this.#store];
   }
 
   records(): readonly ExecutionRecord[] {
@@ -237,9 +360,10 @@ export class Runtime {
   // -------------------------------------------------------------------------
 
   step(): StepResult | StepFailure | null {
-    const next = this.#pickWork((node) => node.kind === "handler" && node.handler !== undefined);
+    const next = this.#pickWork((node) => node.handler !== undefined);
     if (next === null) return null;
-    return this.#commitSync(next);
+    // 提交是事务：抛异常则消息状态、锁、产物、快照全部回滚（§10.1）
+    return transact(this.#parts, () => this.#commitSync(next));
   }
 
   drain(maxSteps = 10_000): readonly (StepResult | StepFailure)[] {
@@ -291,7 +415,7 @@ export class Runtime {
       if (!checked.ok) {
         return this.#applyFailure(record, input, "INVALID_OUTPUT", checked.reason);
       }
-      return this.#apply(record, input, checked.result);
+      return transact(this.#parts, () => this.#apply(record, input, checked.result));
     } finally {
       this.#busy.delete(key);
     }
@@ -308,7 +432,7 @@ export class Runtime {
   }
 
   #claim(): ClaimOutcome {
-    const input = this.#pickWork((node) => node.kind === "handler" && node.agent !== undefined);
+    const input = this.#pickWork((node) => node.agent !== undefined);
     if (input === null) return { kind: "idle" };
 
     const { traceid, node: nodeId } = input.target;
@@ -318,7 +442,7 @@ export class Runtime {
     const instance = this.#registry.get(traceid);
     const template = this.#registry.template(traceid);
     const node = template.nodes[nodeId];
-    invariant(node !== undefined && node.kind === "handler", `节点 ${nodeId} 不可执行`);
+    invariant(node !== undefined, `实例 ${traceid} 无节点 ${nodeId}`);
     const port = node.ports[input.target.port] as Port;
 
     const inboundIssue = this.#checkContract(port, input.payload);
@@ -699,15 +823,10 @@ export class Runtime {
       return this.#fail(input, `变量提取失败：${formatExtractionFailures(extraction.failures)}`);
     }
 
-    invariant(node.kind === "handler" && node.handler !== undefined, `节点 ${nodeId} 不是内置 handler`);
+    invariant(node.handler !== undefined, `节点 ${nodeId} 声明了 agent 段，走三段式而非同步路径`);
     const fn = this.#handlers.get(node.handler);
     invariant(fn !== undefined, `未注册的内置 handler：${node.handler}`);
-    const outputs = fn(extraction.vars, {
-      traceid,
-      nodeId,
-      port: input.target.port,
-      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
-    });
+    const outputs = fn(extraction.vars, this.#handlerContext(traceid, nodeId, input));
 
     assertDeclaredPorts(node, nodeId, outputs);
     for (const [portName, value] of Object.entries(outputs)) {
@@ -786,6 +905,39 @@ export class Runtime {
       }
     }
     return [];
+  }
+
+  /**
+   * 受信 handler 的 ctx。`put` 走本次提交的事务，回滚即撤销。
+   *
+   * 内核保留 kind 仍然挡着 —— 受信不等于可以伪造 `run` / `annotation`，
+   * 那会污染因果记录。
+   */
+  #handlerContext(traceid: TraceId, nodeId: string, input: Message): HandlerContext {
+    const store = this.#store;
+    return {
+      traceid,
+      nodeId,
+      port: input.target.port,
+      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+      read: (ref: Ref) => store.resolve(ref),
+      history: (objectId: string) => store.history(objectId),
+      put: (objectId: string, kind: string, body: JsonObject): Ref => {
+        if (isKernelKind(kind)) {
+          throw new InvariantError(
+            `handler 不得写入内核保留 kind \`${kind}\`（对象 ${objectId}）`,
+          );
+        }
+        return refOf(
+          store.put(objectId, kind, body, {
+            traceid,
+            node_id: nodeId,
+            at_seq: 0,
+            derived_from: [],
+          }),
+        );
+      },
+    };
   }
 
   #stageContext(

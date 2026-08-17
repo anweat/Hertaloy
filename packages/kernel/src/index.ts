@@ -1,5 +1,6 @@
 export * from "./errors.js";
 export * from "./store.js";
+export * from "./tx.js";
 export * from "./instances.js";
 export * from "./locks.js";
 export * from "./context.js";

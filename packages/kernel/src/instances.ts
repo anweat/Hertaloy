@@ -26,13 +26,19 @@ import {
 } from "@nodeflow/contracts";
 import { InvariantError, invariant } from "./errors.js";
 import { ObjectStore } from "./store.js";
+import type { Snapshotable } from "./tx.js";
 
 export type InstanceStatus = "OPEN" | "TERMINAL";
 
+/**
+ * 节点实例。
+ *
+ * **没有 persistent 状态**（不变量 C5）：累加、计数、择优一律读版本历史。
+ * 节点内私有状态是本项目一直在消灭的那类东西，而 ObjectStore 的版本历史
+ * 已经是累加器 + 计数器 + 择优候选集，且更好——已版本化、可观测、跨实例可见。
+ */
 export interface NodeInstance {
   readonly nodeId: string;
-  /** 跨轮长期状态。本阶段恒为空对象，调度落地后才写入。 */
-  readonly persistent: JsonObject;
 }
 
 export interface ContainerInstance {
@@ -55,10 +61,22 @@ export interface ContainerInstance {
   readonly seq: number;
 }
 
-export class InstanceRegistry {
+export class InstanceRegistry implements Snapshotable {
   readonly #store: ObjectStore;
   readonly #instances = new Map<TraceId, ContainerInstance>();
   #root: TraceId | null = null;
+
+  /** 实例都是冻结对象，浅拷贝即完整快照。 */
+  snapshot(): unknown {
+    return { instances: new Map(this.#instances), root: this.#root };
+  }
+
+  restore(snap: unknown): void {
+    const s = snap as { instances: Map<TraceId, ContainerInstance>; root: TraceId | null };
+    this.#instances.clear();
+    for (const [k, v] of s.instances) this.#instances.set(k, v);
+    this.#root = s.root;
+  }
 
   constructor(store: ObjectStore) {
     this.#store = store;
@@ -181,7 +199,7 @@ export class InstanceRegistry {
     const template = this.#template(templateRef);
     const nodes = new Map<string, NodeInstance>();
     for (const nodeId of Object.keys(template.nodes)) {
-      nodes.set(nodeId, Object.freeze({ nodeId, persistent: Object.freeze({}) }));
+      nodes.set(nodeId, Object.freeze({ nodeId }));
     }
     const instance: ContainerInstance = Object.freeze({
       traceid: trace,
