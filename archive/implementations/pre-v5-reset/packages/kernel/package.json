@@ -1,0 +1,21 @@
+{
+  "name": "@nodeflow/kernel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Nodeflow V5 —— TS 编排内核（core/definitions/budget/scheduling/projections/control/presets/kernel-tools）",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@nodeflow/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

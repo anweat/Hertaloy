@@ -1,0 +1,22 @@
+{
+  "name": "@nodeflow/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Nodeflow V5 —— Zod 单源契约：GraphTemplate / 实例 / 消息 / 版本 / 执行面 / WS 事件",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^3.24.1",
+    "zod-to-json-schema": "^3.24.1"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.5",
+    "typescript": "^5.7.3"
+  }
+}

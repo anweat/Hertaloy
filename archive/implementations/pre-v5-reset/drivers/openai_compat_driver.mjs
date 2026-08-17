@@ -1,0 +1,402 @@
+#!/usr/bin/env node
+/**
+ * OpenAI 兼容端点 driver（DeepSeek / OpenRouter / Groq / Together / …）
+ *
+ * 定位：**对照组 + 最小生产 backend**。
+ * 我们自己实现，因此四条必控判据（A1/A2/A3/D1）天然满足：
+ *   A1 system prompt 完全由我们给
+ *   A2 messages 完全由我们给，不补历史
+ *   A3 永不压缩（compactions 恒为 0）
+ *   D1 全程无状态，不落任何会话文件
+ * 它是 pi / Claude / Codex 的比较基准。
+ *
+ * 配置（**不进 git**）：默认读 ./config/llm.local.json，可用
+ * NODEFLOW_LLM_CONFIG 指定其他路径；也可全部走环境变量。
+ *
+ *   { "base_url": "https://api.deepseek.com/v1",
+ *     "api_key":  "…",
+ *     "model":    "deepseek-chat" }
+ *
+ * 环境变量覆盖：NODEFLOW_LLM_BASE_URL / NODEFLOW_LLM_API_KEY / NODEFLOW_LLM_MODEL
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import readline from "node:readline";
+
+import { builtinTool, clip } from "./tool_executors.mjs";
+
+const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+const observe = (id, observation) =>
+  out({ type: "observation", execution_id: id, observation });
+
+// 内核工具桥（P0-6）：driver 发起，编排面应答
+const kernelPending = new Map();
+let kernelSeq = 0;
+function callKernelTool(executionId, name, arguments_) {
+  const toolCallId = `kt-${++kernelSeq}`;
+  return new Promise((resolve, reject) => {
+    kernelPending.set(toolCallId, { resolve, reject });
+    out({ type: "kernel_tool", execution_id: executionId,
+          tool_call_id: toolCallId, name, arguments: arguments_ ?? {} });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 配置
+// ---------------------------------------------------------------------------
+
+function loadConfig() {
+  const p =
+    process.env.NODEFLOW_LLM_CONFIG ??
+    path.join(process.cwd(), "config", "llm.local.json");
+  let file = {};
+  try {
+    file = JSON.parse(fs.readFileSync(p, "utf-8"));
+  } catch {
+    /* 允许纯环境变量模式 */
+  }
+  const cfg = {
+    base_url: process.env.NODEFLOW_LLM_BASE_URL ?? file.base_url,
+    api_key: process.env.NODEFLOW_LLM_API_KEY ?? file.api_key,
+    model: process.env.NODEFLOW_LLM_MODEL ?? file.model ?? "deepseek-chat",
+    max_iterations: file.max_iterations ?? 6,
+  };
+  if (!cfg.base_url || !cfg.api_key) {
+    throw new Error(
+      `缺少 base_url / api_key。请创建 ${p}（该路径已在 .gitignore 中），` +
+        `或设置 NODEFLOW_LLM_BASE_URL / NODEFLOW_LLM_API_KEY`
+    );
+  }
+  return cfg;
+}
+
+let CFG;
+try {
+  CFG = loadConfig();
+} catch (err) {
+  out({ type: "error", message: String(err.message ?? err) });
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// 上下文编译 —— 完全由编排面决定，driver 不加任何东西
+// ---------------------------------------------------------------------------
+
+function compileMessages(req) {
+  const ctx = req.context ?? {};
+  const msgs = [];
+  const system = req.agent_spec?.systemPrompt;
+  if (system) msgs.push({ role: "system", content: system });
+
+  for (const ref of ctx.head ?? [])
+    msgs.push({ role: "user", content: `[head] ${ref}` });
+
+  for (let i = 0; i < (ctx.messages ?? []).length; i++) {
+    const m = ctx.messages[i];
+    const meta = ctx.meta?.[i];
+    const tag = meta?.request_id ? `[request_id=${meta.request_id}] ` : "";
+    if (m && typeof m === "object" && typeof m.role === "string") {
+      msgs.push({ ...m, content: tag + String(m.content ?? "") });
+    } else {
+      msgs.push({ role: "user", content: tag + JSON.stringify(m) });
+    }
+  }
+
+  // 不变量 X：运行期发现的资料一律追加在尾部，保住缓存前缀
+  for (const ref of ctx.tail ?? [])
+    msgs.push({ role: "user", content: `[tail] ${ref}` });
+  for (const t of ctx.transient ?? [])
+    msgs.push({ role: "user", content: JSON.stringify(t) });
+
+  return msgs;
+}
+
+/** allowed_emit_ports → emit 工具 + agent_spec.tools 声明的工具全集。
+ *
+ * 不变量：暴露给模型的工具集 == {emit} ∪ agent_spec.tools，一个不多。
+ * 声明的工具名若命中 BUILTIN_TOOLS 则使用内置执行器与 schema；
+ * 其余声明工具调用时返回**可观测错误**（执行器待 MCP 适配接入）。
+ */
+function buildTools(req) {
+  const ports = req.output_contract?.allowed_emit_ports ?? [];
+  const payloadSchema =
+    req.output_contract?.schema?.properties?.payload ??
+    { type: "object", description: "结果内容" };
+  const emitTool = {
+    type: "function",
+    function: {
+      name: "emit",
+      description:
+        "输出本轮结果。完成任务后必须调用一次。port 只能取给定枚举值之一。",
+      parameters: {
+        type: "object",
+        properties: {
+          port: { type: "string", enum: ports },
+          payload: payloadSchema,
+        },
+        required: ["port", "payload"],
+        additionalProperties: false,
+      },
+    },
+  };
+
+  const declared = (req.agent_spec?.tools ?? [])
+    // 内核 emit 永远由 output_contract 生成；重复声明按内核版本为准。
+    .filter((t) => t?.name && t.name !== "emit")
+    .map((t) => {
+      const builtin = builtinTool(t.name);
+      return {
+        type: "function",
+        function: {
+          name: t.name,
+          description: t.description ?? builtin?.description ?? "",
+          parameters: builtin?.parameters ?? t.parameters ?? t.input_schema ?? {
+            type: "object", properties: {},
+          },
+        },
+      };
+    });
+
+  // 内核工具桥：由节点声明推导（read_artifact/publish/spawn），
+  // 执行时回调编排面，不在 driver 本地实现（P0-6）。
+  const kernel = (req.agent_spec?.kernel_tools ?? []).map((t) => ({
+    type: "function",
+    function: {
+      name: t.name,
+      description: t.description ?? "",
+      parameters: t.parameters ?? { type: "object", properties: {} },
+    },
+  }));
+
+  const all = [emitTool, ...declared, ...kernel];
+  return {
+    all,
+    names: new Set(all.map((t) => t.function.name)),
+    kernelNames: new Set(kernel.map((t) => t.function.name)),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 执行
+// ---------------------------------------------------------------------------
+
+const inflight = new Map(); // execution_id -> AbortController
+
+async function handleRun(req) {
+  const id = req.execution_id;
+  const ports = req.output_contract?.allowed_emit_ports ?? [];
+  const emissions = [];
+  const observations = [];
+  const usage = {
+    in_tokens: 0, out_tokens: 0, cost: 0,
+    wall_clock_seconds: 0, tool_calls: 0,
+    compactions: 0,          // ★A3：我们永不压缩
+  };
+
+  const diagnostics = {
+    received_context: req.context,
+    received_tools: req.agent_spec?.tools ?? [],
+    received_system: req.agent_spec?.systemPrompt ?? null,
+    model: CFG.model,
+  };
+  // 探针专用：不打 API 的可控挂起，用于验证取消链路（不烧 token）
+  if (req.agent_spec?.probe_hang) {
+    const ac = new AbortController();
+    inflight.set(id, ac);
+    await new Promise((resolve) => {
+      ac.signal.addEventListener("abort", resolve, { once: true });
+    });
+    inflight.delete(id);
+    return out({
+      type: "result", execution_id: id,
+      result: { execution_id: id, emissions: [], artifacts: [], usage,
+                termination: "CANCELLED", session_handle: null,
+                observations, diagnostics },
+    });
+  }
+
+  const ac = new AbortController();
+  inflight.set(id, ac);
+  const started = Date.now();
+  const messages = compileMessages(req);
+  const built = buildTools(req);
+  const tools = built.all;
+  const declaredNames = built.names;
+  const kernelNames = built.kernelNames;
+  // 判据 B1/B1′ 的证据：模型**实际**收到的工具集，而不是我们宣称给的。
+  diagnostics.actual_tools = tools.map((t) => ({
+    name: t.function.name,
+    parameters: t.function.parameters,
+  }));
+  let termination = "DONE";
+
+  try {
+    for (let i = 0; i < CFG.max_iterations; i++) {
+      const resp = await fetch(`${CFG.base_url}/chat/completions`, {
+        method: "POST",
+        signal: ac.signal,
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${CFG.api_key}`,
+        },
+        body: JSON.stringify({
+          model: CFG.model,
+          messages,
+          tools,
+          tool_choice: "auto",
+        }),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`HTTP ${resp.status}: ${text.slice(0, 300)}`);
+      }
+      const data = await resp.json();
+      if (data.usage) {
+        usage.in_tokens += data.usage.prompt_tokens ?? 0;
+        usage.out_tokens += data.usage.completion_tokens ?? 0;
+      }
+
+      const choice = data.choices?.[0];
+      const msg = choice?.message ?? {};
+      messages.push(msg);
+
+      const calls = msg.tool_calls ?? [];
+      if (calls.length === 0) break;   // 模型没再调工具，收工
+
+      for (const call of calls) {
+        usage.tool_calls += 1;
+        let args = {};
+        try {
+          args = JSON.parse(call.function?.arguments ?? "{}");
+        } catch { /* 保留空对象，下面按非法处理 */ }
+
+        const isEmit = call.function?.name === "emit";
+        const isDeclared = declaredNames.has(call.function?.name);
+        const isKernel = kernelNames.has(call.function?.name);
+        const record = {
+          kind: "tool_call",
+          name: call.function?.name,
+          // 我们能拦的：内核 emit + 编译期声明的工具 + 内核工具桥。
+          gated: isEmit || isDeclared || isKernel,
+          input: args,
+        };
+        observations.push(record);
+        observe(id, record);
+
+        let toolResult;
+        let toolError = false;
+        if (!isEmit && !isDeclared && !isKernel) {
+          // 未声明的工具 —— 拒绝，理由回传模型（◇B2 纵深防御）
+          toolResult = `错误：工具 ${call.function?.name} 未声明，不可调用。`;
+          toolError = true;
+        } else if (isKernel) {
+          // 内核工具桥：read_artifact / publish / spawn 由编排面执行
+          try {
+            const result = await callKernelTool(id, call.function?.name, args);
+            toolResult = JSON.stringify(result);
+          } catch (err) {
+            toolResult = `错误：${String(err?.message ?? err)}`;
+            toolError = true;
+          }
+        } else if (!isEmit) {
+          const builtin = builtinTool(call.function?.name);
+          if (builtin) {
+            try {
+              toolResult = await builtin.execute(args, req);
+            } catch (err) {
+              toolResult = `错误：${String(err?.message ?? err)}`;
+              toolError = true;
+            }
+          } else {
+            // 已声明、但本 driver 还没有执行器：显式失败优于静默吞掉。
+            toolResult =
+              `错误：工具 ${call.function?.name} 已声明，但当前 driver 未接入执行器；` +
+              `请由控制面接入 MCP/本地执行器后再用。`;
+            toolError = true;
+          }
+        } else if (!ports.includes(args.port)) {
+          // ★第一不变量：只能选，不能构造
+          toolResult = `错误：port "${args.port}" 未声明。允许值：${ports.join(", ")}`;
+          toolError = true;
+        } else {
+          emissions.push({ port: args.port, payload: args.payload ?? {} });
+          toolResult = "ok";
+        }
+        // 执行结果必须可观测：成功/失败、输出内容都进 observations（判据 B6）。
+        const resultRecord = {
+          kind: "tool_result",
+          name: call.function?.name,
+          error: toolError,
+          output: clip(toolResult),
+        };
+        observations.push(resultRecord);
+        observe(id, resultRecord);
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: toolResult,
+        });
+      }
+
+      if (emissions.length > 0) break;  // 已拿到合法输出
+    }
+
+    if (emissions.length === 0) termination = "INVALID_OUTPUT";
+  } catch (err) {
+    if (ac.signal.aborted) {
+      termination = "CANCELLED";
+    } else {
+      termination = "FAILED";
+      observe(id, { kind: "error", message: String(err.message ?? err) });
+      diagnostics.error = String(err.message ?? err);
+    }
+  } finally {
+    inflight.delete(id);
+  }
+
+  usage.wall_clock_seconds = (Date.now() - started) / 1000;
+  out({
+    type: "result", execution_id: id,
+    result: { execution_id: id, emissions, artifacts: [], usage,
+              termination, session_handle: null, observations, diagnostics },
+  });
+}
+
+// ---------------------------------------------------------------------------
+
+const rl = readline.createInterface({ input: process.stdin, terminal: false });
+rl.on("line", async (line) => {
+  if (!line.trim()) return;
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch (err) {
+    return out({ type: "error", message: `bad json: ${String(err)}` });
+  }
+  if (msg.type === "run") {
+    try {
+      await handleRun(msg.request);
+    } catch (err) {
+      out({ type: "error", execution_id: msg.request?.execution_id,
+            message: String(err.message ?? err) });
+    }
+    return;
+  }
+  if (msg.type === "kernel_tool_result") {
+    const call = kernelPending.get(msg.tool_call_id);
+    if (call) {
+      kernelPending.delete(msg.tool_call_id);
+      if (msg.error) call.reject(new Error(msg.error));
+      else call.resolve(msg.result);
+    }
+    return;
+  }
+  if (msg.type === "cancel") {
+    inflight.get(msg.execution_id)?.abort();   // ◇C1
+    return;
+  }
+  out({ type: "error", message: `unknown message type: ${msg.type}` });
+});
+rl.on("close", () => process.exit(0));
