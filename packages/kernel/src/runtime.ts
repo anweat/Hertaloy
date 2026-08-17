@@ -30,8 +30,9 @@ import {
   type Tunnel,
   type Usage,
   allowedEmitPorts,
+  checkBackendResult,
   formatContractIssues,
-  isDescendantOf,
+  scopeAccepts,
   validateContract,
 } from "@nodeflow/contracts";
 import { InvariantError, invariant } from "./errors.js";
@@ -42,7 +43,9 @@ import {
   type StagePlan,
   type StagedRequest,
   assertDeclaredPorts,
+  describeUndeclared,
   stageOutputs,
+  undeclaredPorts,
 } from "./routing.js";
 import { ObjectStore } from "./store.js";
 
@@ -127,6 +130,16 @@ export interface RuntimeOptions {
   readonly backend?: ExecutionBackend;
   readonly maxAttempts?: number;
 }
+
+type ClaimOutcome =
+  | { readonly kind: "idle" }
+  | { readonly kind: "rejected"; readonly failure: StepFailure }
+  | {
+      readonly kind: "claimed";
+      readonly record: ExecutionRecord;
+      readonly input: Message;
+      readonly request: ExecutionRequest;
+    };
 
 export class Runtime {
   readonly #store: ObjectStore;
@@ -241,7 +254,10 @@ export class Runtime {
    */
   async stepAgent(): Promise<StepResult | StepFailure | null> {
     const claimed = this.#claim();
-    if (claimed === null) return null;
+    // 入口校验失败不是"没活干" —— 必须把失败返回给调用方，否则 drainAgents
+    // 会把它当空闲提前退出，后面合法的消息被滞留
+    if (claimed.kind === "idle") return null;
+    if (claimed.kind === "rejected") return claimed.failure;
 
     const { record, input, request } = claimed;
     const key = `${record.traceid}/${record.nodeId}`;
@@ -250,14 +266,20 @@ export class Runtime {
       const backend = this.#backend;
       invariant(backend !== undefined, "未配置 ExecutionBackend，agent 节点无法执行");
 
-      let result: ExecutionResult;
+      let raw: unknown;
       try {
-        result = await backend.run(request);
+        raw = await backend.run(request);
       } catch (error) {
         // backend 抛异常 = FAILED 可重试
         return this.#applyFailure(record, input, "FAILED", String(error));
       }
-      return this.#apply(record, input, result);
+
+      // backend 是不可信边界：形状、executionId、内核保留 kind 都要真校验
+      const checked = checkBackendResult(record.executionId, raw);
+      if (!checked.ok) {
+        return this.#applyFailure(record, input, "INVALID_OUTPUT", checked.reason);
+      }
+      return this.#apply(record, input, checked.result);
     } finally {
       this.#busy.delete(key);
     }
@@ -273,17 +295,13 @@ export class Runtime {
     throw new InvariantError(`drainAgents 未收敛：已执行 ${maxSteps} 步`);
   }
 
-  #claim(): {
-    record: ExecutionRecord;
-    input: Message;
-    request: ExecutionRequest;
-  } | null {
+  #claim(): ClaimOutcome {
     const input = this.#pickWork((node) => node.kind === "handler" && node.agent !== undefined);
-    if (input === null) return null;
+    if (input === null) return { kind: "idle" };
 
     const { traceid, node: nodeId } = input.target;
     const key = `${traceid}/${nodeId}`;
-    if (this.#busy.has(key)) return null;
+    if (this.#busy.has(key)) return { kind: "idle" };
 
     const instance = this.#registry.get(traceid);
     const template = this.#registry.template(traceid);
@@ -293,16 +311,17 @@ export class Runtime {
 
     const inboundIssue = this.#checkContract(port, input.payload);
     if (inboundIssue !== null) {
-      this.#failMessage(input, `入站契约不符：${inboundIssue}`);
-      return null;
+      return { kind: "rejected", failure: this.#fail(input, `入站契约不符：${inboundIssue}`) };
     }
     const extraction = extractPortVars(port, input.payload);
     if (!extraction.ok) {
-      this.#failMessage(
-        input,
-        `变量提取失败：${formatExtractionFailures(extraction.failures)}`,
-      );
-      return null;
+      return {
+        kind: "rejected",
+        failure: this.#fail(
+          input,
+          `变量提取失败：${formatExtractionFailures(extraction.failures)}`,
+        ),
+      };
     }
 
     this.#busy.add(key);
@@ -330,7 +349,7 @@ export class Runtime {
       outputContract: { allowedEmitPorts: allowedEmitPorts(node.ports) },
       limits,
     };
-    return { record, input: this.message(input.id), request };
+    return { kind: "claimed", record, input: this.message(input.id), request };
   }
 
   #apply(
@@ -366,7 +385,20 @@ export class Runtime {
     const template = this.#registry.template(record.traceid);
     const node = template.nodes[record.nodeId];
     invariant(node !== undefined, `节点 ${record.nodeId} 不存在`);
-    assertDeclaredPorts(node, record.nodeId, result.emissions);
+
+    // 端口越界在 agent 路径是 INVALID_OUTPUT，**不是**编程错误：
+    // backend 跑的是模型输出，属不可信边界。抛异常会让消息永久停在 CLAIMED、
+    // 记录永久停在 RUNNING，三个终止谓词从此不可能满足。
+    const offenders = undeclaredPorts(node, result.emissions);
+    if (offenders.length > 0) {
+      return this.#applyFailure(
+        record,
+        input,
+        "INVALID_OUTPUT",
+        describeUndeclared(node, record.nodeId, offenders),
+        result.usage,
+      );
+    }
 
     for (const [portName, value] of Object.entries(result.emissions)) {
       const issue = this.#checkContract(node.ports[portName] as Port, value);
@@ -389,6 +421,8 @@ export class Runtime {
       return this.#applyFailure(record, input, "INVALID_OUTPUT", outcome.reason, result.usage);
     }
 
+    // 产物与下游一起提交：先全部校验通过，再一次性落。
+    // 边写边校验会在中途失败时留下部分版本 —— 违反零部分提交。
     for (const artifact of result.artifacts ?? []) {
       this.#store.put(artifact.object_id, artifact.kind, artifact.body, {
         traceid: record.traceid,
@@ -499,6 +533,44 @@ export class Runtime {
 
   canTerminate(trace: TraceId): boolean {
     return this.terminationBlockers(trace).length === 0;
+  }
+
+  /**
+   * **自然终止** —— 三谓词满足后进终态，并销掉父容器对本实例的 `child` 锁。
+   *
+   * 这是与强制截断完全分开的一条路径（§9.1 那张表的左半列）：
+   * 截断是 fiat，自然终止是"它做完了"。没有这个提交点，成功完成的子容器
+   * 不会释放父的 child 锁，父容器永远无法自然完成，主线闭不上。
+   */
+  settle(trace: TraceId): boolean {
+    const instance = this.#registry.get(trace);
+    if (instance.status !== "OPEN") return false;
+    if (!this.canTerminate(trace)) return false;
+
+    this.#registry.setStatus(trace, "TERMINAL");
+    // 子终态 → 父的 child 锁销账（L1 第 2 种的对偶）
+    this.#ledger.releaseByKey("child", trace);
+    return true;
+  }
+
+  /**
+   * 自底向上收敛：深的先 settle，因为子终态才能释放父的 child 锁。
+   * 反复扫到不再有进展为止。
+   */
+  settleAll(): readonly TraceId[] {
+    const root = this.#registry.rootTrace;
+    if (root === null) return [];
+    const settled: TraceId[] = [];
+    for (;;) {
+      const byDepthDesc = [...this.#registry.subtree(root)].sort(
+        (a, b) => b.traceid.split("/").length - a.traceid.split("/").length,
+      );
+      const before = settled.length;
+      for (const inst of byDepthDesc) {
+        if (this.settle(inst.traceid)) settled.push(inst.traceid);
+      }
+      if (settled.length === before) return settled;
+    }
   }
 
   truncate(trace: TraceId, reason: string): TruncationResult {
@@ -671,7 +743,8 @@ export class Runtime {
       if (instance.status !== "OPEN") continue;
       for (const sub of Object.values(this.#registry.template(instance.traceid).subscriptions)) {
         if (sub.tunnel !== tunnel) continue;
-        if (sub.scope !== undefined && !isDescendantOf(sender, sub.scope)) continue;
+        // 相对作用域按**订阅方实例**解析，所以同一模板换实例仍然正确
+        if (!scopeAccepts(sub.scope, instance.traceid, sender)) continue;
         out.push({ traceid: instance.traceid, node: sub.to.node, port: sub.to.port });
       }
     }

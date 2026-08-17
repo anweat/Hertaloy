@@ -10,7 +10,7 @@
  */
 
 import { z } from "zod";
-import { Ref, TraceId, Tunnel } from "./identity.js";
+import { Ref, TraceId, Tunnel, isDescendantOf } from "./identity.js";
 import { BindBlock } from "./variable.js";
 import { PortMap, allowedEmitPorts } from "./port.js";
 import { NodeId } from "./message.js";
@@ -80,16 +80,41 @@ export const ChildSlot = z.object({ template: Ref }).strict();
 export type ChildSlot = z.infer<typeof ChildSlot>;
 
 /**
- * 网关入口：本容器订阅哪条隧道，投到哪个端点。
+ * 订阅作用域（不变量 M2 的一半）。
  *
- * `scope` 是 traceid 前缀 —— 省略表示不限作用域。
- * 声明 `scope: "job-1"` 表示**只收 job-1 这棵子树里发出的消息**（不变量 M2）。
+ * **必须支持相对形式**：模板会被实例化成 `job-1`、`job-2`……，
+ * 写死绝对 traceid 的订阅换个实例就失效，与剧本帧 11"订阅自己子树"不符。
+ * `$` 不是合法 traceid 字符，所以两个相对标记与绝对前缀不会歧义。
  */
+export const RELATIVE_SCOPES = ["$self", "$self_subtree"] as const;
+export const SubscriptionScope = z.union([z.enum(RELATIVE_SCOPES), TraceId]);
+export type SubscriptionScope = z.infer<typeof SubscriptionScope>;
+
+/** 网关入口：本容器订阅哪条隧道，投到哪个端点。 */
 export const SubscriptionDeclaration = z
-  .object({ tunnel: Tunnel, scope: TraceId.optional(), to: PortRef })
+  .object({ tunnel: Tunnel, scope: SubscriptionScope.optional(), to: PortRef })
   .strict();
 
 export type SubscriptionDeclaration = z.infer<typeof SubscriptionDeclaration>;
+
+/**
+ * 作用域是否接受这个发送方。相对标记在**匹配时**按订阅方实例解析成绝对前缀。
+ *
+ * - 省略        不限作用域
+ * - `$self`         只收订阅方自己发的
+ * - `$self_subtree` 只收订阅方这棵子树里发的 ← 剧本帧 11
+ * - 绝对 traceid    只收该前缀子树里发的
+ */
+export function scopeAccepts(
+  scope: SubscriptionScope | undefined,
+  subscriber: TraceId,
+  sender: TraceId,
+): boolean {
+  if (scope === undefined) return true;
+  if (scope === "$self") return sender === subscriber;
+  if (scope === "$self_subtree") return isDescendantOf(sender, subscriber);
+  return isDescendantOf(sender, scope);
+}
 
 export const ContainerTemplate = z
   .object({

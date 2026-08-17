@@ -10,9 +10,20 @@
 
 V5 的第一性变化是：容器成为实例，资产归约为变量，跨网关等待归约为锁账本。V4 的编排对象模型不再是实现基线。
 
-## 仓库状态
+## 仓库状态（2026-08-17）
 
-当前根目录刻意不放生产代码和新测试。先完成 `V5_WORKPLAN.md` 的设计门与首批可执行契约，再建立新的实现目录，避免把旧 V4/旧全栈 V5 的类型直接带入新内核。
+设计门已收束，Task 1–3 与 Checkpoint A 通过；**Task 4/5 经外部审核标回进行中**，七条 P1 已修并补了反例测试。Checkpoint B 未达成。
+
+```
+packages/contracts   51 条   身份/路径/变量/端口/消息/契约/模板/执行面 schema
+packages/kernel      69 条   store · instances · locks · extract · routing · runtime
+合计                120 条   typecheck 绿，离线，无数据库/网络/真实模型
+pnpm test / pnpm typecheck
+```
+
+尚未具备：RunSnapshot、上下文编译与预算强制、策略执行器、持久化与崩溃恢复、
+MCP/服务端/画布/真实 backend。当前是**内核实验切片，不是可用工作流系统**。
+逐项状态见 [V5_WORKPLAN.md](./V5_WORKPLAN.md) §2.9。
 
 旧代码没有删除。Python V4 oracle、339 条旧测试以及旧 TypeScript 移植原型都保存在 `archive/implementations/pre-v5-reset/`，可独立复查。
 

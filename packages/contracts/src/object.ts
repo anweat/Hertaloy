@@ -47,7 +47,8 @@ export const Provenance = z
 
 export type Provenance = z.infer<typeof Provenance>;
 
-export const CONTENT_HASH_PATTERN = /^[0-9a-f]{16}$/;
+/** 全量 sha256（64 位十六进制）。截断哈希作为长期内容权威太窄。 */
+export const CONTENT_HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 export const ObjectVersion = z
   .object({
@@ -56,7 +57,7 @@ export const ObjectVersion = z
     version: z.number().int().positive(),
     kind: ObjectKind,
     /** 内容寻址（不变量 V3）：同内容重复提交返回同一版本。 */
-    content_hash: z.string().regex(CONTENT_HASH_PATTERN, "content_hash 是 16 位小写十六进制"),
+    content_hash: z.string().regex(CONTENT_HASH_PATTERN, "content_hash 是 64 位小写十六进制"),
     body: JsonObject,
     provenance: Provenance,
   })

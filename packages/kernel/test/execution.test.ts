@@ -199,14 +199,19 @@ describe("五种终止不混成一种", () => {
     expect(result.retrying).toBe(true);
   });
 
-  it("输出到未声明端口 → InvariantError（编程错误，不进失败通道）", async () => {
+  it("输出到未声明端口 → INVALID_OUTPUT 并让状态收口（backend 是不可信边界）", async () => {
     backend.push(async (req) => ({
       executionId: req.executionId,
       emissions: { ghost: {} },
       termination: "DONE",
     }));
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
-    await expect(rt.stepAgent()).rejects.toThrow(/未声明的 emit 端口 `ghost`/);
+    const id = rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+
+    const result = (await rt.stepAgent()) as StepFailure;
+    expect(result.termination).toBe("INVALID_OUTPUT");
+    // 模型输出乱端口是正常终止原因，不是编程错误 —— 抛异常会让消息永远停在 CLAIMED
+    expect(rt.message(id).state).not.toBe("CLAIMED");
+    expect(rt.records()[0]?.status).not.toBe("RUNNING");
   });
 });
 

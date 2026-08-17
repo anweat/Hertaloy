@@ -5,7 +5,7 @@ const version = {
   object_id: "plan",
   version: 1,
   kind: "plan",
-  content_hash: "0123456789abcdef",
+  content_hash: "0123456789abcdef".repeat(4),
   body: { tasks: [] },
   provenance: { at_seq: 0, derived_from: [] },
 };
@@ -42,10 +42,13 @@ describe("ObjectVersion —— 版本层（不变量 V1–V4）", () => {
 
   it("拒绝非法哈希、kind、body、序号与顶层字段", () => {
     expect(
-      ObjectVersion.safeParse({ ...version, content_hash: "0123456789abcde" }).success,
+      ObjectVersion.safeParse({ ...version, content_hash: "0123456789abcdef".repeat(3) }).success,
     ).toBe(false);
     expect(
-      ObjectVersion.safeParse({ ...version, content_hash: "0123456789abcdeF" }).success,
+      ObjectVersion.safeParse({
+        ...version,
+        content_hash: `${"0123456789abcdef".repeat(3)}0123456789abcdeF`,
+      }).success,
     ).toBe(false);
     expect(ObjectVersion.safeParse({ ...version, kind: "Plan" }).success).toBe(false);
     expect(ObjectVersion.safeParse({ ...version, body: [] }).success).toBe(false);

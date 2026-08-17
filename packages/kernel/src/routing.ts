@@ -69,20 +69,42 @@ export type StageOutcome =
   | { readonly ok: true; readonly plan: StagePlan }
   | { readonly ok: false; readonly reason: string };
 
-/** 校验输出端口都在白名单内。越界是**编程错误**，直接抛，不进失败通道。 */
+/** 越界的输出端口。空数组表示全部合法。 */
+export function undeclaredPorts(
+  node: NodeDefinition,
+  outputs: Readonly<Record<string, Json>>,
+): readonly string[] {
+  const allowed = new Set(allowedEmitPorts(node.ports));
+  return Object.keys(outputs).filter((p) => !allowed.has(p)).sort();
+}
+
+export function describeUndeclared(
+  node: NodeDefinition,
+  nodeId: string,
+  offenders: readonly string[],
+): string {
+  const allowed = allowedEmitPorts(node.ports);
+  return (
+    `节点 ${nodeId} 输出到未声明的 emit 端口 ${offenders.map((p) => `\`${p}\``).join("、")}。` +
+    `可用端口：${allowed.join(", ") || "（无）"}`
+  );
+}
+
+/**
+ * 受信路径（内置 handler）用：越界是**编程错误**，直接抛。
+ *
+ * agent 路径**不能**用这个 —— backend 跑的是模型输出，属不可信边界，
+ * 端口越界是 `INVALID_OUTPUT` 这种正常终止原因，必须走失败通道让状态收口，
+ * 抛异常会把消息永久留在 CLAIMED、记录永久留在 RUNNING。
+ */
 export function assertDeclaredPorts(
   node: NodeDefinition,
   nodeId: string,
   outputs: Readonly<Record<string, Json>>,
 ): void {
-  const allowed = new Set(allowedEmitPorts(node.ports));
-  for (const portName of Object.keys(outputs)) {
-    if (!allowed.has(portName)) {
-      throw new InvariantError(
-        `节点 ${nodeId} 输出到未声明的 emit 端口 \`${portName}\`。` +
-          `可用端口：${[...allowed].sort().join(", ") || "（无）"}`,
-      );
-    }
+  const offenders = undeclaredPorts(node, outputs);
+  if (offenders.length > 0) {
+    throw new InvariantError(describeUndeclared(node, nodeId, offenders));
   }
 }
 
@@ -151,6 +173,9 @@ export function stageOutputs(
         kind: "request",
         key: requestId,
         originNode: ctx.nodeId,
+        // ★ 必须记 waitingOn：反向清账完全靠它。不记的话，**服务方**被截断时
+        //    请求方的 request 锁不会释放，会永久等一个已死的服务。
+        waitingOn: (targets[0] as Endpoint).traceid,
       });
       requests.push({
         requestId,

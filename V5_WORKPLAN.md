@@ -150,6 +150,44 @@ packages/kernel      33 条    errors · store · instances · extract · runtim
 - 强制截断、迟到结果、重复回复和预算越界全部有失败路径测试；
 - 此时再决定 Repository、MCP、服务端和画布包结构。
 
+## 2.9 外部审核轮（2026-08-17）—— 结论：要求修改，已修
+
+审核结论正确：**Task 4/5 不应认定完成，未达 Checkpoint B**。已按结论把两者标回进行中。
+
+七条 P1 全部属实并已修复，每条都补了反例测试（`test/review-p1.test.ts`）：
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | 非法 agent 输出抛异常 → 消息永停 `CLAIMED`、记录永停 `RUNNING`，三谓词永不满足 | **backend 是不可信边界**，端口越界是 `INVALID_OUTPUT` 不是编程错误；走失败通道让状态收口。受信 handler 路径仍然直接抛 |
+| 2 | `Object.freeze` 只冻一层，`body` 仍是调用方引用 —— 改嵌套字段能让已存版本内容变化而 hash 不变 | 入库深克隆 + 深冻结；`content_hash` 改全量 sha256（截断 16 位只有 64 bit，太窄） |
+| 3 | `ExecutionResult` 只是 TS interface，运行期零校验 | `checkBackendResult`：形状 + `executionId` 串号 + **禁止伪造内核保留 kind**；产物全部校验通过才提交，不留部分版本 |
+| 4 | REQUEST 锁没记 `waitingOn`，而反向清账完全依赖它 | 记订阅者 traceid。**服务方**被截断时请求方的锁现在能销账 |
+| 5 | 只有强制截断，没有自然终止提交点 → 完成的子容器不释放父的 `child` 锁 | 新增 `settle` / `settleAll`：三谓词满足 → 终态 + 销父 child 锁，自底向上收敛 |
+| 6 | 两条假阳性测试（"重复回复"实际测的是普通消息；scope 测试根本没跑到 team-b） | 前者拆成"非 REQUEST 走 reply 被拒"的集成测试 + 重复回复的单元测试；后者改成按实例定位、不靠取活顺序 |
+| 7 | 订阅 scope 只接受绝对 traceid，同模板换实例即失效，与剧本帧 11 矛盾 | 加相对作用域 `$self` / `$self_subtree`，匹配时按**订阅方实例**解析 |
+
+顺带修掉后续清单第一条：`#claim` 入口校验失败曾返回 `null`，被 `drainAgents` 当空闲提前退出、后续合法消息滞留。现在返回 `StepFailure`。
+
+**一处审核有误**：报告称 `store.ts` 嵌入真实 NUL 字符导致 Git 视为二进制。全仓扫描零 NUL，`git check-attr` 也未标记二进制，该项不成立。
+
+修复后：**120 条测试绿**（contracts 51 / kernel 69），typecheck 绿。
+
+### 仍未做（承认，不含糊）
+
+- **RunSnapshot 不存在** —— `FOUNDATION_V5.md §3.3` 声称"因果由 RunSnapshot 承担"，代码没有。ExecutionRecord 只记输入消息，不记输出集合，当前担不起因果权威。**这是文档先于实现的欠账，必须在 Checkpoint B 前补。**
+- Task 6 全部：`bind` 段未进 `ExecutionRequest.vars`；`limits` 固定空对象；无模板总预算阈值；无运行期越界拒绝
+- 策略节点只有 schema，无执行器
+- `approval` / `timer` / `manual` 三类锁只有类型，无真实路径
+- 持久化、崩溃恢复、claim 接管
+- 容器工具、自修改、提案审批、权限
+- MCP、服务端、实时事件、画布、真实 backend
+
+### 下一轮顺序（不向外铺服务端/画布）
+
+1. RunSnapshot：提交时记录输入集 → 输出集，成为因果权威
+2. Task 6：bind 进请求 + 模板总预算求和 + 运行期上界拒绝
+3. 一条完整主线场景重新验收 Checkpoint B
+
 ## 3. 后续阶段
 
 持久化、策略语言、队列订阅、审批/定时器、观测投影、MCP、服务端和画布依次建立在 Checkpoint B 之上。每一阶段只增加一个可端到端验证的垂直切片；真实模型测试使用独立 profile，不阻塞常规 CI。

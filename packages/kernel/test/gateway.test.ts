@@ -101,20 +101,11 @@ describe("REQUEST / REPLY 与锁账本", () => {
     expect(third.vars).toEqual({ a: "answered:skill-x" });
   });
 
-  it("重复回复被明确拒绝", () => {
+  it("非 REQUEST 消息走 reply 端口被拒绝", () => {
     setupPair();
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
-    rt.step();
-    const inbox = rt.pending()[0];
-    rt.step();
-
-    // 手工再投一条同 requestId 的消息，模拟重复回复
-    const replayed = rt.messages().find((m) => m.id === inbox?.id);
-    expect(replayed?.requestId).toBeDefined();
-    const again = new Runtime(store, reg);
-    again.registerHandler("serve", () => ({ answer: { a: "dup" } }));
-    again.send({ traceid: "job-1/discovery", node: "serve", port: "inbox" }, { q: "x" });
-    const result = again.step();
+    // 直接投一条普通消息进服务方 inbox（没有 requestId），它仍会走 answer 端口
+    rt.send({ traceid: "job-1/discovery", node: "serve", port: "inbox" }, { q: "x" });
+    const result = rt.step();
     expect(isFailure(result)).toBe(true);
     if (isFailure(result)) expect(result.reason).toMatch(/不是 REQUEST/);
   });
@@ -245,16 +236,65 @@ describe("PUBLISH 与 traceid 作用域（不变量 M2）", () => {
     rt2.spawn("job-1", "team-a", "team-a");
     rt2.spawn("job-1", "team-b", "team-b");
 
+    // 作用域内：team-a 发的 progress 被 w1 收到
     rt2.send({ traceid: "job-1/team-a", node: "worker", port: "start" }, { q: "a" });
     const inScope = rt2.step() as StepResult;
+    expect(inScope.traceid).toBe("job-1/team-a");
     expect(inScope.delivered).toHaveLength(1);
+    expect(rt2.message(inScope.delivered[0] as string).target.traceid).toBe("job-1/w1");
 
+    // 作用域外：team-b 发的 progress 一个订阅者都匹配不上
+    // —— 精确定位到 team-b 那一步，不靠 step() 的取活顺序
+    rt2.drain();
+    const before = rt2.messages().filter((m) => m.tunnel === "progress").length;
     rt2.send({ traceid: "job-1/team-b", node: "worker", port: "start" }, { q: "b" });
-    rt2.step(); // 消费 w1 的入站
-    const outOfScope = rt2.messages().filter((m) => m.tunnel === "progress");
-    // team-b 的 progress 不该投给 scope=job-1/team-a 的订阅者
-    expect(outOfScope.every((m) => m.target.traceid === "job-1/w1")).toBe(true);
+    const outOfScope = rt2
+      .drain()
+      .filter((r): r is StepResult => !("reason" in r) && r.traceid === "job-1/team-b");
+
     expect(outOfScope).toHaveLength(1);
+    expect(outOfScope[0]?.delivered).toEqual([]);
+    expect(outOfScope[0]?.dangling).toEqual(["report"]);
+    expect(rt2.messages().filter((m) => m.tunnel === "progress")).toHaveLength(before);
+  });
+
+  it("★ 相对作用域 `$self_subtree` 换实例仍然正确（同一模板实例化两次）", () => {
+    const watcherSpec = {
+      nodes: {
+        metrics: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } },
+      },
+      edges: {},
+      children: { teams: { template: "asker@1" } },
+      // 相对作用域：只收**本实例子树**里发的 —— 不写死任何绝对 traceid
+      subscriptions: {
+        mine: { tunnel: "progress", scope: "$self_subtree", to: { node: "metrics", port: "in" } },
+      },
+    };
+    const watcherRef = registerContainerTemplate(store, "watcher-rel", watcherSpec);
+    const rootRef = registerContainerTemplate(
+      store,
+      "root3",
+      { nodes: {}, edges: {}, children: { w: { template: watcherRef } }, subscriptions: {} },
+      "root_config",
+    );
+    const reg3 = new InstanceRegistry(store);
+    reg3.createRoot(rootRef, "job-9");
+    const rt3 = new Runtime(store, reg3);
+    rt3.registerHandler("ask", (vars) => ({ report: { q: vars.q ?? null } }));
+    rt3.registerHandler("noop", () => ({}));
+
+    // 同一个 watcher 模板实例化两份，各带一个 team
+    rt3.spawn("job-9", "w", "w-a");
+    rt3.spawn("job-9", "w", "w-b");
+    rt3.spawn("job-9/w-a", "teams", "t1");
+    rt3.spawn("job-9/w-b", "teams", "t2");
+
+    rt3.send({ traceid: "job-9/w-a/t1", node: "worker", port: "start" }, { q: "a" });
+    const step = rt3.step() as StepResult;
+
+    // 只投给 w-a，不投给 w-b —— 绝对 scope 做不到这件事
+    expect(step.delivered).toHaveLength(1);
+    expect(rt3.message(step.delivered[0] as string).target.traceid).toBe("job-9/w-a");
   });
 });
 
