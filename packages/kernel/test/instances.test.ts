@@ -177,7 +177,7 @@ describe("注册期校验（修 V4 缺陷 1：propose 不校验）", () => {
   it("handler 节点必须恰好一个执行体", () => {
     for (const node of [
       { kind: "handler", ports: {} },
-      { kind: "handler", handler: "noop", agent: { model: "x" }, ports: {} },
+      { kind: "handler", handler: "noop", agent: { argv: ["run-agent"] }, ports: {} },
     ]) {
       expect(() =>
         registerContainerTemplate(store, "bad-3", { nodes: { a: node }, edges: {}, children: {} }),

@@ -298,3 +298,102 @@ REQUEST 的回复落回同一节点 → handler 再发一次请求 → **无限�
 - 不在设计门关闭前冻结新目录、数据库表或完整 REST API。
 - 不修改归档证据来迁就新实现。
 
+
+
+---
+
+## 3. 问题点清单（持久化落地后的一次全面盘点）
+
+按"是不是内核能力"分组。内核那组要先补齐 —— 它们不补，上面盖什么都是虚的。
+
+### 3.1 内核（先补这组）
+
+| # | 问题 | 性质 | 状态 |
+|---|---|---|---|
+| **K1** | **claim 没有事务，也没有提交钩子** | **正确性洞** | ✅ 已补 |
+| **K2** | `ControlPlane` 完全没接线 —— 权限层是不可达代码 | 高 | 🚧 待定根权限表来源 |
+| **K3** | `truncate` 有实现没出口 | 中 | ✅ 已补 |
+| **K4** | RunSnapshot 的前缀与 GC 前缀不一致 | 埋雷 | ✅ 已补 |
+| **K5** | **`AgentSpec` 停在归约前，模板声明不出沙箱 agent** | **执行面不可达** | ✅ 已补 |
+
+#### K5 —— 契约与实现各自演进，没人对过账
+
+`SandboxBackend` 要的是 `{ argv, profile, context, env }`（第五次归约：agent 就是
+命令行），而 contracts 里的 `AgentSpec` 还是归约之前的 `{ model: string }`，且
+`.strict()`。于是**任何声明了沙箱 agent 的模板都注册不进去** —— 整个执行面从编排面
+够不着。
+
+它一直没被发现，是因为内核测试用 `{ model }` 造模板、从不跑真 backend，
+沙箱测试直接构造 `ExecutionRequest`、绕过模板注册。两边各自都绿。
+
+修法是让 `SandboxAgentSpec` 从 contracts 的 `AgentSpec` 派生（`.extend()` 只补默认值），
+字段再变编译期就会撞上。
+
+#### K1 —— 两个问题，同一个修法
+
+**其一，`#claim()` 不在事务里。**它连改四处状态（`#busy`、`#executionSeq`、
+消息状态转 `CLAIMED`、`#records`），然后**手工回滚**：
+
+```ts
+this.#busy.delete(key);
+this.#records.delete(executionId);
+this.#setState(input.id, "QUEUED");
+```
+
+只覆盖了 `compileContext` 返回 `!ok` 这一条它预料到的路径。任何别的抛出都会留下
+half state —— 而这正是 `tx.ts` 那段注释里写的、`transact` 被造出来要消灭的东西。
+内核里唯独 claim 这条路径漏掉了。
+
+**其二，claim 与 execute 之间没有钩子。**`stepAgent()` 的形状是：
+
+```ts
+const claimed = this.#claim();          // 同步
+raw = await backend.run(request);       // ← 这里之前必须落盘
+return transact(…, () => this.#apply(…));
+```
+
+§17.4 写着"claim 必须当场落盘 + fsync"，但持久化层**结构上够不着这个位置** ——
+`#claim` 是私有的，`stepAgent` 是一个整体。所以那条设计目前不是"要靠调用方自觉"，
+是**根本做不到**。
+
+后果正是 §17.4 自己点名的那条：崩在 claim 与 apply 之间，恢复后内核不知道外面
+有个 agent 在跑，于是再派一个 —— 两个 agent 同时改同一份东西。
+
+**修法**：把 claim 包进 `transact`，并在事务内调提交钩子。于是
+**落盘失败 = 提交失败 = 回滚**，这才是耐久性该有的语义；顺带把手工回滚删掉。
+
+#### K2 —— 权限层是不可达代码
+
+`ControlPlane` 有完整的一套：`define` / `send` / `spawn` / `run` / `truncate` /
+`settle` / `subtree` / `locks` / `blockers` / `messages` / `records`，每条都过
+`#authorize`。**但没有任何地方构造它。**CLI 直连 `Runtime`。
+
+所以"人有完整权限"目前成立的原因是**根本没有权限检查**，不是因为授权对了。
+批 C（DDL/DML/DQL 分层 + 前缀 scope 授权）标着 ✅，但它是一段没人调用的代码 ——
+标记与事实之间的缝，正是上次外部审核 7 条 P1 全部出没的地方。
+
+这条挡着 G1：MCP 工具层必须走 `ControlPlane`，否则开放出去的是无检查的内核。
+
+#### K3 —— 卡住的 run 杀不掉
+
+`Runtime.truncate` 与 `ControlPlane.truncate` 都在，但外面没有出口。一个卡住的
+run 目前只能靠删状态目录处理 —— 而那会连不可变的对象历史一起删掉。
+
+#### K4 —— 两个前缀对不上
+
+RunSnapshot 的 object_id 是 `run/<traceid>`，资产是 `<traceid>/<name>`。
+按 `job-1/` 前缀回收会漏掉 `run/job-1/…`。前缀机制被复用了八处，唯独这里
+自己跟自己不一致。现在改是改一行，等第一次 GC 才发现就是改数据。
+
+### 3.2 执行面 / 运维面（内核补完再说）
+
+| # | 问题 | 性质 |
+|---|---|---|
+| **E1** | 脚本 handler 未实现 → 落盘的 run 只有内置 handler 推得动 | 高 |
+| **E2** | `LocalRunner` 把整个 `process.env` 摊进沙箱 | **安全** |
+| **E3** | 日志未实现（§17.6） | 中 |
+| **E4** | 日志 / observation 脱敏未实现（§17.7） | 安全 |
+| **E5** | 记录仓保留（`runs/<root>/record/`）未实现 | 低 |
+
+E2 的修法要一份环境变量白名单，会动到现有沙箱测试的前提，单独一批。
+

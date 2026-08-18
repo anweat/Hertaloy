@@ -175,3 +175,25 @@ export function drain(dir: string): CommandResult {
     }
   });
 }
+
+/**
+ * 强制截断一个实例及其子树（L3 / L4）。
+ *
+ * 之前 `Runtime.truncate` 有实现却没有出口：一个卡住的 run 只能靠删状态目录
+ * 处理，而那会把不可变的对象历史一起删掉 —— 用数据损失换流程解卡。
+ */
+export function truncate(dir: string, traceid: string, reason: string): CommandResult {
+  return writable(dir, (s) => {
+    if (!s.registry.has(traceid)) return fail(`没有实例 ${traceid}`);
+    const r = s.runtime.truncate(traceid, reason);
+    return ok(
+      [
+        `已截断 ${r.traceid}（generation ${r.generation}）：${r.reason}`,
+        `  丢弃消息 ${r.truncatedMessages} 条`,
+        `  释放锁 ${r.releasedLocks} 把`,
+        `  取消执行 ${r.cancelledExecutions} 个`,
+        `  级联子实例 ${r.cascaded.length} 个${r.cascaded.length > 0 ? `：${r.cascaded.join("、")}` : ""}`,
+      ].join("\n"),
+    );
+  });
+}

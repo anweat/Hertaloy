@@ -17,7 +17,15 @@
 import { readFileSync } from "node:fs";
 import { run, validate } from "./commands.js";
 import { diagnose, formatChecks } from "./doctor.js";
-import { type CommandResult, drain, history, send, show, status } from "./state-commands.js";
+import {
+  type CommandResult,
+  drain,
+  history,
+  send,
+  show,
+  status,
+  truncate,
+} from "./state-commands.js";
 
 const USAGE = `hertaloy —— Nodeflow V5 命令行
 
@@ -32,6 +40,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy history <dir> <object-id>            某对象的版本历史
   hertaloy send    <dir> <traceid> <node> <port> [json]   投一条消息（人的放行走这条）
   hertaloy drain   <dir>                        推进到静止（只认内置 handler）
+  hertaloy truncate <dir> <traceid> [原因]      强制截断实例及其子树
 
 场景文件形如：
   { "templates": [{"id": "root", "kind": "root_config", "spec": {…}}],
@@ -60,6 +69,8 @@ ${USAGE}`, code: 2 } : null;
       return need(2) ?? history(dir as string, a as string);
     case "drain":
       return need(1) ?? drain(dir as string);
+    case "truncate":
+      return need(2) ?? truncate(dir as string, a as string, b ?? "人工截断");
     case "send": {
       const short = need(4);
       if (short !== null) return short;

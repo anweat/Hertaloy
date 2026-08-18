@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "@nodeflow/state";
-import { drain, history, send, show, status } from "../src/state-commands.js";
+import { drain, history, send, show, status, truncate } from "../src/state-commands.js";
 
 let dir: string;
 
@@ -134,5 +134,19 @@ describe("只读命令不拿锁（§17.8）", () => {
     } finally {
       holder.close();
     }
+  });
+});
+
+describe("★ truncate：卡住的 run 杀得掉（K3）", () => {
+  it("截断后实例进终态，在途消息被丢弃", () => {
+    send(dir, "job-1", "gate", "in", { value: "a", expect: 99 });
+    const r = truncate(dir, "job-1", "测试");
+    expect(r.code).toBe(0);
+    expect(r.text).toContain("丢弃消息 1 条");
+    expect(status(dir).text).toContain("TERMINAL");
+  });
+
+  it("截断不存在的实例 → 拒绝", () => {
+    expect(truncate(dir, "job-9", "x").code).toBe(1);
   });
 });

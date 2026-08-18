@@ -34,7 +34,7 @@ const coderSpec = {
     },
     writer: {
       kind: "handler",
-      agent: { model: "fake" },
+      agent: { argv: ["run-agent"] },
       bind: { rules: { type: "long", card: "rules/py@1", max_tokens: 500 } },
       budget: { tokens: 1000 },
       ports: {
@@ -187,7 +187,7 @@ describe("Checkpoint B 失败路径", () => {
         nodes: {
           a: {
             kind: "handler",
-            agent: { model: "x" },
+            agent: { argv: ["run-agent"] },
             budget: { tokens: 100 },
             bind: { big: { type: "long", literal: "x", max_tokens: 500 } },
             ports: { out: { direction: "emit" } },
@@ -206,7 +206,7 @@ describe("Checkpoint B 失败路径", () => {
         nodes: {
           a: {
             kind: "handler",
-            agent: { model: "x" },
+            agent: { argv: ["run-agent"] },
             bind: { big: { type: "long", literal: "x", max_tokens: 50 } },
             ports: { out: { direction: "emit" } },
           },

@@ -17,7 +17,7 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { InstanceRegistry, ObjectStore, Runtime } from "@nodeflow/kernel";
+import { type CommitEvent, InstanceRegistry, ObjectStore, Runtime } from "@nodeflow/kernel";
 import { decodeHeadParts, readHead, writeHead } from "./head.js";
 import { StateLock } from "./lock.js";
 import { flushObjects, loadObjects } from "./objects.js";
@@ -25,6 +25,13 @@ import { flushObjects, loadObjects } from "./objects.js";
 export interface OpenOptions {
   /** 不拿目录锁。只给只读命令（`status` / `show`）用。 */
   readonly readOnly?: boolean;
+  /**
+   * 关掉 claim 的自动落盘。**只给测试用。**
+   *
+   * 生产里关掉它就等于放弃 §17.4：崩在 claim 与 apply 之间，恢复后内核
+   * 不知道外面有个 agent 在跑，会再派一个。
+   */
+  readonly manualDurability?: boolean;
 }
 
 export class RunState {
@@ -65,11 +72,31 @@ export class RunState {
     try {
       const store = new ObjectStore();
       const registry = new InstanceRegistry(store);
-      const runtime = new Runtime(store, registry);
+      /**
+       * 提交钩子按 §17.4 的判据分流：
+       *
+       *   claim  → **当场落盘**。它后面紧跟着花钱的外部副作用，
+       *            重放代价不是零。钩子在事务内，所以写盘失败会回滚这次 claim ——
+       *            落不了盘就不 claim，正是我们要的。
+       *   其余   → 不落。handler 与路由重放无代价（内容寻址去重让它幂等），
+       *            攒到静止点由调用方 `persist()`。
+       *
+       * 这个 self 引用绕一下：Runtime 要在构造时拿到钩子，而钩子要用到
+       * 构造完的 RunState。用一个可变槽接住，比把持久化塞进内核干净。
+       */
+      let self: RunState | null = null;
+      const onCommit =
+        options.manualDurability === true
+          ? undefined
+          : (event: CommitEvent): void => {
+              if (event.kind === "claim") self?.persist();
+            };
+      const runtime = new Runtime(store, registry, onCommit === undefined ? {} : { onCommit });
       const head = readHead(dir);
 
       if (head === null) {
-        return new RunState(dir, store, registry, runtime, false, lock, 0);
+        self = new RunState(dir, store, registry, runtime, false, lock, 0);
+        return self;
       }
 
       // 顺序要紧：对象先装，因为实例树里存的是指向对象的 Ref，
@@ -86,7 +113,8 @@ export class RunState {
             "多半是崩在刷对象与写 head 之间，或者目录被手工动过。",
         );
       }
-      return new RunState(dir, store, registry, runtime, true, lock, cursor);
+      self = new RunState(dir, store, registry, runtime, true, lock, cursor);
+      return self;
     } catch (error) {
       lock?.release();
       throw error;

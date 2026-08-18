@@ -23,7 +23,31 @@ export const IDENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 export const Ident = z.string().regex(IDENT_PATTERN, "标识符必须以字母或下划线起头");
 
 /** 有 `agent` 段 = 走执行面 backend；没有 = 走内核内置 handler。 */
-export const AgentSpec = z.object({ model: z.string().min(1) }).strict();
+/**
+ * agent 节点的声明 —— **一条命令行**（第五次归约，§14）。
+ *
+ * 之前这里是 `{ model: string }`，那是归约之前"内核挑后端、内核中介工具调用"
+ * 时代的形状。归约之后执行面收成了"在沙箱里跑一条命令行"，`SandboxBackend`
+ * 要的是 `argv`，而这个 schema 还在要 `model` 且 `.strict()` ——
+ * 于是**任何声明了沙箱 agent 的模板都注册不进去**，整个执行面从编排面够不着。
+ * 契约与实现各自演进却没人对过账，正是这种断裂的典型来源。
+ *
+ * `env` 只放**取值方式**，不放值本身：模板是对象，对象不可变、内容寻址、
+ * 按前缀可读，密钥写进去就撤不回来（§17.7）。
+ */
+export const AgentSpec = z
+  .object({
+    argv: z.array(z.string()).nonempty(),
+    /** 卡片渲染成谁认识的文件（`claude-code` / `codex` / `hertaloy-agent`）。 */
+    profile: z.string().optional(),
+    /** 注入到 `.hertaloy/context/` 的文件：相对路径 → 内容。 */
+    context: z.record(z.string()).optional(),
+    /** 环境变量。**不得写入密钥值** —— 见上。 */
+    env: z.record(z.string()).optional(),
+  })
+  .strict();
+
+export type AgentSpec = z.infer<typeof AgentSpec>;
 
 const HandlerNodeShape = z
   .object({

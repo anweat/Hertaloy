@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import { AgentSpec } from "@nodeflow/contracts";
 import type {
   ExecutionBackend,
   ExecutionRequest,
@@ -33,17 +34,17 @@ import { LocalRunner, type RunOutcome, type Runner } from "./runner.js";
  * `claude` / `codex` / `hertaloy agent` 三者平权 —— 它们的差别只是 argv 与
  * profile，不是三种 backend 类型（§14.1）。
  */
-export const SandboxAgentSpec = z
-  .object({
-    argv: z.array(z.string()).nonempty(),
-    /** 卡片渲染成谁认识的文件。批 P 之前只支持原生形态。 */
-    profile: z.string().default("hertaloy-agent"),
-    /** 注入到 `.hertaloy/context/` 的文件：相对路径 → 内容。 */
-    context: z.record(z.string()).default({}),
-    /** 传给进程的环境变量（凭据靠它进沙箱）。 */
-    env: z.record(z.string()).default({}),
-  })
-  .strict();
+/**
+ * 与 contracts 的 `AgentSpec` **同一套字段**，只是补上默认值。
+ *
+ * 不各写一份：两处各自演进而没人对账，正是"模板要 model、后端要 argv"
+ * 那次断裂的成因。这里从契约派生，字段变了编译期就会撞上。
+ */
+export const SandboxAgentSpec = AgentSpec.extend({
+  profile: z.string().default("hertaloy-agent"),
+  context: z.record(z.string()).default({}),
+  env: z.record(z.string()).default({}),
+});
 
 export type SandboxAgentSpec = z.infer<typeof SandboxAgentSpec>;
 

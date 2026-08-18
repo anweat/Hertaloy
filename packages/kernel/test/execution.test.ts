@@ -13,7 +13,7 @@ const agentSpec = {
   nodes: {
     coder: {
       kind: "handler",
-      agent: { model: "fake" },
+      agent: { argv: ["run-agent"] },
       ports: {
         in: { direction: "receive", servo: { vars: { task: { type: "short", from: "$.task" } } } },
         out: { direction: "emit" },

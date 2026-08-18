@@ -187,9 +187,31 @@ export interface TruncationResult {
   readonly cascaded: readonly TraceId[];
 }
 
+/**
+ * 一次提交发生了什么 —— 提交钩子的载荷。
+ *
+ * `claim` 与其余分开，因为它们的耐久性要求不同（§17.4）：claim 之后紧接着是
+ * 花钱的外部副作用，必须当场落盘；其余重放无代价，可以攒到静止点。
+ */
+export interface CommitEvent {
+  readonly kind: "commit" | "claim" | "apply" | "settle" | "truncate";
+  readonly traceid: TraceId;
+  readonly executionId?: string;
+}
+
+/**
+ * 提交钩子 —— **在事务内**调用。
+ *
+ * 抛异常即回滚整次提交。这不是意外用法，是耐久性该有的语义：
+ * **落盘失败 = 提交失败**。claim 落不了盘就不该 claim，否则崩溃后恢复不出
+ * "外面有个 agent 在跑"这个事实，内核会再派一个（§17.4）。
+ */
+export type CommitHook = (event: CommitEvent) => void;
+
 export interface RuntimeOptions {
   readonly backend?: ExecutionBackend;
   readonly maxAttempts?: number;
+  readonly onCommit?: CommitHook;
 }
 
 type ClaimOutcome =
@@ -215,6 +237,7 @@ export class Runtime implements Snapshotable {
   readonly #order: string[] = [];
   readonly #backend: ExecutionBackend | undefined;
   readonly #maxAttempts: number;
+  readonly #onCommit: CommitHook | undefined;
   #seq = 0;
   #requestSeq = 0;
   #executionSeq = 0;
@@ -224,6 +247,12 @@ export class Runtime implements Snapshotable {
     this.#registry = registry;
     this.#backend = options.backend;
     this.#maxAttempts = options.maxAttempts ?? 3;
+    this.#onCommit = options.onCommit;
+  }
+
+  /** 事务内通知。钩子抛出 → `transact` 回滚 → 这次提交没发生过。 */
+  #commit(event: CommitEvent): void {
+    this.#onCommit?.(event);
   }
 
   get locks(): LockLedger {
@@ -416,7 +445,11 @@ export class Runtime implements Snapshotable {
     const next = this.#pickWork((node) => node.handler !== undefined);
     if (next === null) return null;
     // 提交是事务：抛异常则消息状态、锁、产物、快照全部回滚（§10.1）
-    return transact(this.#parts, () => this.#commitSync(next));
+    return transact(this.#parts, () => {
+      const result = this.#commitSync(next);
+      this.#commit({ kind: "commit", traceid: next.target.traceid });
+      return result;
+    });
   }
 
   drain(maxSteps = 10_000): readonly (StepResult | StepFailure)[] {
@@ -442,7 +475,25 @@ export class Runtime implements Snapshotable {
    *   2. apply 复核 generation 与被 claim 消息的状态（冲突域）
    */
   async stepAgent(): Promise<StepResult | StepFailure | null> {
-    const claimed = this.#claim();
+    // claim 进事务：它连改四处状态，任何一步抛出都必须整体撤销。
+    // 钩子也在事务内 —— 落盘失败就当这次 claim 没发生过（§17.4）。
+    const claimed = transact(this.#parts, () => {
+      const outcome = this.#claim();
+      if (outcome.kind === "claimed") {
+        try {
+          this.#commit({
+            kind: "claim",
+            traceid: outcome.record.traceid,
+            executionId: outcome.record.executionId,
+          });
+        } catch (error) {
+          // 钩子抛了 → 这次 claim 要整体撤销，而 `#busy` 不归 transact 管
+          this.#busy.delete(`${outcome.record.traceid}/${outcome.record.nodeId}`);
+          throw error;
+        }
+      }
+      return outcome;
+    });
     // 入口校验失败不是"没活干" —— 必须把失败返回给调用方，否则 drainAgents
     // 会把它当空闲提前退出，后面合法的消息被滞留
     if (claimed.kind === "idle") return null;
@@ -468,7 +519,15 @@ export class Runtime implements Snapshotable {
       if (!checked.ok) {
         return this.#applyFailure(record, input, "INVALID_OUTPUT", checked.reason);
       }
-      return transact(this.#parts, () => this.#apply(record, input, checked.result));
+      return transact(this.#parts, () => {
+        const result = this.#apply(record, input, checked.result);
+        this.#commit({
+          kind: "apply",
+          traceid: record.traceid,
+          executionId: record.executionId,
+        });
+        return result;
+      });
     } finally {
       this.#busy.delete(key);
     }
@@ -513,7 +572,6 @@ export class Runtime implements Snapshotable {
       };
     }
 
-    this.#busy.add(key);
     this.#executionSeq += 1;
     const executionId = `exec-${this.#executionSeq}`;
     this.#setState(input.id, "CLAIMED");
@@ -531,9 +589,9 @@ export class Runtime implements Snapshotable {
     // bind 段进请求（不变量 X 的稳定前缀）+ 运行期上界校验（B1 的运行期一半）
     const compiled = compileContext(this.#store, node, extraction.vars);
     if (!compiled.ok) {
-      this.#busy.delete(key);
-      this.#records.delete(executionId);
-      this.#setState(input.id, "QUEUED");
+      // 不再手工回滚 —— 外层 transact 会把 #records / 消息状态 / #executionSeq
+      // 一并撤销，`#busy` 则靠"推迟置位"根本没被碰过。手工回滚只覆盖得了预料到
+      // 的失败路径，那正是它一直漏掉别的路径的原因。
       return {
         kind: "rejected",
         failure: this.#fail(input, `上下文编译失败：${formatContextFailures(compiled.failures)}`),
@@ -551,6 +609,15 @@ export class Runtime implements Snapshotable {
       outputContract: { allowedEmitPorts: allowedEmitPorts(node.ports) },
       limits,
     };
+    /**
+     * `#busy` 到这一步才置位。
+     *
+     * 它是**进程内的执行中标记**，不是事务状态（不在 `snapshot()` 里），所以
+     * `transact` 回滚不到它。早置位就意味着每条被拒的 claim 都会留下一个永不清除
+     * 的 busy 标记，那个 (实例, 节点) 从此再也不被调度 —— 而且悄无声息。
+     * 推迟到"确定要执行"才置位，被拒的路径就不留残迹。
+     */
+    this.#busy.add(key);
     return { kind: "claimed", record, input: this.message(input.id), request };
   }
 
@@ -760,6 +827,7 @@ export class Runtime implements Snapshotable {
       // 子终态 → 父的 child 锁销账（L1 第 2 种的对偶）
       this.#ledger.releaseByKey("child", trace);
       this.#notifyParent(instance);
+      this.#commit({ kind: "settle", traceid: trace });
       return true;
     });
   }
@@ -811,7 +879,23 @@ export class Runtime implements Snapshotable {
     }
   }
 
+  /**
+   * 强制截断（L3 / L4）。
+   *
+   * 外层包事务：截断连改七处（generation、execution 状态、消息、两类锁、
+   * pending 表、实例状态），还要递归级联到子树。中途抛出而没有回滚的话，
+   * 留下的是"栅栏推了但锁没放"这类半截状态 —— 比不截断更难收拾。
+   */
   truncate(trace: TraceId, reason: string): TruncationResult {
+    return transact(this.#parts, () => {
+      const result = this.#truncate(trace, reason);
+      this.#commit({ kind: "truncate", traceid: trace });
+      return result;
+    });
+  }
+
+  /** 递归本体。已在外层事务里，自己不再开事务。 */
+  #truncate(trace: TraceId, reason: string): TruncationResult {
     const instance = this.#registry.get(trace);
     if (instance.status === "TERMINAL") {
       return {
@@ -859,7 +943,7 @@ export class Runtime implements Snapshotable {
     for (const child of this.#registry.children(trace)) {
       if (child.status === "TERMINAL") continue;
       cascaded.push(child.traceid);
-      this.truncate(child.traceid, `父容器 ${trace} 截断`);
+      this.#truncate(child.traceid, `父容器 ${trace} 截断`);
     }
 
     // 6. 终态
@@ -956,8 +1040,12 @@ export class Runtime implements Snapshotable {
     extra: Readonly<Record<string, Json>>,
   ): void {
     const seq = this.#registry.bumpSeq(trace);
+    // id 前缀跟着 traceid 走，不是 `run/<traceid>`。
+    // 前缀机制被复用了八处（订阅域、子树查询、反向销锁、截断级联、对象命名空间、
+    // 授权域、内网名、GC），唯独这里曾自成一格 —— 于是按 `job-1/` 回收会漏掉
+    // `run/job-1/…`。现在改是改一行，等第一次 GC 才发现就是改数据。
     this.#store.put(
-      `run/${trace}`,
+      `${trace}/$run`,
       "run",
       { seq, node: nodeId, consumed: [...consumed], produced: [...produced], ...extra },
       { traceid: trace, node_id: nodeId, at_seq: seq, derived_from: [] },
@@ -966,7 +1054,7 @@ export class Runtime implements Snapshotable {
 
   /** 某实例的全部提交快照，按 seq 升序。 */
   snapshots(trace: TraceId): readonly ObjectVersion[] {
-    return this.#store.history(`run/${trace}`);
+    return this.#store.history(`${trace}/$run`);
   }
 
   /**
