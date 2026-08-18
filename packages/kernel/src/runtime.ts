@@ -36,6 +36,8 @@ import {
   allowedEmitPorts,
   checkBackendResult,
   formatContractIssues,
+  formatJsonViolations,
+  jsonViolations,
   scopeAccepts,
   validateContract,
 } from "@nodeflow/contracts";
@@ -343,11 +345,32 @@ export class Runtime implements Snapshotable {
     return found;
   }
 
+  /**
+   * 注册内置 handler。
+   *
+   * **在注册时包一层 JSON 校验**，而不是在每个调用点查 —— 一次施加，全局保证，
+   * 加新的调用路径也不会漏。TypeScript 说返回 `Json` 不代表运行期真是 Json，
+   * 而不校验的失败方式全是最难查的那种：键被静默丢弃、`NaN` 变 `null`、
+   * `Date` 变 `{}`、循环引用让规范化序列化挂死。
+   *
+   * 受信 handler 返回非 JSON 是**我们自己代码的 bug** → `InvariantError` 直接抛。
+   * 提交是事务的，抛了整体回滚，不留半状态。
+   */
   registerHandler(name: string, fn: BuiltinHandler): void {
     if (this.#handlers.has(name)) {
       throw new InvariantError(`handler 已注册，不可覆盖：${name}`);
     }
-    this.#handlers.set(name, fn);
+    const guarded: BuiltinHandler = (vars, ctx) => {
+      const outputs = fn(vars, ctx);
+      const violations = jsonViolations(outputs, `handler:${name}`);
+      if (violations.length > 0) {
+        throw new InvariantError(
+          `handler \`${name}\` 的输出不是合法 JSON：${formatJsonViolations(violations)}`,
+        );
+      }
+      return outputs;
+    };
+    this.#handlers.set(name, guarded);
   }
 
   spawn(parentTrace: TraceId, slot: string, segment: string): ContainerInstance {
@@ -968,6 +991,12 @@ export class Runtime implements Snapshotable {
         return child.traceid;
       },
       put: (name: string, kind: string, body: JsonObject): Ref => {
+        const violations = jsonViolations(body, `put:${name}`);
+        if (violations.length > 0) {
+          throw new InvariantError(
+            `写入 \`${name}\` 的 body 不是合法 JSON：${formatJsonViolations(violations)}`,
+          );
+        }
         if (isKernelKind(kind)) {
           throw new InvariantError(
             `handler 不得写入内核保留 kind \`${kind}\`（对象 ${name}）`,
