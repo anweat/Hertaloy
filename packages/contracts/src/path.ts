@@ -2,8 +2,9 @@
  * servo 的路径语言 —— 最小自定义子集，零依赖。
  *
  * 对应 FOUNDATION_V5.md §6.3 / §16：
- * 不引入 JMESPath / JSONPath，因为 S2 已把 filter 归给策略节点 —— **filter 就是控制流**。
- * 不需要 filter，就不需要整个路径语言。
+ * 不引入 JMESPath / JSONPath：S2 要求 servo 无控制流，而 **filter 就是控制流**
+ * （它按谓词选出数量不定的元素，输出形状不再可预测）。不需要 filter，
+ * 就不需要整个路径语言。条件与分支归受信 handler 代码。
  *
  * 文法：
  *   path    := "$" segment*

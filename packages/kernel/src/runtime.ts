@@ -90,7 +90,8 @@ export interface HandlerContext {
    * 汇聚 / 计数 / 择优全部靠 `history`：三路各写一版，读到满三条才往下；
    * `plan@3` 就是第三轮。节点里不再有 persistent 状态。
    *
-   * 受信 handler 直给；agent 拿不到 ctx，它走已声明的内核工具。
+   * 受信 handler 直给；**agent 拿不到 ctx** —— 它在沙箱里跑一条命令行（§14），
+   * 用自己的工具，改动由沙箱外的 git 观察。内核不中介它的工具调用。
    */
   /** 精确全局引用 —— 读卡片、读别人的产物。 */
   read(ref: Ref): ObjectVersion;

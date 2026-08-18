@@ -2,7 +2,7 @@
  * 锁账本 —— 网关的账本，不是实例的通用属性。
  *
  * 对应 FOUNDATION_V5.md §9：
- *   L1 锁只在网关穿越时产生；内核专有，5 种，零配置
+ *   L1 锁只在网关穿越时产生；内核专有，2 种，零配置
  *   L2 owner 唯一是容器；容器内实例（含纯转发边）永不持锁
  *
  * 为什么恰好是"跨网关"：容器内网是有限且完全可见的图，"还有没有东西能动"
@@ -28,7 +28,7 @@ export interface Lock {
   readonly id: string;
   /** 唯一 owner = 容器。节点实例不持锁。 */
   readonly holder: TraceId;
-  /** 在等谁。等人审批 / 等定时器时为 undefined。 */
+  /** 在等谁。`request` 等服务方，`child` 等子实例；两者都必填。 */
   readonly waitingOn?: TraceId;
   /** 哪个节点发起的 —— **仅供展示，不参与调度门控**。 */
   readonly originNode?: string;
