@@ -18,6 +18,7 @@ import {
   type OpClass,
   type PermissionTable,
   type Principal,
+  type ObjectVersion,
   type Ref,
   type TraceId,
 } from "@nodeflow/contracts";
@@ -139,4 +140,39 @@ export class ControlPlane {
     this.#authorize(actor, "query", trace);
     return this.#runtime.records().filter((r) => r.traceid === trace);
   }
+
+  /**
+   * 读一个对象版本。
+   *
+   * DQL 此前只覆盖了实例侧（子树 / 锁 / 消息 / 记录），**对象侧是空的** ——
+   * 而 C5 之后"东西经历了什么"全在版本历史里，不给读法等于把主要的可观测面
+   * 关在门外。target 用 object_id：它本来就是 traceid 命名空间，
+   * 同一套段边界前缀判定直接通吃（行级安全覆盖到对象）。
+   */
+  read(actor: Principal, ref: Ref): ObjectVersion {
+    this.#authorize(actor, "query", objectIdOf(ref));
+    return this.#store.resolve(ref);
+  }
+
+  head(actor: Principal, objectId: string): ObjectVersion {
+    this.#authorize(actor, "query", objectId);
+    return this.#store.head(objectId);
+  }
+
+  history(actor: Principal, objectId: string): readonly ObjectVersion[] {
+    this.#authorize(actor, "query", objectId);
+    return this.#store.history(objectId);
+  }
+
+  /** 把够条件的实例收进终态。授权按传入的作用域根判定。 */
+  settleAll(actor: Principal, scope: TraceId): readonly TraceId[] {
+    this.#authorize(actor, "settle", scope);
+    return this.#runtime.settleAll();
+  }
+}
+
+/** `id@3` → `id`。授权按对象身份判定，与具体第几版无关。 */
+function objectIdOf(ref: Ref): string {
+  const at = ref.lastIndexOf("@");
+  return at === -1 ? ref : ref.slice(0, at);
 }

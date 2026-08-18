@@ -106,6 +106,52 @@ function killTree(pid: number): void {
 }
 
 /**
+ * 透传给沙箱的宿主机环境变量白名单。
+ *
+ * 之前这里是 `{ ...process.env, ...spec.env }` —— 把**编排进程的整个环境**
+ * 摊进每个本地沙箱。编排器持有的模型 API key、云凭据，对每个本地 agent
+ * 全部可见。`DockerRunner` 与 `WslRunner` 都只传显式 env，唯独 `local` 漏。
+ *
+ * 不能简单删掉：agent CLI 需要 `PATH` 才找得到自己，需要 `HOME` 才读得到
+ * 用户级配置。所以是白名单，不是全禁。
+ *
+ * **白名单而不是黑名单**：黑名单要求穷举所有敏感变量名，而密钥的命名千奇百怪
+ * （`FOO_TOKEN`、`MY_SECRET`、`sk_live_…`），漏一个就等于没有。
+ * 白名单漏一个只会让某个 agent 跑不起来 —— 一个吵闹的失败胜过一次静默的泄漏。
+ */
+export const ENV_ALLOWLIST: readonly string[] = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+  "TMPDIR",
+  // Windows 上没有 PATH 之外这几个就起不了进程
+  "SystemRoot",
+  "COMSPEC",
+  "PATHEXT",
+  "USERPROFILE",
+  "TEMP",
+  "TMP",
+];
+
+/** 按白名单筛出宿主机环境，再叠上显式 env。 */
+export function filterEnv(
+  hostEnv: Readonly<Record<string, string | undefined>>,
+  explicit: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of ENV_ALLOWLIST) {
+    const value = hostEnv[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return { ...out, ...explicit };
+}
+
+/**
  * 本机运行器 —— **目录限定，不是隔离**。
  *
  * 只适合本机开发与离线测试：流氓 agent 能读出沙箱、能任意出网。
@@ -152,7 +198,8 @@ export class LocalRunner implements Runner {
     return await new Promise<RunOutcome>((resolve) => {
       const child = spawn(command, args, {
         cwd: `${spec.root}/workspace`,
-        env: { ...process.env, ...spec.env },
+        // 白名单，不是整个 process.env —— 见 ENV_ALLOWLIST 的说明
+        env: filterEnv(process.env, spec.env ?? {}),
         detached: process.platform !== "win32",
         shell: false,
       });

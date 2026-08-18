@@ -17,7 +17,14 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { type CommitEvent, InstanceRegistry, ObjectStore, Runtime } from "@nodeflow/kernel";
+import {
+  type CommitEvent,
+  ControlPlane,
+  InstanceRegistry,
+  ObjectStore,
+  Runtime,
+} from "@nodeflow/kernel";
+import { type LoadedPermissions, loadPermissions } from "./permissions.js";
 import { decodeHeadParts, readHead, writeHead } from "./head.js";
 import { StateLock } from "./lock.js";
 import { flushObjects, loadObjects } from "./objects.js";
@@ -41,6 +48,8 @@ export class RunState {
   readonly runtime: Runtime;
   /** 这次是从磁盘恢复的，还是新建的空状态。 */
   readonly recovered: boolean;
+  /** 根权限表 + 它是从配置文件来的还是缺省的（§17.9）。 */
+  readonly permissions: LoadedPermissions;
 
   readonly #lock: StateLock | null;
   #cursor: number;
@@ -53,12 +62,14 @@ export class RunState {
     recovered: boolean,
     lock: StateLock | null,
     cursor: number,
+    permissions: LoadedPermissions,
   ) {
     this.dir = dir;
     this.store = store;
     this.registry = registry;
     this.runtime = runtime;
     this.recovered = recovered;
+    this.permissions = permissions;
     this.#lock = lock;
     this.#cursor = cursor;
   }
@@ -70,6 +81,7 @@ export class RunState {
     lock?.acquire();
 
     try {
+      const permissions = loadPermissions(dir);
       const store = new ObjectStore();
       const registry = new InstanceRegistry(store);
       /**
@@ -95,7 +107,7 @@ export class RunState {
       const head = readHead(dir);
 
       if (head === null) {
-        self = new RunState(dir, store, registry, runtime, false, lock, 0);
+        self = new RunState(dir, store, registry, runtime, false, lock, 0, permissions);
         return self;
       }
 
@@ -113,7 +125,7 @@ export class RunState {
             "多半是崩在刷对象与写 head 之间，或者目录被手工动过。",
         );
       }
-      self = new RunState(dir, store, registry, runtime, true, lock, cursor);
+      self = new RunState(dir, store, registry, runtime, true, lock, cursor, permissions);
       return self;
     } catch (error) {
       lock?.release();
@@ -138,6 +150,17 @@ export class RunState {
       ledger: this.runtime.locks.snapshot(),
       runtime: this.runtime.snapshot(),
     });
+  }
+
+  /**
+   * 带权限检查的入口 —— **对外的一切都该走它**，不是直接摸 `runtime`。
+   *
+   * `actor` 不在这里给，而是 `ControlPlane` 的**每个方法**都要求传 ——
+   * 那样才不可能出现"建的时候是 A、用的时候当成 B"。它由调用方注入
+   * （CLI 的 `--as`、将来的 MCP 会话），绝不从载荷里取（§11.3）。
+   */
+  get control(): ControlPlane {
+    return new ControlPlane(this.runtime, this.registry, this.store, this.permissions.table);
   }
 
   close(): void {

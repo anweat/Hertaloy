@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSandbox, destroySandbox, type SandboxPaths } from "../src/layout.js";
-import { LocalRunner } from "../src/runner.js";
+import { LocalRunner, filterEnv } from "../src/runner.js";
 
 const runner = new LocalRunner();
 let root: string;
@@ -111,5 +111,34 @@ describe("环境与隔离声明", () => {
   it("★ local 自报不是安全边界 —— 机器可读，一路透传到文档与告警", () => {
     expect(runner.isolates).toBe(false);
     expect(runner.kind).toBe("local");
+  });
+});
+
+describe("★ 环境变量白名单（§17.7 E2）", () => {
+  it("宿主机的密钥不进沙箱 —— 这是修之前的真泄漏", () => {
+    const env = filterEnv({
+      PATH: "/usr/bin",
+      ANTHROPIC_API_KEY: "sk-ant-secret",
+      AWS_SECRET_ACCESS_KEY: "aws-secret",
+      MY_COMPANY_TOKEN: "tok",
+    });
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env.MY_COMPANY_TOKEN).toBeUndefined();
+  });
+
+  it("agent CLI 跑得起来所需的那几个仍然透传", () => {
+    const env = filterEnv({ PATH: "/usr/bin", HOME: "/home/x", LANG: "C.UTF-8" });
+    expect(env).toEqual({ PATH: "/usr/bin", HOME: "/home/x", LANG: "C.UTF-8" });
+  });
+
+  it("显式 env 覆盖白名单 —— 凭据靠它显式进沙箱", () => {
+    const env = filterEnv({ PATH: "/usr/bin" }, { PATH: "/custom", TOKEN: "given" });
+    expect(env).toEqual({ PATH: "/custom", TOKEN: "given" });
+  });
+
+  it("白名单里没有的宿主机变量一律不带 —— 白名单不是黑名单", () => {
+    expect(filterEnv({ SOMETHING_NEW: "x" })).toEqual({});
   });
 });

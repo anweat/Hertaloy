@@ -8,10 +8,15 @@
  * **审批不是一条独立机制**（第四次归约）：等待就是阻塞锁，放行就是往它等的
  * 那个端点投一条消息。所以这里没有 `approve` 的专用状态机，只有
  * `status` 让人看见谁在等、`send` 让人放行。多一套审批状态机就是多一份要对齐的真相。
+ *
+ * **每条命令都过 `ControlPlane`**，不直连 `Runtime`。此前是直连的 —— 于是
+ * "人有完整权限"成立的原因是**根本没有权限检查**，而不是授权对了。
+ * `actor` 由 `--as` 注入，默认 `human:local`；绝不从载荷里取（§11.3）。
  */
 
 import { RunState } from "@nodeflow/state";
-import type { Json } from "@nodeflow/contracts";
+import type { Json, Principal } from "@nodeflow/contracts";
+import { AuthorizationError } from "@nodeflow/kernel";
 import { BUILTIN_HANDLERS, BUILTIN_NAMES } from "./builtins.js";
 
 export interface CommandResult {
@@ -23,19 +28,34 @@ const ok = (text: string): CommandResult => ({ text, code: 0 });
 const fail = (text: string): CommandResult => ({ text, code: 1 });
 
 /** 只读打开：不拿目录锁，所以能在写进程跑着的时候查（§17.8）。 */
-function readOnly<T>(dir: string, fn: (s: RunState) => T): T {
+function readOnly(dir: string, fn: (s: RunState) => CommandResult): CommandResult {
   const state = RunState.open(dir, { readOnly: true });
   try {
-    return fn(state);
+    return guard(() => fn(state));
   } finally {
     state.close();
+  }
+}
+
+/**
+ * 授权失败要变成**退出码 1 加一句人话**，不是一个栈。
+ *
+ * `PermissionTable.decide` 的拒绝理由里已经列了当前授权，所以这里原样透出 ——
+ * 人看得见"缺什么"，才改得动 permissions.json。
+ */
+function guard(fn: () => CommandResult): CommandResult {
+  try {
+    return fn();
+  } catch (error) {
+    if (error instanceof AuthorizationError) return fail(`拒绝：${error.message}`);
+    throw error;
   }
 }
 
 function writable(dir: string, fn: (s: RunState) => CommandResult): CommandResult {
   const state = RunState.open(dir);
   try {
-    const result = fn(state);
+    const result = guard(() => fn(state));
     if (result.code === 0) state.persist();
     return result;
   } finally {
@@ -49,16 +69,23 @@ function writable(dir: string, fn: (s: RunState) => CommandResult): CommandResul
  * 阻塞原因是这条命令的重点 —— 人要能一眼看出"卡在哪、在等谁"，
  * 否则唯一的排查手段就是读日志猜。
  */
-export function status(dir: string): CommandResult {
+export function status(dir: string, actor: Principal): CommandResult {
   return readOnly(dir, (s) => {
     const root = s.registry.rootTrace;
     if (root === null) return ok("空状态：还没有根容器。");
 
-    const lines: string[] = [`run ${root}（${s.dir}）`, ""];
+    const control = s.control;
+    const lines: string[] = [
+      `run ${root}（${s.dir}）`,
+      `主体 ${actor.kind}:${actor.id}　权限表 ${
+        s.permissions.source === "file" ? "permissions.json" : "缺省（人类全权，agent 无权）"
+      }`,
+      "",
+    ];
     lines.push("实例树：");
-    for (const inst of s.registry.subtree(root)) {
+    for (const inst of control.subtree(actor, root)) {
       const depth = inst.traceid.split("/").length - root.split("/").length;
-      const blockers = s.runtime.terminationBlockers(inst.traceid);
+      const blockers = control.blockers(actor, inst.traceid);
       lines.push(
         `${"  ".repeat(depth + 1)}${inst.traceid}  ${inst.status}  ` +
           `seq=${inst.seq} gen=${inst.generation}` +
@@ -67,7 +94,7 @@ export function status(dir: string): CommandResult {
       );
     }
 
-    const locks = s.runtime.locks.all();
+    const locks = control.locks(actor, root);
     lines.push("", `阻塞锁 ${locks.length} 把：`);
     for (const lock of locks) {
       lines.push(
@@ -76,7 +103,7 @@ export function status(dir: string): CommandResult {
       );
     }
 
-    const pending = s.runtime.pending();
+    const pending = control.messages(actor, root).filter((m) => m.state === "QUEUED");
     lines.push("", `在途消息 ${pending.length} 条：`);
     for (const m of pending) {
       lines.push(`  → ${m.target.traceid}/${m.target.node}.${m.target.port}`);
@@ -92,12 +119,11 @@ export function status(dir: string): CommandResult {
 }
 
 /** 读一个对象。`id` 取最新版，`id@N` 取指定版。 */
-export function show(dir: string, ref: string): CommandResult {
+export function show(dir: string, actor: Principal, ref: string): CommandResult {
   return readOnly(dir, (s) => {
     const at = ref.lastIndexOf("@");
     try {
-      const version =
-        at === -1 ? s.store.head(ref) : s.store.get(ref.slice(0, at), Number(ref.slice(at + 1)));
+      const version = at === -1 ? s.control.head(actor, ref) : s.control.read(actor, ref);
       return ok(JSON.stringify(version, null, 2));
     } catch (error) {
       return fail((error as Error).message);
@@ -106,9 +132,9 @@ export function show(dir: string, ref: string): CommandResult {
 }
 
 /** 一个对象的版本历史 —— C5 下这就是"这个东西经历了什么"。 */
-export function history(dir: string, objectId: string): CommandResult {
+export function history(dir: string, actor: Principal, objectId: string): CommandResult {
   return readOnly(dir, (s) => {
-    const versions = s.store.history(objectId);
+    const versions = s.control.history(actor, objectId);
     if (versions.length === 0) return fail(`没有对象 ${objectId}`);
     const lines = versions.map(
       (v) => `@${v.version}  ${v.kind}  ${v.content_hash.slice(0, 12)}  ${JSON.stringify(v.body)}`,
@@ -125,6 +151,7 @@ export function history(dir: string, objectId: string): CommandResult {
  */
 export function send(
   dir: string,
+  actor: Principal,
   traceid: string,
   node: string,
   port: string,
@@ -135,7 +162,7 @@ export function send(
       return fail(`没有实例 ${traceid}。先跑 \`hertaloy status\` 看有哪些。`);
     }
     try {
-      s.runtime.send({ traceid, node, port }, payload);
+      s.control.send(actor, { traceid, node, port }, payload);
       return ok(`已投递 → ${traceid}/${node}.${port}`);
     } catch (error) {
       return fail((error as Error).message);
@@ -149,12 +176,14 @@ export function send(
  * **限制要说清**：CLI 只认得内置 handler。模板若引用了别的 handler 名，
  * 这条命令推不动它 —— 那种图得由宿主程序驱动。装作能推是更坏的。
  */
-export function drain(dir: string): CommandResult {
+export function drain(dir: string, actor: Principal): CommandResult {
   return writable(dir, (s) => {
+    const root = s.registry.rootTrace;
+    if (root === null) return fail("空状态：没有根容器可推进。");
     for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) s.runtime.registerHandler(name, fn);
     try {
-      const results = s.runtime.drain();
-      const settled = s.runtime.settleAll();
+      const results = s.control.run(actor, root);
+      const settled = s.control.settleAll(actor, root);
       s.runtime.checkInvariants();
       const failures = results.filter((r) => "reason" in r);
       const text =
@@ -182,10 +211,15 @@ export function drain(dir: string): CommandResult {
  * 之前 `Runtime.truncate` 有实现却没有出口：一个卡住的 run 只能靠删状态目录
  * 处理，而那会把不可变的对象历史一起删掉 —— 用数据损失换流程解卡。
  */
-export function truncate(dir: string, traceid: string, reason: string): CommandResult {
+export function truncate(
+  dir: string,
+  actor: Principal,
+  traceid: string,
+  reason: string,
+): CommandResult {
   return writable(dir, (s) => {
     if (!s.registry.has(traceid)) return fail(`没有实例 ${traceid}`);
-    const r = s.runtime.truncate(traceid, reason);
+    const r = s.control.truncate(actor, traceid, reason);
     return ok(
       [
         `已截断 ${r.traceid}（generation ${r.generation}）：${r.reason}`,

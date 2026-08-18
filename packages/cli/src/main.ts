@@ -17,6 +17,7 @@
 import { readFileSync } from "node:fs";
 import { run, validate } from "./commands.js";
 import { diagnose, formatChecks } from "./doctor.js";
+import type { Principal } from "@nodeflow/contracts";
 import {
   type CommandResult,
   drain,
@@ -42,6 +43,9 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy drain   <dir>                        推进到静止（只认内置 handler）
   hertaloy truncate <dir> <traceid> [原因]      强制截断实例及其子树
 
+主体：任何命令可加 --as <principal>（如 --as agent:coder-1），默认 human:local。
+授权来自状态目录下的 permissions.json；没有该文件时缺省为「人类全权，agent 无权」。
+
 场景文件形如：
   { "templates": [{"id": "root", "kind": "root_config", "spec": {…}}],
     "root": {"template": "root", "id": "job-1"},
@@ -53,7 +57,11 @@ function readJson(path: string): unknown {
 }
 
 /** 有状态命令。参数不够就返回用法错误，而不是往下掉进"读文件"那条路。 */
-function statefulCommand(command: string, args: readonly string[]): CommandResult | null {
+function statefulCommand(
+  command: string,
+  args: readonly string[],
+  actor: Principal,
+): CommandResult | null {
   const [dir, a, b, c, d] = args;
   const need = (n: number): CommandResult | null =>
     args.length < n ? { text: `\`${command}\` 参数不够。
@@ -62,15 +70,15 @@ ${USAGE}`, code: 2 } : null;
 
   switch (command) {
     case "status":
-      return need(1) ?? status(dir as string);
+      return need(1) ?? status(dir as string, actor);
     case "show":
-      return need(2) ?? show(dir as string, a as string);
+      return need(2) ?? show(dir as string, actor, a as string);
     case "history":
-      return need(2) ?? history(dir as string, a as string);
+      return need(2) ?? history(dir as string, actor, a as string);
     case "drain":
-      return need(1) ?? drain(dir as string);
+      return need(1) ?? drain(dir as string, actor);
     case "truncate":
-      return need(2) ?? truncate(dir as string, a as string, b ?? "人工截断");
+      return need(2) ?? truncate(dir as string, actor, a as string, b ?? "人工截断");
     case "send": {
       const short = need(4);
       if (short !== null) return short;
@@ -82,14 +90,49 @@ ${USAGE}`, code: 2 } : null;
           return { text: `载荷不是合法 JSON：${(error as Error).message}`, code: 2 };
         }
       }
-      return send(dir as string, a as string, b as string, c as string, payload as never);
+      return send(dir as string, actor, a as string, b as string, c as string, payload as never);
     }
     default:
       return null;
   }
 }
 
-function main(argv: readonly string[]): number {
+/**
+ * 解析 `--as <principal>`，并把它从参数里摘掉。
+ *
+ * 默认 `human:local`：本机开发工具，人是操作者。**agent 必须显式指定** ——
+ * 它的每一份权限都得是给出来的，不是默认带的（第一不变量）。
+ */
+function extractActor(argv: readonly string[]): {
+  readonly actor: Principal;
+  readonly rest: readonly string[];
+} {
+  const i = argv.indexOf("--as");
+  if (i === -1 || argv[i + 1] === undefined) {
+    return { actor: { kind: "human", id: "local" }, rest: argv };
+  }
+  const raw = argv[i + 1] as string;
+  const [kind, id] = raw.split(":", 2);
+  const known = ["human", "agent", "system", "service"] as const;
+  if (!known.includes(kind as (typeof known)[number]) || id === undefined || id === "") {
+    throw new Error(`--as 形如 human:alice / agent:coder-1，收到 ${raw}`);
+  }
+  return {
+    actor: { kind: kind as Principal["kind"], id },
+    rest: [...argv.slice(0, i), ...argv.slice(i + 2)],
+  };
+}
+
+function main(rawArgv: readonly string[]): number {
+  let actor: Principal;
+  let argv: readonly string[];
+  try {
+    ({ actor, rest: argv } = extractActor(rawArgv));
+  } catch (error) {
+    process.stderr.write(`${(error as Error).message}
+`);
+    return 2;
+  }
   const [command, file] = argv;
   if (command === undefined || command === "help" || command === "--help") {
     process.stdout.write(USAGE);
@@ -103,7 +146,7 @@ function main(argv: readonly string[]): number {
     return blocked ? 1 : 0;
   }
   const rest = argv.slice(1);
-  const stateful = statefulCommand(command, rest);
+  const stateful = statefulCommand(command, rest, actor);
   if (stateful !== null) {
     (stateful.code === 0 ? process.stdout : process.stderr).write(`${stateful.text}
 `);
