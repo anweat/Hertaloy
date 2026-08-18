@@ -42,7 +42,7 @@ import {
 import { InvariantError, invariant } from "./errors.js";
 import { compileContext, formatContextFailures } from "./context.js";
 import { type VarBag, extractPortVars, formatExtractionFailures } from "./extract.js";
-import { type ContainerInstance, InstanceRegistry } from "./instances.js";
+import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instances.js";
 import { LockLedger } from "./locks.js";
 import {
   type StagePlan,
@@ -92,10 +92,24 @@ export interface HandlerContext {
    *
    * 受信 handler 直给；agent 拿不到 ctx，它走已声明的内核工具。
    */
+  /** 精确全局引用 —— 读卡片、读别人的产物。 */
   read(ref: Ref): ObjectVersion;
-  history(objectId: string): readonly ObjectVersion[];
-  /** 写资产。随本次提交一起落，提交回滚则一并撤销。 */
-  put(objectId: string, kind: string, body: JsonObject): Ref;
+  /** 读**自己命名空间**下的 `<name>` 的全部版本。 */
+  history(name: string): readonly ObjectVersion[];
+  /**
+   * 读某 traceid 前缀下所有叫 `<name>` 的对象（每个取最新版）。
+   *
+   * **跨实例汇聚靠它**（剧本帧 12）：三个 coder 子容器各写一份 `results`，
+   * 父容器 `ctx.collect("job-1", "results")` 拿到三份。
+   */
+  collect(prefix: string, name: string): readonly ObjectVersion[];
+  /**
+   * 写资产到**自己的命名空间**：实际 object_id = `<本实例 traceid>/<name>`。
+   *
+   * 写不出自己的命名空间 —— 这既修掉了不同实例写同名对象互相污染的 bug，
+   * 也是对象存储上的行级安全（§11）。随本次提交事务，回滚即撤销。
+   */
+  put(name: string, kind: string, body: JsonObject): Ref;
 }
 
 export type BuiltinHandler = (
@@ -921,15 +935,16 @@ export class Runtime implements Snapshotable {
       port: input.target.port,
       ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
       read: (ref: Ref) => store.resolve(ref),
-      history: (objectId: string) => store.history(objectId),
-      put: (objectId: string, kind: string, body: JsonObject): Ref => {
+      history: (name: string) => store.history(namespacedId(traceid, name)),
+      collect: (prefix: string, name: string) => store.collect(prefix, name),
+      put: (name: string, kind: string, body: JsonObject): Ref => {
         if (isKernelKind(kind)) {
           throw new InvariantError(
-            `handler 不得写入内核保留 kind \`${kind}\`（对象 ${objectId}）`,
+            `handler 不得写入内核保留 kind \`${kind}\`（对象 ${name}）`,
           );
         }
         return refOf(
-          store.put(objectId, kind, body, {
+          store.put(namespacedId(traceid, name), kind, body, {
             traceid,
             node_id: nodeId,
             at_seq: 0,

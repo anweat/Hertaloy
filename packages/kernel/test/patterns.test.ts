@@ -84,7 +84,7 @@ describe("写法一：汇聚 —— 版本历史当累加器", () => {
     expect(results.slice(0, 2).map((r) => r.dangling)).toEqual([[], []]);
     // 第三次才产出（这里没有下游边，所以体现为 dangling）
     expect(results[2]?.dangling).toEqual(["done"]);
-    expect(store.history("results")).toHaveLength(3);
+    expect(store.history("job-1/results")).toHaveLength(3);   // 已落在实例命名空间
     rt.checkInvariants();
   });
 });
@@ -127,7 +127,7 @@ describe("写法三：择优 —— 读 history 挑最高", () => {
     }
     const results = rt.drain() as StepResult[];
     expect(results[2]?.dangling).toEqual(["done"]);
-    expect(store.history("cand").map((o) => o.body.score)).toEqual([5, 9, 2]);
+    expect(store.history("job-1/cand").map((o) => o.body.score)).toEqual([5, 9, 2]);
   });
 });
 
@@ -143,9 +143,11 @@ describe("ctx 的边界", () => {
 
   it("read 只接受精确版本引用", () => {
     rt.registerHandler("collect", (_vars, ctx) => {
-      ctx.put("a", "thing", { n: 1 });
-      expect(ctx.read("a@1").body).toEqual({ n: 1 });
-      expect(() => ctx.read("a")).toThrow();
+      const ref = ctx.put("a", "thing", { n: 1 });
+      expect(ref).toBe("job-1/a@1");            // 自动落进实例命名空间
+      expect(ctx.read(ref).body).toEqual({ n: 1 });
+      expect(ctx.history("a")).toHaveLength(1); // history 也走命名空间
+      expect(() => ctx.read("job-1/a")).toThrow();
       return {};
     });
     rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v: 1 });
@@ -235,5 +237,117 @@ describe("批 0：状态不变量断言", () => {
     r2.setStatus("job-2/c1", "OPEN");
     rt2.settle("job-2/c1");
     rt2.checkInvariants();
+  });
+});
+
+describe("批 F：对象命名空间（§7.7 的 bug 修复）", () => {
+  /** 父容器有 merge 节点；两个子容器各写一份 results。 */
+  function buildTree(): { rt: Runtime; store: ObjectStore; reg: InstanceRegistry } {
+    const s = new ObjectStore();
+    const leaf = registerContainerTemplate(s, "leaf", {
+      nodes: {
+        w: {
+          kind: "handler",
+          handler: "produce",
+          ports: { in: { direction: "receive", servo: { vars: { v: { type: "short", from: "$.v" } } } } },
+        },
+      },
+      edges: {},
+      children: {},
+      subscriptions: {},
+    });
+    const root = registerContainerTemplate(
+      s,
+      "root",
+      {
+        nodes: {
+          merge: {
+            kind: "handler",
+            handler: "merge",
+            ports: { in: { direction: "receive" }, done: { direction: "emit" } },
+          },
+        },
+        edges: {},
+        children: { k: { template: leaf } },
+        subscriptions: {},
+      },
+      "root_config",
+    );
+    const r = new InstanceRegistry(s);
+    r.createRoot(root, "job-1");
+    return { rt: new Runtime(s, r), store: s, reg: r };
+  }
+
+  it("★ 不同实例写同名资产不再互相污染", () => {
+    const { rt, store } = buildTree();
+    rt.registerHandler("produce", (vars, ctx) => {
+      ctx.put("results", "result", { v: vars.v ?? null });
+      return {};
+    });
+    rt.registerHandler("merge", () => ({}));
+    rt.spawn("job-1", "k", "a");
+    rt.spawn("job-1", "k", "b");
+
+    rt.send({ traceid: "job-1/a", node: "w", port: "in" }, { v: "A" });
+    rt.send({ traceid: "job-1/b", node: "w", port: "in" }, { v: "B" });
+    rt.drain();
+
+    // 修复前：两个实例都写 `results`，得到 results@1 / results@2 —— 互相污染
+    expect(store.has("results")).toBe(false);
+    expect(store.history("job-1/a/results")).toHaveLength(1);
+    expect(store.history("job-1/b/results")).toHaveLength(1);
+    expect(store.resolve("job-1/a/results@1").body).toEqual({ v: "A" });
+    expect(store.resolve("job-1/b/results@1").body).toEqual({ v: "B" });
+  });
+
+  it("★ 跨实例汇聚靠 ctx.collect（剧本帧 12 的真实形状）", () => {
+    const { rt } = buildTree();
+    const merged: unknown[] = [];
+    rt.registerHandler("produce", (vars, ctx) => {
+      ctx.put("results", "result", { v: vars.v ?? null });
+      return {};
+    });
+    rt.registerHandler("merge", (_v, ctx) => {
+      const all = ctx.collect("job-1", "results");
+      if (all.length < 2) return {};
+      merged.push(all.map((o) => o.body.v ?? null));
+      return { done: {} };
+    });
+    rt.spawn("job-1", "k", "a");
+    rt.spawn("job-1", "k", "b");
+
+    // 两个子容器交货
+    rt.send({ traceid: "job-1/a", node: "w", port: "in" }, { v: "A" });
+    rt.send({ traceid: "job-1/b", node: "w", port: "in" }, { v: "B" });
+    rt.drain();
+
+    // 父容器被通知两次：第一次不足两份，第二次才汇聚
+    rt.send({ traceid: "job-1", node: "merge", port: "in" }, {});
+    rt.drain();
+    expect(merged).toEqual([["A", "B"]]);
+    rt.checkInvariants();
+  });
+
+  it("collect 的前缀落在段边界上，job-1 不捞 job-10", () => {
+    const s = new ObjectStore();
+    s.put("job-1/x/results", "result", { v: 1 });
+    s.put("job-10/x/results", "result", { v: 2 });
+    s.put("job-1/results", "result", { v: 3 });
+    expect(s.collect("job-1", "results").map((o) => o.object_id)).toEqual([
+      "job-1/results",
+      "job-1/x/results",
+    ]);
+  });
+
+  it("★ 写不出自己的命名空间：`..` 与前导斜杠被拒", () => {
+    const { rt } = buildTree();
+    rt.registerHandler("produce", (_v, ctx) => {
+      ctx.put("../escape", "thing", {});
+      return {};
+    });
+    rt.registerHandler("merge", () => ({}));
+    rt.spawn("job-1", "k", "a");
+    rt.send({ traceid: "job-1/a", node: "w", port: "in" }, { v: 1 });
+    expect(() => rt.drain()).toThrow(/资产名 .* 非法/);
   });
 });

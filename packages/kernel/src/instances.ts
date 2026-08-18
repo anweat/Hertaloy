@@ -258,3 +258,28 @@ export function registerContainerTemplate(
   const version = store.put(templateId, kind, parsed.data as unknown as JsonObject);
   return `${version.object_id}@${version.version}`;
 }
+
+/** 资产名的合法形状：路径段，可多级，不得越出自己的命名空间。 */
+const ASSET_SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+
+/**
+ * 把资产名限定到实例的命名空间：`<traceid>/<name>`。
+ *
+ * 对应 FOUNDATION_V5.md §7.7。修掉的 bug 是：`ctx.put("results", …)` 原本写的是
+ * **全局** object_id，`job-1/a` 与 `job-1/b` 会落到同一个对象上互相污染 ——
+ * 而汇聚正是"策略节点不需要"的承重论据，单实例测试看不出来。
+ *
+ * `..` 与前导 `/` 一律拒绝：命名空间是安全边界，不是命名约定。
+ */
+export function namespacedId(trace: TraceId, name: string): string {
+  const segments = name.split("/");
+  for (const seg of segments) {
+    if (!ASSET_SEGMENT.test(seg) || seg === "..") {
+      throw new InvariantError(
+        `资产名 ${JSON.stringify(name)} 非法：只允许多级标识符路径，` +
+          `不得含空段、\`..\` 或前导 \`/\`（它必须落在实例 ${trace} 的命名空间内）`,
+      );
+    }
+  }
+  return `${trace}/${name}`;
+}

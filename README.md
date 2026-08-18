@@ -17,8 +17,8 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 
 ```
 packages/contracts   51 条   身份/路径/变量/端口/消息/契约/模板/执行面 schema
-packages/kernel      77 条   store · instances · locks · context · extract · routing · runtime
-合计                128 条   typecheck 绿，离线，无数据库/网络/真实模型
+packages/kernel      90 条   store · tx · instances · locks · context · extract · routing · runtime
+合计                141 条   typecheck 绿，离线，无数据库/网络/真实模型
 pnpm test / pnpm typecheck
 ```
 
