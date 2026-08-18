@@ -17,6 +17,7 @@
 import {
   ContainerTemplate,
   TemplateOverlay,
+  type TemplateIssue,
   applyOverlay,
   isOverlay,
   type JsonObject,
@@ -254,11 +255,14 @@ export function registerContainerTemplate(
         .join("；")}`,
     );
   }
-  const issues = validateContainerTemplate(parsed.data);
+  const issues = [
+    ...validateContainerTemplate(parsed.data),
+    ...validateChildEntries(store, parsed.data),
+  ];
   if (issues.length > 0) {
     throw new InvariantError(
-      `模板 ${templateId} 连接期校验失败：\n` +
-        issues.map((i) => `  ${i.where}：${i.message}`).join("\n"),
+      [`模板 ${templateId} 连接期校验失败：`, ...issues.map((i) => `${i.where}：${i.message}`)]
+        .join("\n  "),
     );
   }
   const version = store.put(templateId, kind, parsed.data as unknown as JsonObject);
@@ -354,4 +358,57 @@ function materializeOverlay(store: ObjectStore, templateId: string, spec: unknow
     { at_seq: 0, derived_from: [overlay.extends] },
   );
   return `${version.object_id}@${version.version}`;
+}
+
+/**
+ * 跨模板校验：子槽的 `entry` 必须是子模板里已声明的 receive 端口。
+ *
+ * 纯结构校验留在 contracts（无依赖、可单测）；**需要解析引用的校验放这里**，
+ * 因为只有内核持有 store。这条边界值得守住 —— 一旦 contracts 依赖 store，
+ * 它就不再是可以独立给画布和 LLM 用的纯契约层了。
+ */
+function validateChildEntries(
+  store: ObjectStore,
+  tpl: ContainerTemplate,
+): readonly TemplateIssue[] {
+  const issues: TemplateIssue[] = [];
+  for (const [slotId, slot] of Object.entries(tpl.children)) {
+    if (slot.entry === undefined) continue;
+    let childTpl;
+    try {
+      childTpl = ContainerTemplate.parse(store.resolve(slot.template).body);
+    } catch {
+      issues.push({
+        where: `children.${slotId}.template`,
+        message: `子模板 ${slot.template} 无法解析为合法容器模板`,
+      });
+      continue;
+    }
+    const node = childTpl.nodes[slot.entry.node];
+    if (node === undefined) {
+      issues.push({
+        where: `children.${slotId}.entry`,
+        message:
+          `子模板 ${slot.template} 无节点 \`${slot.entry.node}\`。可用节点：` +
+          `${Object.keys(childTpl.nodes).sort().join(", ") || "（无）"}`,
+      });
+      continue;
+    }
+    const port = node.ports[slot.entry.port];
+    if (port === undefined || port.direction !== "receive") {
+      issues.push({
+        where: `children.${slotId}.entry`,
+        message:
+          `\`${slot.entry.node}.${slot.entry.port}\` 必须是子模板里已声明的 receive 端口。可用：` +
+          `${
+            Object.entries(node.ports)
+              .filter(([, p]) => p.direction === "receive")
+              .map(([n]) => n)
+              .sort()
+              .join(", ") || "（无）"
+          }`,
+      });
+    }
+  }
+  return issues;
 }

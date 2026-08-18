@@ -110,6 +110,20 @@ export interface HandlerContext {
    * 也是对象存储上的行级安全（§11）。随本次提交事务，回滚即撤销。
    */
   put(name: string, kind: string, body: JsonObject): Ref;
+
+  /**
+   * 容器工具：从节点内建子容器（容器八部分第 3 部分 / 剧本帧 8）。
+   *
+   * `slot` 必须是本容器**已声明**的子槽 —— 第一不变量：只能选不能构造，
+   * handler 递不进来一个模板引用。
+   *
+   * 传了 `payload` 就同时把活送进子容器**已声明的 entry 端点**；
+   * 没有 entry 的槽只能建空壳。这样"给 coder-1 派 task-1、给 coder-2 派 task-2"
+   * 才成立，而且入口仍然是声明出来的，不是 handler 编的。
+   *
+   * 随本次提交事务：提交回滚则子容器与它的 child 锁一并撤销。
+   */
+  spawn(slot: string, segment: string, payload?: Json): TraceId;
 }
 
 export type BuiltinHandler = (
@@ -937,6 +951,21 @@ export class Runtime implements Snapshotable {
       read: (ref: Ref) => store.resolve(ref),
       history: (name: string) => store.history(namespacedId(traceid, name)),
       collect: (prefix: string, name: string) => store.collect(prefix, name),
+      spawn: (slot: string, segment: string, payload?: Json): TraceId => {
+        const child = this.spawn(traceid, slot, segment);
+        if (payload === undefined) return child.traceid;
+
+        const declared = this.#registry.template(traceid).children[slot];
+        const entry = declared?.entry;
+        if (entry === undefined) {
+          throw new InvariantError(
+            `子槽 \`${slot}\` 未声明 entry，无法投递初始载荷；` +
+              `要么在模板里声明 entry，要么只建空壳（不传 payload）`,
+          );
+        }
+        this.send({ traceid: child.traceid, node: entry.node, port: entry.port }, payload);
+        return child.traceid;
+      },
       put: (name: string, kind: string, body: JsonObject): Ref => {
         if (isKernelKind(kind)) {
           throw new InvariantError(

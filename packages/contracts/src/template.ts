@@ -73,8 +73,17 @@ export type PortRef = z.infer<typeof PortRef>;
 export const EdgeDefinition = z.object({ from: PortRef, to: PortRef }).strict();
 export type EdgeDefinition = z.infer<typeof EdgeDefinition>;
 
-/** 声明本容器可以创建哪些子容器（第一不变量：只能选不能构造）。 */
-export const ChildSlot = z.object({ template: Ref }).strict();
+/**
+ * 声明本容器可以创建哪些子容器（第一不变量：只能选不能构造）。
+ *
+ * `entry` 是**子容器的入口端点** —— 建完子容器之后活怎么进去，靠它。
+ * 没有 entry 就只能建一个收不到任务的空壳；有了它，父容器给
+ * coder-1 派 task-1、给 coder-2 派 task-2 才成立（剧本帧 8→9）。
+ *
+ * 它指向的是**子模板里的**节点与端口，所以校验必须跨模板做 —— 见
+ * `registerContainerTemplate`（纯结构校验在 contracts，跨引用校验在 kernel）。
+ */
+export const ChildSlot = z.object({ template: Ref, entry: PortRef.optional() }).strict();
 export type ChildSlot = z.infer<typeof ChildSlot>;
 
 /**
