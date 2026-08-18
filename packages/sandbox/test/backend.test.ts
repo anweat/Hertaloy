@@ -1,0 +1,151 @@
+/**
+ * S4：沙箱 backend 端到端（FOUNDATION_V5.md §14）。
+ *
+ * 用 node 脚本当"假 agent"打通契约 —— `claude` / `codex` 接上去只是换 argv。
+ */
+
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ExecutionRequest } from "@nodeflow/contracts";
+import { SandboxBackend, type SandboxDiagnostics } from "../src/backend.js";
+
+let workRoot: string;
+let agentDir: string;
+let backend: SandboxBackend;
+
+/** 造一个假 agent。它按契约读 request.json、写 emit.json。 */
+function fakeAgent(body: string): string {
+  const file = join(agentDir, `agent-${Math.random().toString(36).slice(2)}.mjs`);
+  writeFileSync(file, body, "utf8");
+  return file;
+}
+
+function request(argv: readonly string[], over: Partial<ExecutionRequest> = {}): ExecutionRequest {
+  return {
+    executionId: "exec-1",
+    traceid: "job-1/coder-1",
+    nodeId: "work",
+    agentSpec: { argv: [...argv] } as never,
+    vars: { task: "写个导出功能" },
+    outputContract: { allowedEmitPorts: ["out", "err"] },
+    limits: {},
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  workRoot = mkdtempSync(join(tmpdir(), "hertaloy-wr-"));
+  agentDir = mkdtempSync(join(tmpdir(), "hertaloy-ag-"));
+  backend = new SandboxBackend({ workRoot });
+});
+
+afterEach(() => undefined);
+
+describe("★ 主链：注入 → 跑命令行 → 读 emit → 观察 → 收产物", () => {
+  it("假 agent 按契约干活，全链走通", async () => {
+    const agent = fakeAgent(`
+      import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+      // 契约：request.json 与 vars.json 在 ../.hertaloy 下（cwd 是 workspace）
+      const req = JSON.parse(readFileSync("../.hertaloy/request.json", "utf8"));
+      const vars = JSON.parse(readFileSync("../.hertaloy/context/vars.json", "utf8"));
+
+      // 干活：改工作区
+      writeFileSync("export.ts", "export function run(){}");
+
+      // 产物
+      mkdirSync("../.hertaloy/artifacts", { recursive: true });
+      writeFileSync("../.hertaloy/artifacts/plan.md", "计划:" + vars.task);
+
+      // 输出：只能用白名单里的端口
+      writeFileSync("../.hertaloy/emit.json", JSON.stringify({
+        out: { done: true, port: req.allowedEmitPorts[0] }
+      }));
+    `);
+
+    const result = await backend.run(request(["node", agent]));
+
+    expect(result.termination).toBe("DONE");
+    expect(result.emissions).toEqual({ out: { done: true, port: "out" } });
+    expect(result.artifacts?.[0]?.object_id).toBe("plan");
+    expect(result.artifacts?.[0]?.body).toEqual({ text: "计划:写个导出功能" });
+
+    // ★ git 观察到了工作区的改动，agent 全程不知道
+    const diag = result.diagnostics as never as SandboxDiagnostics;
+    expect(diag.observation?.changes.map((c) => c.path)).toEqual(["export.ts"]);
+    expect(diag.observation?.insertions).toBeGreaterThan(0);
+    expect(diag.isolates).toBe(false); // local 不是安全边界
+  }, 30_000);
+
+  it("变量经 vars.json 注入 —— 批 P 的 profile 渲染建在这上面", async () => {
+    const agent = fakeAgent(`
+      import { readFileSync, writeFileSync } from "node:fs";
+      const vars = JSON.parse(readFileSync("../.hertaloy/context/vars.json", "utf8"));
+      writeFileSync("../.hertaloy/emit.json", JSON.stringify({ out: { echoed: vars.task } }));
+    `);
+    const result = await backend.run(request(["node", agent]));
+    expect(result.emissions).toEqual({ out: { echoed: "写个导出功能" } });
+  }, 30_000);
+});
+
+describe("★ 退出码 → 终止原因（§14.6，判据是「重试会不会有不同结果」）", () => {
+  it("退出 0 但没写 emit.json → INVALID_OUTPUT（换次采样可能就对）", async () => {
+    const agent = fakeAgent(`process.exit(0);`);
+    const r = await backend.run(request(["node", agent]));
+    expect(r.termination).toBe("INVALID_OUTPUT");
+  }, 30_000);
+
+  it("emit.json 不是对象 → INVALID_OUTPUT", async () => {
+    const agent = fakeAgent(`
+      import { writeFileSync } from "node:fs";
+      writeFileSync("../.hertaloy/emit.json", JSON.stringify(["数组不行"]));
+    `);
+    expect((await backend.run(request(["node", agent]))).termination).toBe("INVALID_OUTPUT");
+  }, 30_000);
+
+  it("退出码非 0 → FAILED（真故障，可重试）", async () => {
+    const agent = fakeAgent(`process.exit(7);`);
+    const r = await backend.run(request(["node", agent]));
+    expect(r.termination).toBe("FAILED");
+    expect((r.diagnostics as never as SandboxDiagnostics).exitCode).toBe(7);
+  }, 30_000);
+
+  it("超时被杀 → BUDGET（是限额意图，不是故障，不重试）", async () => {
+    const agent = fakeAgent(`setTimeout(() => process.exit(0), 60_000);`);
+    const r = await backend.run(
+      request(["node", agent], { limits: { wallClockSeconds: 0.5 } }),
+    );
+    expect(r.termination).toBe("BUDGET");
+  }, 30_000);
+
+  it("取消 → CANCELLED（是意图，不重试）", async () => {
+    const agent = fakeAgent(`setTimeout(() => process.exit(0), 60_000);`);
+    const p = backend.run(request(["node", agent]));
+    setTimeout(() => void backend.cancel("exec-1"), 300);
+    expect((await p).termination).toBe("CANCELLED");
+  }, 30_000);
+
+  it("agentSpec 不是合法沙箱规格 → INVALID_OUTPUT，错误说清哪不对", async () => {
+    const r = await backend.run(request([], { agentSpec: { nope: 1 } as never }));
+    expect(r.termination).toBe("INVALID_OUTPUT");
+    expect((r.diagnostics as never as SandboxDiagnostics).stderrTail).toMatch(/不是合法的沙箱规格/);
+  }, 30_000);
+});
+
+describe("凭据与环境", () => {
+  it("env 注入进沙箱，且不落进 git（.hertaloy 在工作树外）", async () => {
+    const agent = fakeAgent(`
+      import { writeFileSync } from "node:fs";
+      writeFileSync("../.hertaloy/emit.json", JSON.stringify({ out: { key: process.env.FAKE_KEY } }));
+    `);
+    const r = await backend.run(
+      request(["node", agent], {
+        agentSpec: { argv: ["node", agent], env: { FAKE_KEY: "sk-假的" } } as never,
+      }),
+    );
+    expect(r.emissions).toEqual({ out: { key: "sk-假的" } });
+    const diag = r.diagnostics as never as SandboxDiagnostics;
+    expect(diag.observation?.changes).toEqual([]); // 工作区没动，凭据没留痕
+  }, 30_000);
+});
