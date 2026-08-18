@@ -31,11 +31,18 @@ export const Termination = z.enum(TERMINATIONS);
 /** 不重试的终止原因：它们表达意图，不是故障。 */
 export const NON_RETRYABLE: readonly Termination[] = ["CANCELLED", "BUDGET"];
 
+/**
+ * 执行限额。
+ *
+ * **没有 `maxToolCalls`**：沙箱模型下 agent 用的是自己的工具（§14），
+ * 内核不中介调用，也就数不了次数 —— 一个永远无法强制的字段不如不给。
+ * 工具调用次数属**观测**（`Usage.toolCalls`，agent 自报），不属限额。
+ */
 export const ExecutionLimits = z
   .object({
     tokenBudget: z.number().int().positive().optional(),
+    /** 由沙箱运行器强制（超时杀进程），不靠 backend 自觉。 */
     wallClockSeconds: z.number().positive().optional(),
-    maxToolCalls: z.number().int().positive().optional(),
   })
   .strict();
 
