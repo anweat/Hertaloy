@@ -10,10 +10,11 @@
 
 V5 的第一性变化是：容器成为实例，资产归约为变量，跨网关等待归约为锁账本。V4 的编排对象模型不再是实现基线。
 
-## 仓库状态（2026-08-17）
+## 仓库状态（2026-08-18）
 
-设计门已收束。Task 1–6 完成，**Checkpoint A / B 均通过**。
-外部审核轮的七条 P1 已修并补了反例测试；RunSnapshot 与 B1 预算强制已补齐。
+设计门已收束。Task 1–6 完成，**Checkpoint A / B 均通过**；外部审核轮七条 P1 已修。
+此后经历**第四次归约**：策略节点删除，汇聚 / 循环计数 / 择优改由「版本历史即状态」承担。
+批 0（事务化提交）、A（资产 ctx）、F（对象命名空间）已落地。
 
 ```
 packages/contracts   51 条   身份/路径/变量/端口/消息/契约/模板/执行面 schema
@@ -22,9 +23,12 @@ packages/kernel      90 条   store · tx · instances · locks · context · ex
 pnpm test / pnpm typecheck
 ```
 
-尚未具备：策略执行器（汇聚/循环）、持久化与崩溃恢复、
-MCP/服务端/画布/真实 backend。当前是**内核实验切片，不是可用工作流系统**。
-逐项状态见 [V5_WORKPLAN.md](./V5_WORKPLAN.md) §2.9–§2.10。
+尚未具备：容器工具（从节点内建子容器）、eager 物化继承、权限、
+持久化与崩溃恢复、MCP / 服务端 / 画布 / 真实 backend。
+当前是**内核实验切片，不是可用工作流系统**。
+
+逐项状态见 [FOUNDATION_V5.md](./FOUNDATION_V5.md) §16（不变量强制表）与 §17（待开发清单）。
+`FOUNDATION_V5.md` 全文带 ✅🚧📋❓ 状态标记，与代码同步维护。
 
 旧代码没有删除。Python V4 oracle、339 条旧测试以及旧 TypeScript 移植原型都保存在 `archive/implementations/pre-v5-reset/`，可独立复查。
 
