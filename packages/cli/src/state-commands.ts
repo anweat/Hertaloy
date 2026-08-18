@@ -124,6 +124,20 @@ export function status(dir: string, actor: Principal): CommandResult {
         `  ${m.state === "CLAIMED" ? "⟳" : "→"} ${m.target.traceid}/${m.target.node}.${m.target.port}`,
       );
     }
+    const execs = subtree.flatMap((i) => s.store.history(`${i.traceid}/$exec`));
+    if (execs.length > 0) {
+      lines.push("", `执行观测 ${execs.length} 条（\`show <traceid>/$exec\` 看详情）：`);
+      for (const v of execs.slice(-5)) {
+        const b = v.body as Record<string, unknown>;
+        const d = (b.diagnostics ?? {}) as Record<string, unknown>;
+        const obs = (d.observation ?? {}) as { files?: unknown[] };
+        lines.push(
+          `  ${String(b.execution_id)}  ${String(b.node)}  ${String(b.termination)}` +
+            (obs.files === undefined ? "" : `  改动 ${obs.files.length} 个文件`),
+        );
+      }
+    }
+
     const running = subtree.flatMap((i) =>
       control.records(actor, i.traceid).filter((r) => r.status === "RUNNING"),
     );
@@ -348,5 +362,23 @@ export function truncate(
         `  级联子实例 ${r.cascaded.length} 个${r.cascaded.length > 0 ? `：${r.cascaded.join("、")}` : ""}`,
       ].join("\n"),
     );
+  });
+}
+
+/**
+ * 因果查询：这条消息是由哪些消息导致的。
+ *
+ * 走 RunSnapshot 的 `produced → consumed` 反查。这是 traceid 表达不了的那半边 ——
+ * 扇出后子消息 traceid 相同却各有前因，汇聚时一条输出有多个前因。
+ */
+export function why(dir: string, actor: Principal, messageId: string): CommandResult {
+  return readOnly(dir, (s) => {
+    const root = s.registry.rootTrace;
+    if (root === null) return fail("空状态：没有根容器。");
+    const causes = s.control.causesOf(actor, root, messageId);
+    if (causes.length === 0) {
+      return ok(`${messageId} 没有记录在案的前因（可能是外部投递的起点）。`);
+    }
+    return ok([`${messageId} 的前因：`, ...causes.map((c) => `  ← ${c}`)].join("\n"));
   });
 }

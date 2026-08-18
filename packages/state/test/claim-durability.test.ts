@@ -59,7 +59,7 @@ function seed(state: RunState): void {
 }
 
 describe("★ claim 熬过崩溃", () => {
-  it("claim 之后进程死掉 → 新进程看得见那条 RUNNING 记录", async () => {
+  it("claim 之后进程死掉 → 记录留在盘上（只读打开可见，因为只读不认领）", async () => {
     const first = RunState.open(dir, { backend: new NeverReturns() });
     seed(first);
     first.persist();
@@ -69,7 +69,8 @@ describe("★ claim 熬过崩溃", () => {
     await Promise.resolve();
     first.close();
 
-    const second = RunState.open(dir);
+    // 只读打开验持久性：写入打开会当场认领孤儿（那是另一条用例的事）
+    const second = RunState.open(dir, { readOnly: true });
     try {
       const running = second.runtime.records().filter((r) => r.status === "RUNNING");
       expect(running).toHaveLength(1);
@@ -99,4 +100,98 @@ describe("★ claim 熬过崩溃", () => {
       second.close();
     }
   });
+});
+
+
+describe("★ 孤儿认领：恢复不是「看得见」，是「接着跑完」", () => {
+  /** 第二次调用才成功的 backend —— 模拟"上次没跑完，这次跑完了"。 */
+  class SucceedsOnRetry implements ExecutionBackend {
+    calls = 0;
+    async run(req: ExecutionRequest): Promise<ExecutionResult> {
+      this.calls += 1;
+      if (this.calls === 1) return await new Promise<ExecutionResult>(() => {});
+      return {
+        executionId: req.executionId,
+        emissions: {},
+        artifacts: [{ object_id: "done", kind: "artifact", body: { ok: true }, derived_from: [] }],
+        termination: "DONE",
+      };
+    }
+    async cancel(): Promise<void> {}
+  }
+
+  it("崩在 claim 与 apply 之间 → 新进程认领 → 重跑 → 真的产出", async () => {
+    const backend = new SucceedsOnRetry();
+    const first = RunState.open(dir, { backend });
+    seed(first);
+    first.persist();
+    void first.runtime.stepAgent(); // 永不返回，模拟进程被杀
+    await Promise.resolve();
+    first.close();
+
+    // 新进程：open 即认领
+    const second = RunState.open(dir, { backend });
+    try {
+      expect(second.reconciled).toHaveLength(1);
+      expect(second.reconciled[0]?.reason).toMatch(/上一个进程没有跑完/);
+      expect(second.reconciled[0]?.retrying).toBe(true);
+      // 关键：消息退回队列，不是卡在 CLAIMED
+      expect(second.runtime.pending()).toHaveLength(1);
+
+      await second.runtime.drainAgents();
+      expect(second.store.head("job-1/done").body).toEqual({ ok: true });
+      second.runtime.checkInvariants();
+    } finally {
+      second.close();
+    }
+  }, 20_000);
+
+  it("干净退出的 run 再打开，不会凭空认领", () => {
+    const s = RunState.open(dir);
+    seed(s);
+    s.persist();
+    s.close();
+
+    const again = RunState.open(dir);
+    try {
+      expect(again.reconciled).toEqual([]);
+    } finally {
+      again.close();
+    }
+  });
+
+  it("只读打开不认领 —— 没有锁就没有「我是唯一写者」这个前提", async () => {
+    const backend = new SucceedsOnRetry();
+    const first = RunState.open(dir, { backend });
+    seed(first);
+    first.persist();
+    void first.runtime.stepAgent();
+    await Promise.resolve();
+    first.close();
+
+    const reader = RunState.open(dir, { readOnly: true });
+    try {
+      expect(reader.reconciled).toEqual([]);
+      expect(reader.runtime.records()[0]?.status).toBe("RUNNING");
+    } finally {
+      reader.close();
+    }
+  }, 20_000);
+
+  it("认领不新增状态 —— 记录落在既有的 FAILED，不是新枚举值", async () => {
+    const backend = new SucceedsOnRetry();
+    const first = RunState.open(dir, { backend });
+    seed(first);
+    first.persist();
+    void first.runtime.stepAgent();
+    await Promise.resolve();
+    first.close();
+
+    const second = RunState.open(dir, { backend });
+    try {
+      expect(second.runtime.records().map((r) => r.status)).toEqual(["FAILED"]);
+    } finally {
+      second.close();
+    }
+  }, 20_000);
 });

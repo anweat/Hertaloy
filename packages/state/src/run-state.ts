@@ -20,6 +20,7 @@ import { mkdirSync } from "node:fs";
 import {
   type CommitEvent,
   ControlPlane,
+  type StepFailure,
   InstanceRegistry,
   ObjectStore,
   Runtime,
@@ -58,6 +59,8 @@ export class RunState {
   readonly recovered: boolean;
   /** 根权限表 + 它是从配置文件来的还是缺省的（§17.9）。 */
   readonly permissions: LoadedPermissions;
+  /** 本次打开认领了哪些孤儿执行。空数组 = 上次是干净退出的。 */
+  reconciled: readonly StepFailure[] = [];
 
   readonly #lock: StateLock | null;
   #cursor: number;
@@ -137,6 +140,21 @@ export class RunState {
         );
       }
       self = new RunState(dir, store, registry, runtime, true, lock, cursor, permissions);
+
+      /**
+       * 恢复即认领孤儿。
+       *
+       * 拿到目录锁说明没有别的写进程，所以此刻的 RUNNING 记录必然是
+       * 上个进程没跑完的（`Runtime.reconcile` 的注释讲了为什么不需要状态机）。
+       * 不做的话，那条 `CLAIMED` 消息永远等不到人 —— 调度器只挑 QUEUED，
+       * 于是"claim 不丢"变成"claim 卡死"。
+       *
+       * 只读打开不认领：没有锁就没有"我是唯一写者"这个前提。
+       */
+      if (lock !== null) {
+        self.reconciled = runtime.reconcile();
+        if (self.reconciled.length > 0) self.persist();
+      }
       return self;
     } catch (error) {
       lock?.release();

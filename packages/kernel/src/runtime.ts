@@ -681,6 +681,9 @@ export class Runtime implements Snapshotable {
       );
     }
 
+    // 执行观测先落，成败都留痕 —— 见 #recordExecution
+    this.#recordExecution(record, result);
+
     const template = this.#registry.template(record.traceid);
     const node = template.nodes[record.nodeId];
     invariant(node !== undefined, `节点 ${record.nodeId} 不存在`);
@@ -1081,6 +1084,81 @@ export class Runtime implements Snapshotable {
       dangling: outcome.plan.dangling,
       vars: extraction.vars,
     };
+  }
+
+  /**
+   * 执行观测 —— 落成**对象**，不给 `ExecutionRecord` 加字段。
+   *
+   * 之前 backend 算出的 `diagnostics`（含沙箱外 git 观察：改了哪些文件、加删多少行）
+   * **被原地丢弃** —— `#apply` 只读 emissions / artifacts / usage / termination。
+   * 归约 5 的招牌机制断在最后一步。
+   *
+   * 修法不是给记录结构加字段，那会让可变头随执行次数增长。而是**落进版本层**：
+   * 一次执行一版 `<traceid>/$exec`，于是它自动获得不可变、内容寻址、
+   * 可按前缀查询、随事务提交 —— 全是 C5 已经提供的性质。
+   * 顺带 `hertaloy show` / `history` 立刻就能读，不需要新命令。
+   *
+   * 放在 `#apply` 开头而不是结尾：后面每条 INVALID_OUTPUT 分支都会提前 return，
+   * 而**失败时的观测比成功时更值钱**。同一个事务，回滚时它一起回滚。
+   */
+  #recordExecution(record: ExecutionRecord, result: ExecutionResult): void {
+    if (result.diagnostics === undefined) return;
+    this.#store.put(
+      `${record.traceid}/$exec`,
+      "execution",
+      {
+        execution_id: record.executionId,
+        node: record.nodeId,
+        termination: result.termination,
+        ...(result.usage === undefined ? {} : { usage: result.usage as unknown as Json }),
+        diagnostics: result.diagnostics,
+      },
+      {
+        traceid: record.traceid,
+        node_id: record.nodeId,
+        execution_id: record.executionId,
+        at_seq: 0,
+        derived_from: [],
+      },
+    );
+  }
+
+  /**
+   * **孤儿执行**：记录是 RUNNING，但本进程没在跑它。
+   *
+   * 这里不引入 `RECONCILING / ADOPTED / ABANDONED` 那套状态机 —— 因为
+   * "有没有进程在跑"根本不是持久状态，它是**进程本地事实**（`#busy`）。
+   * 把进程本地事实写进持久状态，才需要状态机去对齐两边；不写就不需要。
+   *
+   * 判据靠状态目录锁给出：单写者模型下，**拿到锁时看到的 RUNNING 必然是孤儿** ——
+   * 能写这个 run 的进程只有一个，而它就是我们自己。
+   */
+  orphanedExecutions(): readonly ExecutionRecord[] {
+    return this.records().filter(
+      (r) => r.status === "RUNNING" && !this.#busy.has(`${r.traceid}/${r.nodeId}`),
+    );
+  }
+
+  /**
+   * 认领孤儿 —— **复用既有的失败路径**，不新增机制。
+   *
+   * 孤儿就是一次没跑完的 attempt，而"一次失败的 attempt 该怎么办"内核早就答过了：
+   * `#applyFailure` 负责计数、重排队、到上限放弃。所以这里只是把孤儿喂给它。
+   *
+   * 也不必推 generation：`#apply` 的冲突域复核要求"被 claim 的消息仍是 CLAIMED"，
+   * 而认领会把消息退回 QUEUED —— 迟到的结果撞上这条就作废了。L3 已经覆盖。
+   *
+   * 这不是"当作没发生过"：每个孤儿产出一条带原因的 `StepFailure`，
+   * 计入 attempts，超限即 FAILED，在 `status` 里看得见。
+   */
+  reconcile(reason = "上一个进程没有跑完这次执行"): readonly StepFailure[] {
+    const orphans = this.orphanedExecutions();
+    if (orphans.length === 0) return [];
+    return transact(this.#parts, () => {
+      const out = orphans.map((r) => this.failAgentResult(r.executionId, "FAILED", reason));
+      this.#commit({ kind: "apply", traceid: orphans[0]!.traceid });
+      return out;
+    });
   }
 
   /**

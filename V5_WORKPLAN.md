@@ -464,9 +464,11 @@ CLI 的 `drain` 变异步、**同步 handler 与 agent 交替推进到静止**
 
 ### 4.2 采纳判断、暂不动手（理由写明）
 
-- **claim 可见 ≠ 能恢复**。属实且重要：恢复后调度器只挑 `QUEUED`，那条
-  `CLAIMED` 消息无人接管，是永久卡住而非恢复。已写进 README 的"部分"一档。
-  接管状态机（RECONCILING / ADOPTED / ABANDONED）是下一批，不是顺手能做对的。
+- ~~**claim 可见 ≠ 能恢复**~~ **✅ 已补，但没按建议的做法**。审核建议一套
+  `RECONCILING / ADOPTED / ABANDONED / LOST` 四态机；实际不需要 ——
+  "有没有进程在跑"不是持久状态而是进程本地事实，且单写者锁已经证明了
+  "拿到锁时看到的 RUNNING 必然是孤儿"。所以孤儿只是**一次失败的 attempt**，
+  喂给既有的 `#applyFailure` 即可。零新状态。见 FOUNDATION §17.14。
 - **外部副作用没有恢复语义**。属实。generation fence 只能拒绝迟到的内核 apply，
   撤不回已发的邮件。但 `EffectIntent/Receipt/outbox` 是一整套子系统，
   在还没有任何真实外部效果接入时建它，是为假想负载做设计。先记为已知边界。

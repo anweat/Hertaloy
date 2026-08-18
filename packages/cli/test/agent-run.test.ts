@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { LocalRunner, SandboxBackend } from "@nodeflow/sandbox";
 import { RunState } from "@nodeflow/state";
-import { drain, history, show, status } from "../src/state-commands.js";
+import { drain, history, show, status, why } from "../src/state-commands.js";
 
 const HUMAN = { kind: "human", id: "local" } as const;
 let dir: string;
@@ -112,4 +112,59 @@ describe("★ 落盘的 run 真跑 agent（E1）", () => {
       s.close();
     }
   }, 120_000);
+});
+
+describe("★ 执行观测落成对象，不给 ExecutionRecord 加字段", () => {
+  it("agent 跑完 → git 观察进对象库 → show 立刻读得到（修之前算完就丢）", async () => {
+    await drain(dir, HUMAN, backend());
+
+    const h = history(dir, HUMAN, "job-1/$exec");
+    expect(h.code).toBe(0);
+    expect(h.text).toContain("1 版");
+
+    const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
+    expect(v.body.node).toBe("worker");
+    expect(v.body.termination).toBe("DONE");
+    // 观测本身：runner 是谁、隔离与出网受不受控
+    expect(v.body.diagnostics.runner).toBe("local");
+    expect(v.body.diagnostics.networkEnforced).toBe(false);
+    expect(v.provenance.execution_id).toBe(v.body.execution_id);
+  }, 120_000);
+
+  it("观测在 status 里露头，不用先知道对象名", async () => {
+    await drain(dir, HUMAN, backend());
+    expect(status(dir, HUMAN).text).toContain("执行观测 1 条");
+  }, 120_000);
+
+  it("★ 观测挂在版本层 → 多次执行自然成为多版，无需新结构", async () => {
+    // 第二条要在第一次 drain 之前投：drain 跑完实例就收进终态了
+    const s = RunState.open(dir);
+    try {
+      s.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { task: "again" });
+      s.persist();
+    } finally {
+      s.close();
+    }
+    await drain(dir, HUMAN, backend());
+    expect(history(dir, HUMAN, "job-1/$exec").text).toContain("2 版");
+  }, 120_000);
+});
+
+describe("★ 因果反查有出口了", () => {
+  it("why 报出这条消息的前因", async () => {
+    await drain(dir, HUMAN, backend());
+    const s = RunState.open(dir, { readOnly: true });
+    const produced = s.runtime.messages().find((m) => m.target.node === "sink");
+    s.close();
+    const r = why(dir, HUMAN, produced!.id);
+    expect(r.code).toBe(0);
+    expect(r.text).toContain("←");
+  }, 120_000);
+
+  it("起点消息说清楚是起点，不是空输出", async () => {
+    const s = RunState.open(dir, { readOnly: true });
+    const first = s.runtime.messages()[0];
+    s.close();
+    expect(why(dir, HUMAN, first!.id).text).toContain("没有记录在案的前因");
+  });
 });

@@ -176,6 +176,24 @@ export class ControlPlane {
     return this.#store.history(objectId);
   }
 
+  /**
+   * 因果查询：这条消息是由哪些消息导致的。
+   *
+   * RunSnapshot 存在的全部理由就是承担 traceid 表达不了的那半边因果 ——
+   * 扇出后子消息 traceid 相同却各有前因，汇聚时一条输出有多个前因。
+   * 查询早就实现了，只是一直没有出口，等于把主要的可观测面关在门外。
+   */
+  causesOf(actor: Principal, scope: TraceId, messageId: string): readonly string[] {
+    this.#authorize(actor, "query", scope);
+    return this.#runtime.causesOf(messageId);
+  }
+
+  /** 认领孤儿执行。见 `Runtime.reconcile` —— 复用失败路径，不是新状态机。 */
+  reconcile(actor: Principal, scope: TraceId): readonly StepFailure[] {
+    this.#authorize(actor, "run", scope);
+    return this.#runtime.reconcile();
+  }
+
   /** 把够条件的实例收进终态。授权按传入的作用域根判定。 */
   settleAll(actor: Principal, scope: TraceId): readonly TraceId[] {
     this.#authorize(actor, "settle", scope);
