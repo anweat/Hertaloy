@@ -31,12 +31,17 @@ V5 把第一性换成**嵌套与生命周期**。之后发生了四次归约，�
 | 2 | **资产即变量** | 卡片系统 + 四段上下文编译器 + 运行时预算裁剪 → 一套变量 |
 | 3 | **等待即锁（网关账本）** | callback WAITING / child OPEN / approval AWAITING / 订阅 / PAUSED / 定时器 → 一张锁表（5 种 → 2 种） |
 | 4 | **版本历史即状态** | 策略节点 / 表达式语言 / 节点内 persistent / 多消息原子消费 / 内核时钟 → ObjectStore 的版本历史 |
+| 5 | **agent 就是一条命令行** | 内核工具（`read_artifact`/`publish`/`spawn`）/ 工具桥 / `kernel_tool` 线协议 / backend 矩阵 → **端口 + 变量 + 沙箱外的 git** |
 
 第 4 次最省，值得展开：节点内 `persistent` 与「等齐 N 条消息再原子消费」，本质是在**重新发明 ObjectStore 已有的东西**——
 
 > **版本历史 = 累加器 + 计数器 + 择优的候选集。**
 
 `plan@3` 就是第三轮；三路各写一版，读到满三条就是等齐。而且它比节点内状态好：已版本化、已可观测、已进因果记录、跨实例可见。节点内 persistent 是个藏起来的私有状态 —— 正是本项目一路在消灭的那类东西。
+
+第 5 次归约的判据同样是"少一套并存机制"：早期稿想让内核**中介** agent 的每个工具调用，
+于是要声明工具集、建工具桥、定线协议。改成**在沙箱里跑一条命令行、从外面用 git 观察**之后，
+这三样一起没了 —— 而且观测反而更强：**git diff 不需要 agent 配合，也骗不了**（§14.4）。
 
 ---
 
@@ -51,7 +56,7 @@ V5 的落点是**端口变量声明**：一个 agent 能看到什么 = 它的端
 
 | # | 目标 | 主要落点 | 状态 |
 |---|---|---|---|
-| G1 | AI 经 MCP 自动搭建工作流 | 统一 json 配置；注册期 LLM 可读错误；八部分开放为 MCP 工具 | 🚧 校验已有，MCP 未做 |
+| G1 | AI 经 MCP 自动搭建工作流 | 统一 json 配置；注册期 LLM 可读错误（`hertaloy validate`）；八部分开放为 MCP 工具 | 🚧 校验 + CLI 已有，MCP 未做 |
 | G2 | 自动进化 | 容器版本管理（多层继承）；提案/审批；标注检索 | 📋 |
 | G3 | 人有完整权限 | 根容器 MCP 全权；审批；强制截断；变更进版本可回滚 | 🚧 截断已有 |
 | G4 | 画布渲染修改 + 实时进度 | `_layout` 独立版本；锁表直接渲染；观测投影 | 📋 |
@@ -75,7 +80,7 @@ V5 的落点是**端口变量声明**：一个 agent 能看到什么 = 它的端
 | 6 | 向控制隧道发审批 REQUEST → 记一把 `request` 锁 | 审批不是新锁种 | 🚧 锁 ✅ / 控制面容器 📋 |
 | 7 | 审批 REPLY 到达 → 锁销账 | 锁释放 | ✅ |
 | 8 | 容器工具按 `plan@2` 建 **3 个 coder 实例**并各派一份活 | 容器嵌套；扇出 | ✅ |
-| 9 | coder#2 向 `skill.discovery` 发 REQUEST | 网关；隧道寻址 | ✅ |
+| 9 | coder#2 向 `skill.discovery` 发 REQUEST | 网关；隧道寻址 | 🚧 handler ✅ / **agent 侧待沙箱（§14）** |
 | 10 | 发现服务回复 → skill 作为 long 变量进上下文 | 资产即变量 | ✅ |
 | 11 | metrics 节点**订阅自己子树** | traceid 作用域过滤 | ✅ |
 | 12 | 三路各写一版 `results`；merge 用 `collect` 汇聚 | **版本历史即汇聚** | ✅ 跨实例已钉住 |
@@ -577,8 +582,11 @@ run/job-1@7                 内核 kind，保留前缀
 | 层 | 做什么 | 状态 |
 |---|---|---|
 | **声明** | `bind` 段的 `workspace` / `scope` 变量，画布可见、随容器进版本 | ✅ 机制在 |
-| **强制** | tool executor：根限制、越界拒绝、截断、超时、shell 开关 | 📋 待从 V4 迁 |
-| **存档** | tool executor 的实现细节，**内核仍不认识 git** | 📋 |
+| **强制** | **沙箱**（§14.5）—— 不是 tool executor。有原生工具的 agent 拦不住，只能靠隔离 | 📋 |
+| **观察** | **沙箱外的 git**（§14.4）——**内核仍不认识 git**，是适配层在用 | 📋 |
+
+早期稿把强制放在 tool executor 上，那是错的：**外部 agent 用的是自己的工具，
+executor 拦不到它**。唯一真强制是沙箱边界。
 
 ---
 
@@ -592,52 +600,110 @@ run/job-1@7                 内核 kind，保留前缀
 
 ---
 
-## 14. 适配层：backend 与命令行工具 📋
+## 14. 执行面：沙箱 + 命令行
 
-执行面通过窄接口接入，可换 backend。这一层 V4 已被真实模型验证，**接口形状继承，实现待迁**：
+> **agent 就是一条命令行。**`claude <args>` / `codex <args>` / `hertaloy agent <args>`
+> **三者平权**，没有谁是特例。内核不认识它们各自的工具。
 
-| Backend | 形态 | 状态 |
+这一节取代了早期稿的"backend 矩阵 + 内核工具桥"。那套想**替代/中介** agent 的工具，
+现在的做法是**注入 + 自由 + 记录**：给它上下文，让它用自己的工具，从外面观察它干了什么。
+
+**第五次归约**：内核工具（`read_artifact` / `publish` / `spawn`）→ **端口 + 变量 + 观测**。
+agent 的编排面动作已经能用端口表达（emit 到 `tunnel+callback` 端口就是发 REQUEST），
+所以那套工具桥与 `kernel_tool ⇄ kernel_tool_result` 线协议**整个不需要**。
+
+> 第一不变量管的是**编排面**（地址 / 能力 / 契约 / 锁），不是执行面。
+> agent 用自己的 `read_file` 不构造任何地址；它 emit 到哪个端口才是编排面的事，
+> 那个仍然是声明出来的。两者不冲突。
+
+### 14.1 四个命令行面 📋
+
+| 面 | 跑在哪 | 干什么 |
 |---|---|---|
-| Mock / Fake | in-process | ✅ 测试用 |
-| OpenAI 兼容 | in-process | 📋 V4 有 driver，DeepSeek 实测跑通 |
-| pi（低层 Agent API） | in-process | 📋 V4 有 faux + 真实探针 |
-| **Subprocess CLI** | 子进程 + 线协议 | 📋 **给 Claude Code / Codex 等只能子进程的 backend** |
+| `hertaloy <控制面命令>` | 宿主机 | 定义 / 实例 / 观测 / 截断；MCP server；卡片资产管理 |
+| **`hertaloy agent`** | **沙箱内** | 我们自己的 agent 实现，与外部 CLI 平权 |
+| `claude` / `codex` / … | 沙箱内 | 外部 agent，内核不认识它们的工具 |
+| 沙箱运行器 | 宿主机 | `local` / `wsl` / `docker` —— 同一形状：隔离环境里跑 argv + 挂一个目录 |
 
-配套的**命令行工具执行器**（`read_file` / `write_file` / `list_dir` / `run_shell`）：工作区根限制、越界拒绝、输出截断、超时、shell 需显式开关。V4 已有实现，待迁。
+**同一个二进制两种角色**：`hertaloy` 在宿主机上是控制面，在沙箱里是 agent。
+这不是巧合 —— 平权要求我们自己的 agent 也只是"一条命令行"。
 
-统一 wrapper 在 backend 外层强制：limits（wall_clock / max_tool_calls）、`INVALID_OUTPUT` 重试、事件采集、异常→FAILED 分类。
+### 14.2 沙箱契约 📋
 
-> **backend 是不可信边界** ✅：返回值必须运行时校验形状、`executionId` 串号、**禁止伪造内核保留 kind**；产物全部校验通过才提交。
-
-### 14.0 命令行 `hertaloy` 🚧
+内核与 agent CLI 之间是一份**目录契约**，像 Docker 的 entrypoint 约定：
 
 ```
-hertaloy validate <template.json>   干跑校验，不落库  ← G1 自我修正的出口
-hertaloy run <scenario.json>        一次性场景跑完并打印报告
+沙箱/
+  workspace/              真实项目文件（工作树，.git 在外面）
+  .hertaloy/
+    context/              ← 注入（按 profile 渲染）
+    request.json          ← 允许的 emit 端口、预算、traceid
+    emit.json             → agent 写这里表达输出（端口名 → 载荷）
+    artifacts/            → 放这里的文件被收成版本化资产
 ```
 
-`validate` **不落库**：助手 AI 生成模板后自己跑一遍拿 LLM 可读错误，改完再提交，
-不必先污染对象库。这正对着 V4 那条实质缺陷（`propose` 不校验 ⇒ 人成了 AI 的语法检查器）。
+不变量都不破：`emit.json` 的键校验 ⊆ `allowed_emit_ports`（第一不变量）；
+变量落成文件后上界照算（B1）。
 
-**当前是"一次性场景"而非有状态子命令，因为还没有持久化** —— `define` 完再 `run`
-是两个进程，第二个不记得第一个做了什么。这是诚实的限制，不是设计选择；
-持久化落地后拆成有状态子命令。
+### 14.3 适配 = 把卡片渲染成各家认识的文件 📋
 
-CLI 只能跑**内置 handler** 组成的图（`collect` / `loop` / `echo` / `noop`）——
-受信 handler 是服务端注册的代码，不可能从 json 里递一段逻辑进来，
-那正是"只能选不能构造"的边界。这个内置库同时是**开发指南三种标准写法的落点**。
+**不同 agent CLI 认不同的文件约定，适配层就是渲染器 —— 不是特例代码，是配置。**
 
-### 14.1 五种终止原因不能混成一种 ✅
+| 卡片 | `claude-code` | `codex` | `hertaloy-agent` |
+|---|---|---|---|
+| rules | `CLAUDE.md` | `AGENTS.md` | `.hertaloy/context/rules.md` |
+| skill | `.claude/skills/<n>/SKILL.md` | 追加进 `AGENTS.md` | `.hertaloy/context/skills/` |
+| mcp | `.mcp.json` | — | `.hertaloy/context/mcp.json` |
+| session | `--resume <id>` | 各家自己的 | 原生 |
+| **教它写 emit** | **注入一条 skill** | 同左 | 原生懂 |
+
+最后一行是关键：**让外部 agent 学会我们的输出契约，靠的就是 skill 注入机制本身**。
+草稿 line 3 那句「之后调用直接上下文尾部补充，**并落在 agent.md**」说的就是这件事。
+
+### 14.4 记录靠沙箱外的 git 📋
+
+```bash
+git --git-dir=<沙箱外的记录仓> --work-tree=<沙箱>/workspace  diff
+```
+
+`.git` 在沙箱外，工作树在沙箱内 —— **agent 看不到任何 `.git`，我们照样能观察**。
+这是 git 原生能力（等价写法：`GIT_DIR` + `GIT_WORK_TREE` 环境变量），不需要第三方工具。
+
+**比自报的 `observations` 强得多**：不需要 agent 配合，也骗不了。
+`observations` 字段仍然保留为补充（agent 主动汇报的不可干预内部工具调用），但主力是 git。
+
+| 需求 | 工具 |
+|---|---|
+| 沙箱不可见的版本观察 | **`git --git-dir` 外置**（原生） |
+| 多 agent 并行改同一仓 | `git worktree`（共享 .git，各自工作树） |
+| 写时复制层（真镜像层语义） | overlayfs（Linux） |
+| 轻量进程沙箱 | bubblewrap（Linux） |
+
+### 14.5 沙箱强度：要认的限制 ⚠️
+
+| 运行器 | 隔离强度 | 平台 |
+|---|---|---|
+| `local` | **目录限定，不是真隔离** —— 流氓 agent 能读出去 | 全平台 |
+| `wsl` | 文件系统与进程隔离 | Windows |
+| `docker` | 完整容器隔离，可加网络与资源限制 | 全平台（需装） |
+
+**`local` 只适合本机开发，不能当安全边界。**这条要写在使用文档最显眼处。
+
+### 14.6 五种终止原因不能混成一种 ✅
 
 判据是**"重试会不会有不同结果"**，不是"错在哪一层"：
 
 | 类 | 成员 | 处理 |
 |---|---|---|
-| **可重试** | `FAILED`（真故障）· `INVALID_OUTPUT`（模型没按 schema 出） | 按 `maxAttempts` 重试 |
+| **可重试** | `FAILED`（真故障）· `INVALID_OUTPUT`（没按契约出） | 按 `maxAttempts` 重试 |
 | **不重试·意图** | `CANCELLED` · `BUDGET` | 消息 DISCARDED |
 | **不重试·确定错** | 变量超上界、卡片解析失败 | 直接失败 |
 
-同步路径（受信 handler）不重试，agent 路径有 attempts —— 这个不对称是**故意的**：受信代码失败是编程错误。
+同步路径（受信 handler）不重试，agent 路径有 attempts —— 这个不对称是**故意的**：
+受信代码失败是编程错误。
+
+> **backend 是不可信边界** ✅：返回值必须运行时校验形状、`executionId` 串号、
+> **禁止伪造内核保留 kind**；产物全部校验通过才提交。
 
 ---
 
@@ -704,16 +770,20 @@ CLI 只能跑**内置 handler** 组成的图（`collect` / `loop` / `echo` / `no
 | ~~B~~ | ~~eager 物化继承 + 路径覆盖解析~~ | — | ✅ **已完成** |
 | ~~C~~ | ~~DDL/DML/DQL 分层 + 前缀 scope 授权~~ | — | ✅ **已完成** |
 | ~~G~~ | ~~容器工具：从节点内建子容器~~ | — | ✅ **已完成** |
+| **S** | **沙箱 backend**：契约目录 + 运行器（local/wsl/docker）+ 外置 git 观察 | — | §14，**执行面的地基** |
+| **P** | **profile 渲染器**：卡片 → CLAUDE.md / AGENTS.md / .mcp.json / skills/ | S | §14.3，适配的全部内容 |
+| **A2** | **`hertaloy agent`**：我们自己的 agent CLI（V4 的 openai-compat driver 转过来） | S | 平权的另一半 |
 | **H** | 控制面容器（人是容器）→ 接通审批链路 | — | 帧 6 |
-| **I** | **适配层迁移**：subprocess backend + tool executors + 文件范围强制 | 工具声明定形 | §14，V4 有现成实现 |
-| **J** | `_layout` 独立版本 + 观测投影补齐 | B | G4 |
-| **K** | MCP 工具层（八部分开放出去） | C | G1 |
-| **L** | **agent 侧工具**：内核工具声明（`tools`/`publish_topics`/`spawn_slots`）+ 工具桥 | — | **agent 现在除了 emit 什么都不能做，最大缺口** |
+| **J** | `_layout` 独立版本 + 观测投影补齐 | — | G4 |
+| **K** | MCP 工具层（控制面开放出去） | — | G1 |
 | **D** | 开发指南文字部分（可运行例子 + CLI 内置库已有） | — | 含"聚合只在同步 handler 里做" |
 | — | 持久化、崩溃恢复、claim 接管 | 全部 | 未排期 |
 | — | 服务端、实时事件、画布 | K | 未排期 |
 
-**开工顺序：~~F~~ → ~~B~~ → ~~C~~ → ~~G~~ → I。**内核侧四批已完成；剩下的主要是适配层（I）与对外面（H/J/K）。
+**开工顺序：~~F~~ → ~~B~~ → ~~C~~ → ~~G~~ → S → P → A2。**
+
+内核侧四批已完成。接下来是执行面：**S（沙箱 backend）是地基** —— 它打通契约之后，
+P（profile 渲染）与 A2（自己的 agent CLI）都只是往上填，`claude` 也能立刻接上去试。
 
 ### V4 迁移纪律（批 I）
 

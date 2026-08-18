@@ -24,7 +24,7 @@ packages/kernel     121 条   store · tx · instances · locks · context · ex
 pnpm test / pnpm typecheck / pnpm hertaloy <run|validate> <file>
 ```
 
-尚未具备：
+尚未具备：执行面沙箱（agent 目前只能 emit，见 FOUNDATION §14）、
 持久化与崩溃恢复、MCP / 服务端 / 画布 / 真实 backend。
 当前是**内核实验切片，不是可用工作流系统**。
 
