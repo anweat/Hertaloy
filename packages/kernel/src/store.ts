@@ -65,14 +65,32 @@ function snapshot<T>(value: T): T {
   return deepFreeze(structuredClone(value));
 }
 
+/**
+ * 去重键。NUL 做分隔符是因为它不可能出现在 object_id 或十六进制哈希里。
+ * 抽成函数是因为 `put` 与 `load` 必须用**同一条**规则 —— 两处各写一遍就会漂移。
+ */
+function dedupeKey(objectId: string, hash: string): string {
+  return `${objectId}\u0000${hash}`;
+}
+
 interface StoreSnapshot {
   readonly lengths: ReadonlyMap<string, number>;
   readonly hashKeys: ReadonlySet<string>;
+  readonly logLength: number;
 }
 
 export class ObjectStore implements Snapshotable {
   readonly #byObject = new Map<string, ObjectVersion[]>();
   readonly #byHash = new Map<string, ObjectVersion>();
+  /**
+   * 入库顺序的追加日志 —— **增量刷盘的游标**（§17.4）。
+   *
+   * `#byObject` 只有"每个对象的版本序列"，没有跨对象的先后，所以答不出
+   * "上次刷盘之后新增了哪些版本"。没有它，每次落盘就得重写整个对象库。
+   *
+   * 不额外占空间：装的是与 `#byObject` 同一批冻结对象的引用。
+   */
+  readonly #log: ObjectVersion[] = [];
 
   /**
    * append-only ⇒ 快照只需记住每个 object 的长度和已有的 hash 键；
@@ -81,11 +99,12 @@ export class ObjectStore implements Snapshotable {
   snapshot(): StoreSnapshot {
     const lengths = new Map<string, number>();
     for (const [id, versions] of this.#byObject) lengths.set(id, versions.length);
-    return { lengths, hashKeys: new Set(this.#byHash.keys()) };
+    return { lengths, hashKeys: new Set(this.#byHash.keys()), logLength: this.#log.length };
   }
 
   restore(snap: unknown): void {
-    const { lengths, hashKeys } = snap as StoreSnapshot;
+    const { lengths, hashKeys, logLength } = snap as StoreSnapshot;
+    this.#log.length = logLength;
     for (const [id, versions] of [...this.#byObject]) {
       const keep = lengths.get(id) ?? 0;
       if (keep === 0) this.#byObject.delete(id);
@@ -107,8 +126,8 @@ export class ObjectStore implements Snapshotable {
       throw new InvariantError(`object_id 不得含 '@'（版本由内核追加）：${objectId}`);
     }
     const hash = contentHash(body);
-    const dedupeKey = `${objectId}\u0000${hash}`;
-    const existing = this.#byHash.get(dedupeKey);
+    const key = dedupeKey(objectId, hash);
+    const existing = this.#byHash.get(key);
     if (existing !== undefined) return existing;
 
     const versions = this.#byObject.get(objectId) ?? [];
@@ -123,8 +142,46 @@ export class ObjectStore implements Snapshotable {
     });
     versions.push(version);
     this.#byObject.set(objectId, versions);
-    this.#byHash.set(dedupeKey, version);
+    this.#byHash.set(key, version);
+    this.#log.push(version);
     return version;
+  }
+
+  /** 已入库的版本总数 —— 刷盘游标就是这个数（§17.4）。 */
+  get appendCount(): number {
+    return this.#log.length;
+  }
+
+  /** 第 `since` 个之后新增的版本，按入库顺序。刷盘只写这一段。 */
+  appended(since: number): readonly ObjectVersion[] {
+    return this.#log.slice(since);
+  }
+
+  /**
+   * 从磁盘装回版本 —— **逐字节原样**，不重新分配版本号。
+   *
+   * 与 `put` 的区别正在这里：`put` 是"提交一份新内容"，版本号由内核给；
+   * `load` 是"把已经发生过的事实读回来"，版本号是事实的一部分。
+   * 走 `put` 装载会在任何一次去重命中时把后续版本号全体前移 —— 于是
+   * 磁盘上的 `@3` 变成内存里的 `@2`，所有 `Ref` 集体失效。
+   *
+   * 顺带做**完整性校验**：版本号必须从 1 起连续。磁盘上缺一个文件
+   * （拷贝拷漏了、GC 删错了）在这里当场炸，而不是等某个 `read(ref)` 才炸。
+   */
+  load(versions: readonly ObjectVersion[]): void {
+    for (const version of versions) {
+      const existing = this.#byObject.get(version.object_id) ?? [];
+      if (version.version !== existing.length + 1) {
+        throw new InvariantError(
+          `对象 ${version.object_id} 的版本不连续：装到第 ${existing.length + 1} 版时读到 @${version.version}`,
+        );
+      }
+      const frozen = deepFreeze(version);
+      existing.push(frozen);
+      this.#byObject.set(version.object_id, existing);
+      this.#byHash.set(dedupeKey(version.object_id, version.content_hash), frozen);
+      this.#log.push(frozen);
+    }
   }
 
   get(objectId: string, version: number): ObjectVersion {
