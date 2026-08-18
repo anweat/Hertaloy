@@ -17,10 +17,11 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 批 0（事务化提交）、A（资产 ctx）、F（对象命名空间）、B（物化继承）、C（权限）、G（容器工具）已落地。
 
 ```
+packages/cli           7 条   hertaloy validate / run（内置 handler 库）
 packages/contracts   51 条   身份/路径/变量/端口/消息/契约/模板/执行面 schema
 packages/kernel     121 条   store · tx · instances · locks · context · extract · routing · runtime · control
-合计                172 条   typecheck 绿，离线，无数据库/网络/真实模型
-pnpm test / pnpm typecheck
+合计                179 条   typecheck 绿，离线，无数据库/网络/真实模型
+pnpm test / pnpm typecheck / pnpm hertaloy <run|validate> <file>
 ```
 
 尚未具备：
