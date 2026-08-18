@@ -13,6 +13,7 @@
  */
 
 import { z } from "zod";
+import { Json } from "./json.js";
 import { Ref, TraceId, Tunnel, isDescendantOf } from "./identity.js";
 import { BindBlock, declaredBudget } from "./variable.js";
 import { PortMap, allowedEmitPorts } from "./port.js";
@@ -278,4 +279,93 @@ export function validateContainerTemplate(
   }
 
   return issues;
+}
+
+// ---------------------------------------------------------------------------
+// 多层继承：路径覆盖 + eager 物化（§5.1）
+// ---------------------------------------------------------------------------
+
+export const OVERRIDE_PATH_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*(?:\/[A-Za-z_][A-Za-z0-9_-]*)*$/;
+
+/**
+ * 覆盖层：只声明"基于哪份定义、改哪几条路径"。
+ *
+ * 容器定义是路径寻址的（`nodes/coder/budget/tokens`），所以子容器不必抄整份，
+ * 只覆盖若干路径。这是"版本管理（多层继承）"这一部分的落点。
+ */
+export const TemplateOverlay = z
+  .object({
+    extends: Ref,
+    override: z.record(z.string(), Json).default({}),
+  })
+  .strict();
+
+export type TemplateOverlay = z.infer<typeof TemplateOverlay>;
+
+export function isOverlay(spec: unknown): boolean {
+  return typeof spec === "object" && spec !== null && "extends" in spec;
+}
+
+export type OverlayOutcome =
+  | { readonly ok: true; readonly merged: ContainerTemplate }
+  | { readonly ok: false; readonly issues: readonly TemplateIssue[] };
+
+/**
+ * 把覆盖层施加到基定义上。**纯函数**：不改基，返回新的完整定义。
+ *
+ * 路径规则：
+ *   - 除最后一段外，**中间每一段必须已存在且是对象** —— 否则 `nodes/codr/budget`
+ *     这种拼写错误会静默造出一个假节点。宁可报错。
+ *   - **最后一段可以是新的** —— 这样才能用覆盖层往基定义里加节点、加边。
+ */
+export function applyOverlay(base: ContainerTemplate, overlay: TemplateOverlay): OverlayOutcome {
+  const issues: TemplateIssue[] = [];
+  const merged = structuredClone(base) as unknown as Record<string, unknown>;
+
+  for (const [path, value] of Object.entries(overlay.override)) {
+    if (!OVERRIDE_PATH_PATTERN.test(path)) {
+      issues.push({
+        where: `override.${path}`,
+        message: "覆盖路径必须是 `/` 分隔的标识符，如 `nodes/coder/budget/tokens`",
+      });
+      continue;
+    }
+    const segments = path.split("/");
+    const leaf = segments.pop() as string;
+    let cursor: Record<string, unknown> = merged;
+    let bad = false;
+
+    for (const [depth, seg] of segments.entries()) {
+      const next = cursor[seg];
+      if (next === undefined || next === null || typeof next !== "object" || Array.isArray(next)) {
+        const walked = segments.slice(0, depth).join("/");
+        issues.push({
+          where: `override.${path}`,
+          message:
+            `中间路径 \`${segments.slice(0, depth + 1).join("/")}\` 在基定义里不存在或不是对象。` +
+            `可用键：${Object.keys(cursor).sort().join(", ") || "（无）"}` +
+            (walked === "" ? "" : `（已走到 \`${walked}\`）`),
+        });
+        bad = true;
+        break;
+      }
+      cursor = next as Record<string, unknown>;
+    }
+    if (bad) continue;
+    cursor[leaf] = value as unknown;
+  }
+
+  if (issues.length > 0) return { ok: false, issues };
+
+  const parsed = ContainerTemplate.safeParse(merged);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      issues: parsed.error.issues.map((i) => ({
+        where: `merged.${i.path.join(".") || "(根)"}`,
+        message: i.message,
+      })),
+    };
+  }
+  return { ok: true, merged: parsed.data };
 }

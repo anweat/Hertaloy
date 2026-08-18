@@ -14,16 +14,16 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 
 设计门已收束。Task 1–6 完成，**Checkpoint A / B 均通过**；外部审核轮七条 P1 已修。
 此后经历**第四次归约**：策略节点删除，汇聚 / 循环计数 / 择优改由「版本历史即状态」承担。
-批 0（事务化提交）、A（资产 ctx）、F（对象命名空间）已落地。
+批 0（事务化提交）、A（资产 ctx）、F（对象命名空间）、B（物化继承）已落地。
 
 ```
 packages/contracts   51 条   身份/路径/变量/端口/消息/契约/模板/执行面 schema
-packages/kernel      90 条   store · tx · instances · locks · context · extract · routing · runtime
-合计                141 条   typecheck 绿，离线，无数据库/网络/真实模型
+packages/kernel     102 条   store · tx · instances · locks · context · extract · routing · runtime
+合计                153 条   typecheck 绿，离线，无数据库/网络/真实模型
 pnpm test / pnpm typecheck
 ```
 
-尚未具备：容器工具（从节点内建子容器）、eager 物化继承、权限、
+尚未具备：容器工具（从节点内建子容器）、权限、
 持久化与崩溃恢复、MCP / 服务端 / 画布 / 真实 backend。
 当前是**内核实验切片，不是可用工作流系统**。
 

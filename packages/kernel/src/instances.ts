@@ -16,6 +16,9 @@
 
 import {
   ContainerTemplate,
+  TemplateOverlay,
+  applyOverlay,
+  isOverlay,
   type JsonObject,
   type Ref,
   type TraceId,
@@ -240,6 +243,9 @@ export function registerContainerTemplate(
   spec: unknown,
   kind = "container_template",
 ): Ref {
+  // 覆盖层：解析继承链 → 施加 → 校验合并结果 → 存成物化定义（§5.1）
+  if (isOverlay(spec)) return materializeOverlay(store, templateId, spec);
+
   const parsed = ContainerTemplate.safeParse(spec);
   if (!parsed.success) {
     throw new InvariantError(
@@ -282,4 +288,70 @@ export function namespacedId(trace: TraceId, name: string): string {
     }
   }
   return `${trace}/${name}`;
+}
+
+/**
+ * **eager 物化继承**（不变量 C4 / §5.1）。
+ *
+ * 覆盖层在**注册时**就解析成一份完整定义并落成 `kind="materialized"` 的版本，
+ * 实例 pin 的是这份物化产物。于是：
+ *
+ *   - 改基模板 → 发新版本 → **已有实例与已注册的物化定义都不受影响**
+ *   - 物化产物本身是版本化对象 ⇒ 可回溯、可 diff、可作画布真相源
+ *   - `provenance.derived_from` 记住基定义，继承链可追
+ *
+ * 选 eager 而不是 lazy 的理由：lazy 每次读走继承链，会**让 C4 的 pin 变成谎言**
+ * —— 实例说自己定版了，读出来的东西却会随基模板变。
+ *
+ * 在注册时物化（而不是等到实例化）比设计稿更严一格：它让"注册即完整校验"
+ * 这条继续成立，实例化只负责 pin 一个已经验证过的 ref。
+ */
+function materializeOverlay(store: ObjectStore, templateId: string, spec: unknown): Ref {
+  const parsedOverlay = TemplateOverlay.safeParse(spec);
+  if (!parsedOverlay.success) {
+    throw new InvariantError(
+      `覆盖层 ${templateId} 结构非法：${parsedOverlay.error.issues
+        .map((i) => `${i.path.join(".") || "(根)"} ${i.message}`)
+        .join("；")}`,
+    );
+  }
+  const overlay = parsedOverlay.data;
+
+  let baseVersion;
+  try {
+    baseVersion = store.resolve(overlay.extends);
+  } catch {
+    throw new InvariantError(
+      `覆盖层 ${templateId} 的 extends 指向未知定义：${overlay.extends}`,
+    );
+  }
+  const base = ContainerTemplate.safeParse(baseVersion.body);
+  if (!base.success) {
+    throw new InvariantError(
+      `覆盖层 ${templateId} 的基定义 ${overlay.extends} 不是合法容器模板`,
+    );
+  }
+
+  const outcome = applyOverlay(base.data, overlay);
+  if (!outcome.ok) {
+    throw new InvariantError(
+      [`覆盖层 ${templateId} 施加失败：`, ...outcome.issues.map((i) => `${i.where}：${i.message}`)].join("\n  "),
+    );
+  }
+
+  // 合并结果必须过与基定义**同一套**连接期校验 —— 覆盖不是逃生舱
+  const issues = validateContainerTemplate(outcome.merged);
+  if (issues.length > 0) {
+    throw new InvariantError(
+      [`覆盖层 ${templateId} 的合并结果连接期校验失败：`, ...issues.map((i) => `${i.where}：${i.message}`)].join("\n  "),
+    );
+  }
+
+  const version = store.put(
+    templateId,
+    "materialized",
+    outcome.merged as unknown as JsonObject,
+    { at_seq: 0, derived_from: [overlay.extends] },
+  );
+  return `${version.object_id}@${version.version}`;
 }
