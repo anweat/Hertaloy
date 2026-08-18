@@ -72,6 +72,18 @@ export function writeContext(p: SandboxPaths, files: Readonly<Record<string, str
   }
 }
 
+/**
+ * 写沙箱内任意位置的文件，路径**相对沙箱根**。
+ *
+ * profile 渲染要用它 —— `CLAUDE.md` 得落在 `workspace/` 里，不在 `context/`。
+ * 越界校验与 `writeContext` 同规。
+ */
+export function writeSandboxFile(p: SandboxPaths, rel: string, content: string): void {
+  const target = safeJoin(p.root, rel);
+  mkdirSync(join(target, ".."), { recursive: true });
+  writeFileSync(target, content, "utf8");
+}
+
 export function writeRequest(p: SandboxPaths, request: unknown): void {
   writeFileSync(p.request, `${JSON.stringify(request, null, 2)}\n`, "utf8");
 }

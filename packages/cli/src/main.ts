@@ -10,10 +10,12 @@
 
 import { readFileSync } from "node:fs";
 import { run, validate } from "./commands.js";
+import { diagnose, formatChecks } from "./doctor.js";
 
 const USAGE = `hertaloy —— Nodeflow V5 命令行
 
 用法：
+  hertaloy doctor                     环境自检（node / git / wsl / docker / profiles）
   hertaloy validate <template.json>   校验容器模板，不落库
   hertaloy run <scenario.json>        跑一个一次性场景并打印报告
 
@@ -32,6 +34,13 @@ function main(argv: readonly string[]): number {
   if (command === undefined || command === "help" || command === "--help") {
     process.stdout.write(USAGE);
     return 0;
+  }
+  if (command === "doctor") {
+    const checks = diagnose();
+    const blocked = checks.some((c) => !c.ok && c.blocking);
+    (blocked ? process.stderr : process.stdout).write(`${formatChecks(checks)}
+`);
+    return blocked ? 1 : 0;
   }
   if (file === undefined) {
     process.stderr.write(`缺少文件参数。\n\n${USAGE}`);

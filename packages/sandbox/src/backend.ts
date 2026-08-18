@@ -21,7 +21,9 @@ import {
   readEmit,
   writeContext,
   writeRequest,
+  writeSandboxFile,
 } from "./layout.js";
+import { resolveProfile } from "./profile.js";
 import { gitAvailable, initObserver, observe, type Observation } from "./observe.js";
 import { LocalRunner, type RunOutcome, type Runner } from "./runner.js";
 
