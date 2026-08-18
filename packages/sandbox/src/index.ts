@@ -4,3 +4,5 @@ export * from "./observe.js";
 export * from "./backend.js";
 export * from "./wsl.js";
 export * from "./profile.js";
+export * from "./network.js";
+export * from "./docker.js";

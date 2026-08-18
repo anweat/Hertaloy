@@ -83,7 +83,25 @@ export type EdgeDefinition = z.infer<typeof EdgeDefinition>;
  * 它指向的是**子模板里的**节点与端口，所以校验必须跨模板做 —— 见
  * `registerContainerTemplate`（纯结构校验在 contracts，跨引用校验在 kernel）。
  */
-export const ChildSlot = z.object({ template: Ref, entry: PortRef.optional() }).strict();
+export const ChildSlot = z
+  .object({
+    template: Ref,
+    /** 子容器的入口端点（指向**子模板**里的节点/端口）。 */
+    entry: PortRef.optional(),
+    /**
+     * 回程：子实例进终态时，往**父容器自己**的这个端点投一条通知。
+     *
+     * 没有它，子干完活父就完全不知道 —— `settle` 只释放锁，不叫醒任何人。
+     * 剧本帧 12（三路汇聚）会因此断链：merge 节点永远等不到触发。
+     *
+     * 载荷只是**通知**（`{slot, traceid, status}`），不带子容器的产出 ——
+     * 内容在资产里，父用 `ctx.collect` 取（C5：版本历史即状态）。
+     *
+     * 与 `entry` 方向相反：`entry` 指子模板，`exit` 指**本模板**。
+     */
+    exit: PortRef.optional(),
+  })
+  .strict();
 export type ChildSlot = z.infer<typeof ChildSlot>;
 
 /**
@@ -262,6 +280,22 @@ export function validateContainerTemplate(
         message:
           `变量声明上界合计 ${total} tokens，超出节点预算 ${node.budget.tokens}。` +
           `这说明图切得太粗 —— 拆节点，或调小某个变量的 max_tokens`,
+      });
+    }
+  }
+
+  // 子槽的 exit 指向**本模板**的 receive 端口（与 entry 方向相反）
+  for (const [slotId, slot] of Object.entries(tpl.children)) {
+    if (slot.exit === undefined) continue;
+    const node = tpl.nodes[slot.exit.node];
+    const port = node?.ports[slot.exit.port];
+    if (node === undefined || port === undefined || port.direction !== "receive") {
+      issues.push({
+        where: `children.${slotId}.exit`,
+        message:
+          `回程落点 \`${slot.exit.node}.${slot.exit.port}\` 必须是**本容器**已声明的 receive 端口` +
+          `（exit 指本模板，entry 才指子模板）。可用节点：` +
+          `${Object.keys(tpl.nodes).sort().join(", ") || "（无）"}`,
       });
     }
   }

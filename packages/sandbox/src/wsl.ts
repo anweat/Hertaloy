@@ -49,6 +49,8 @@ export class WslRunner implements Runner {
   readonly kind = "wsl";
   /** 文件系统与进程隔离 —— 与 `local` 的实质差别就在这。 */
   readonly isolates = true;
+  /** WSL 跟宿主机共用一张网，拦不住出网 —— 要控出网得用 docker。 */
+  readonly enforcesNetwork = false;
   readonly #distro: string;
   readonly #innerRoot: string;
 

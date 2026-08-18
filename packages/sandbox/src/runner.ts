@@ -40,6 +40,15 @@ export interface Runner {
   readonly isolates: boolean;
 
   /**
+   * 能不能**强制**出网策略。
+   *
+   * 必填、不给默认值：默认成 true 就等于让"忘了实现"冒充"实现了"。
+   * `local` / `wsl` 跟宿主机同一张网，只能声明不能强制 —— 它们报 false，
+   * backend 把这条写进 diagnostics（§14.5）。
+   */
+  readonly enforcesNetwork: boolean;
+
+  /**
    * 分配一个沙箱根，返回**宿主机可见**的路径（Node 的 fs 用它）。
    *
    * 沙箱住哪归 runner 管：`local` 放宿主机临时目录，`wsl` 放 **WSL 自己的
@@ -105,6 +114,7 @@ function killTree(pid: number): void {
 export class LocalRunner implements Runner {
   readonly kind = "local";
   readonly isolates = false;
+  readonly enforcesNetwork = false;
   readonly #prefix: string;
 
   constructor(workRoot: string = tmpdir()) {

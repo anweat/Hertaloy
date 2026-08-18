@@ -58,6 +58,14 @@ export interface SandboxOptions {
 export interface SandboxDiagnostics {
   readonly runner: string;
   readonly isolates: boolean;
+  /**
+   * 这次跑的出网**实际**受不受控。
+   *
+   * 与 `isolates` 分两个字段而不是合成一个"安全吗"：文件系统隔离和网络隔离
+   * 是两堵不同的墙，wsl 有前者没后者。合成一个布尔会让"隔离了但能出网"
+   * 无法表达 —— 而那正是最常见的一档。
+   */
+  readonly networkEnforced: boolean;
   readonly exitCode: number | null;
   readonly stdoutTail: string;
   readonly stderrTail: string;
@@ -80,6 +88,7 @@ export class SandboxBackend implements ExecutionBackend {
       return this.#fail(request, "INVALID_OUTPUT", {
         runner: this.#runner.kind,
         isolates: this.#runner.isolates,
+        networkEnforced: this.#runner.enforcesNetwork,
         exitCode: null,
         stdoutTail: "",
         stderrTail: `agentSpec 不是合法的沙箱规格：${parsed.error.issues
@@ -145,6 +154,7 @@ export class SandboxBackend implements ExecutionBackend {
       const diagnostics: SandboxDiagnostics = {
         runner: this.#runner.kind,
         isolates: this.#runner.isolates,
+        networkEnforced: this.#runner.enforcesNetwork,
         exitCode: outcome.code,
         stdoutTail: tail(outcome.stdout),
         stderrTail: tail(outcome.stderr),

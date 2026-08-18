@@ -38,6 +38,7 @@ import {
   formatContractIssues,
   formatJsonViolations,
   jsonViolations,
+  parentTrace as parentTrace_,
   scopeAccepts,
   validateContract,
 } from "@nodeflow/contracts";
@@ -754,10 +755,40 @@ export class Runtime implements Snapshotable {
     if (instance.status !== "OPEN") return false;
     if (!this.canTerminate(trace)) return false;
 
-    this.#registry.setStatus(trace, "TERMINAL");
-    // 子终态 → 父的 child 锁销账（L1 第 2 种的对偶）
-    this.#ledger.releaseByKey("child", trace);
-    return true;
+    return transact(this.#parts, () => {
+      this.#registry.setStatus(trace, "TERMINAL");
+      // 子终态 → 父的 child 锁销账（L1 第 2 种的对偶）
+      this.#ledger.releaseByKey("child", trace);
+      this.#notifyParent(instance);
+      return true;
+    });
+  }
+
+  /**
+   * 子实例进终态 → 往父容器声明的 `exit` 端点投一条**通知**。
+   *
+   * 没有这一步，`settle` 只释放锁、不叫醒任何人：子干完活父完全不知道，
+   * 剧本帧 12（三路汇聚）会断链 —— merge 节点永远等不到触发。
+   *
+   * 载荷只是通知（谁、从哪个槽、什么状态），**不带子容器的产出** ——
+   * 内容在资产里，父用 `ctx.collect` 取（C5：版本历史即状态，
+   * 消息降级成通知）。
+   */
+  #notifyParent(child: ContainerInstance): void {
+    const parentTrace = parentTrace_(child.traceid);
+    if (parentTrace === null || child.slot === undefined) return;
+    if (!this.#registry.has(parentTrace)) return;
+
+    const parent = this.#registry.get(parentTrace);
+    if (parent.status !== "OPEN") return;
+
+    const exit = this.#registry.template(parentTrace).children[child.slot]?.exit;
+    if (exit === undefined) return;
+
+    this.#enqueue({
+      target: { traceid: parentTrace, node: exit.node, port: exit.port },
+      payload: { slot: child.slot, traceid: child.traceid, status: "TERMINAL" },
+    });
   }
 
   /**

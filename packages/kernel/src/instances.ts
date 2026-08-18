@@ -63,6 +63,8 @@ export interface ContainerInstance {
    * 否则 RunSnapshot 的 seq 会出现空洞。
    */
   readonly seq: number;
+  /** 从父容器的哪个子槽创建的。根实例没有。回程通知要靠它找 `exit` 声明。 */
+  readonly slot?: string;
 }
 
 export class InstanceRegistry implements Snapshotable {
@@ -140,7 +142,7 @@ export class InstanceRegistry implements Snapshotable {
     if (this.#instances.has(trace)) {
       throw new InvariantError(`实例已存在：${trace}`);
     }
-    return this.#materialize(trace, declared.template);
+    return this.#materialize(trace, declared.template, slot);
   }
 
   get(trace: TraceId): ContainerInstance {
@@ -199,7 +201,7 @@ export class InstanceRegistry implements Snapshotable {
     return next;
   }
 
-  #materialize(trace: TraceId, templateRef: Ref): ContainerInstance {
+  #materialize(trace: TraceId, templateRef: Ref, slot?: string): ContainerInstance {
     const template = this.#template(templateRef);
     const nodes = new Map<string, NodeInstance>();
     for (const nodeId of Object.keys(template.nodes)) {
@@ -212,6 +214,7 @@ export class InstanceRegistry implements Snapshotable {
       nodes,
       generation: 0,
       seq: 0,
+      ...(slot === undefined ? {} : { slot }),
     });
     this.#instances.set(trace, instance);
     return instance;
