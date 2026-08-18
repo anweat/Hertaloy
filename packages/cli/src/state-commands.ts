@@ -25,6 +25,9 @@ export interface CommandResult {
   readonly code: number;
 }
 
+/** drain 的交替轮次上限。到顶不代表完成 —— 见 drain 里的 converged。 */
+const MAX_ROUNDS = 100;
+
 const ok = (text: string): CommandResult => ({ text, code: 0 });
 const fail = (text: string): CommandResult => ({ text, code: 1 });
 
@@ -95,7 +98,15 @@ export function status(dir: string, actor: Principal): CommandResult {
       );
     }
 
-    const locks = control.locks(actor, root);
+    /**
+     * 锁与消息按**子树**汇总，不是只看根。
+     *
+     * 之前只统计 root 自己持有的锁、以及 `target.traceid === root` 的消息 ——
+     * 于是子实例卡住时，status 照样显示"阻塞锁 0、在途消息 0"。
+     * 一个只在根节点出问题时才说真话的状态命令，比没有更糟。
+     */
+    const subtree = control.subtree(actor, root);
+    const locks = subtree.flatMap((i) => control.locks(actor, i.traceid));
     lines.push("", `阻塞锁 ${locks.length} 把：`);
     for (const lock of locks) {
       lines.push(
@@ -104,10 +115,21 @@ export function status(dir: string, actor: Principal): CommandResult {
       );
     }
 
-    const pending = control.messages(actor, root).filter((m) => m.state === "QUEUED");
-    lines.push("", `在途消息 ${pending.length} 条：`);
-    for (const m of pending) {
-      lines.push(`  → ${m.target.traceid}/${m.target.node}.${m.target.port}`);
+    const inbox = subtree.flatMap((i) => control.messages(actor, i.traceid));
+    const pending = inbox.filter((m) => m.state === "QUEUED");
+    const claimed = inbox.filter((m) => m.state === "CLAIMED");
+    lines.push("", `在途消息 ${pending.length} 条（另有 ${claimed.length} 条已被 claim）：`);
+    for (const m of [...pending, ...claimed]) {
+      lines.push(
+        `  ${m.state === "CLAIMED" ? "⟳" : "→"} ${m.target.traceid}/${m.target.node}.${m.target.port}`,
+      );
+    }
+    const running = subtree.flatMap((i) =>
+      control.records(actor, i.traceid).filter((r) => r.status === "RUNNING"),
+    );
+    if (running.length > 0) {
+      lines.push("", `在跑的 execution ${running.length} 个：`);
+      for (const r of running) lines.push(`  ${r.executionId}  ${r.traceid}/${r.nodeId}`);
     }
 
     const deadlocks = s.runtime.locks.deadlocks();
@@ -182,56 +204,124 @@ export async function drain(
   actor: Principal,
   backend?: ExecutionBackend,
 ): Promise<CommandResult> {
-  const state = RunState.open(dir, backend === undefined ? {} : { backend });
-  try {
-    const root = state.registry.rootTrace;
-    if (root === null) return fail("空状态：没有根容器可推进。");
-    for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) {
-      state.runtime.registerHandler(name, fn);
-    }
+  type Step = { traceid: string; nodeId: string; reason?: string; retrying?: boolean };
+  const results: Step[] = [];
+  let settled: readonly string[] = [];
+  let converged = false;
 
-    type Step = { traceid: string; nodeId: string; reason?: string };
-    const results: Step[] = [];
+  /**
+   * 每一步都**重新开关状态目录**。
+   *
+   * 关键在于：跑 agent 时**不持锁**。此前 drain 开一次 RunState 就一直持有
+   * `head.lock` 到跑完，于是 agent 挂死 = 锁被永久占住 = `truncate` 拿不到锁 ——
+   * 刚承诺的"卡住的 run 杀得掉"当场失效（外部审核指出的 P0，属实）。
+   *
+   * 代价是频繁开关（每次都要读回对象库）。这是拿性能换控制面可用性，
+   * 而控制面在 agent 挂死时不可用，等于没有控制面。
+   */
+  const withState = <T>(fn: (s: RunState) => T): T => {
+    const state = RunState.open(dir, backend === undefined ? {} : { backend });
     try {
-      /**
-       * 同步 handler 与 agent **交替**推进到静止。
-       *
-       * 不能各跑一遍了事：handler 的输出会喂给 agent，agent 的输出又会喂回
-       * handler。一轮一轮来，直到两边都没活可干。
-       */
-      for (let round = 0; round < 100; round += 1) {
-        const sync = state.control.run(actor, root) as readonly Step[];
-        results.push(...sync);
-        const agents =
-          backend === undefined
-            ? ([] as readonly Step[])
-            : ((await state.control.runAgents(actor, root)) as readonly Step[]);
-        results.push(...agents);
-        if (sync.length === 0 && agents.length === 0) break;
-      }
-      const settled = state.control.settleAll(actor, root);
-      state.runtime.checkInvariants();
+      const out = fn(state);
       state.persist();
-
-      const failures = results.filter((r) => r.reason !== undefined);
-      const text =
-        `提交 ${results.length} 次，失败 ${failures.length} 次，` +
-        `终结 ${settled.length} 个实例。` +
-        (backend === undefined ? "\n（未配置执行面：agent 节点不会被推进，见 --runner）" : "") +
-        `\n可用内置 handler：${BUILTIN_NAMES.join(", ")}`;
-      return failures.length > 0
-        ? fail(
-            `${text}\n失败：\n` +
-              failures.map((f) => `  ${f.traceid}/${f.nodeId}：${String(f.reason)}`).join("\n"),
-          )
-        : ok(text);
-    } catch (error) {
-      if (error instanceof AuthorizationError) return fail(`拒绝：${error.message}`);
-      return fail(`推进失败：${(error as Error).message}`);
+      return out;
+    } finally {
+      state.close();
     }
-  } finally {
-    state.close();
+  };
+
+  try {
+    const root = withState((s) => {
+      for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) {
+        s.runtime.registerHandler(name, fn);
+      }
+      return s.registry.rootTrace;
+    });
+    if (root === null) return fail("空状态：没有根容器可推进。");
+
+    for (let round = 0; round < MAX_ROUNDS; round += 1) {
+      // 1. 同步 handler：全程持锁，反正不会阻塞
+      const sync = withState((s) => {
+        for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) {
+          s.runtime.registerHandler(name, fn);
+        }
+        return s.control.run(actor, root) as readonly Step[];
+      });
+      results.push(...sync);
+
+      // 2. agent：claim 持锁 → 放锁跑 → 重新拿锁 apply
+      let agentSteps = 0;
+      if (backend !== undefined) {
+        for (;;) {
+          const claimed = withState((s) => s.runtime.claimAgent());
+          if (claimed.kind === "idle") break;
+          if (claimed.kind === "rejected") {
+            results.push(claimed.failure as Step);
+            agentSteps += 1;
+            continue;
+          }
+          const { executionId } = claimed.record;
+
+          // ← 这里没有锁。agent 爱跑多久跑多久，truncate 随时能进来。
+          let raw: unknown;
+          let failure: string | null = null;
+          try {
+            raw = await backend.run(claimed.request);
+          } catch (error) {
+            failure = String(error);
+          }
+
+          const step = withState((s) =>
+            failure === null
+              ? s.runtime.applyAgentResult(executionId, raw)
+              : s.runtime.failAgentResult(executionId, "FAILED", failure),
+          );
+          results.push(step as Step);
+          agentSteps += 1;
+        }
+      }
+
+      if (sync.length === 0 && agentSteps === 0) {
+        converged = true;
+        break;
+      }
+    }
+
+    settled = withState((s) => {
+      const out = s.control.settleAll(actor, root);
+      s.runtime.checkInvariants();
+      return out;
+    });
+  } catch (error) {
+    if (error instanceof AuthorizationError) return fail(`拒绝：${error.message}`);
+    return fail(`推进失败：${(error as Error).message}`);
   }
+
+  /**
+   * 只有**不再重试**的失败才算流程失败。
+   *
+   * 之前把每次 attempt 的失败都算进去：一个第三次才成功的 agent 会让整条命令
+   * 退出码 1 —— 而重试成功正是重试机制该有的样子。
+   * attempt 失败是过程，terminal 失败才是结论。
+   */
+  const attempts = results.filter((r) => r.reason !== undefined);
+  const failures = attempts.filter((r) => r.retrying !== true);
+  const retried = attempts.length - failures.length;
+  const text =
+    `提交 ${results.length} 次，失败 ${failures.length} 次` +
+    (retried > 0 ? `（另有 ${retried} 次重试后恢复）` : "") +
+    `，终结 ${settled.length} 个实例。` +
+    (converged ? "" : `\n★ 未收敛：${String(MAX_ROUNDS)} 轮后仍有活可干，还有工作没做完。`) +
+    (backend === undefined ? "\n（未配置执行面：agent 节点不会被推进，见 --runner）" : "") +
+    `\n可用内置 handler：${BUILTIN_NAMES.join(", ")}`;
+
+  if (!converged) return fail(text); // 谎报"推进到静止"比慢一点糟得多
+  return failures.length > 0
+    ? fail(
+        `${text}\n失败：\n` +
+          failures.map((f) => `  ${f.traceid}/${f.nodeId}：${String(f.reason)}`).join("\n"),
+      )
+    : ok(text);
 }
 
 /**

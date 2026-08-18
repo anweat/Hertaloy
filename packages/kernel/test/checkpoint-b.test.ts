@@ -142,7 +142,7 @@ describe("Checkpoint B 主线", () => {
     expect(backend.seen[0]?.limits.tokenBudget).toBe(1000);
 
     // 产物版本化，provenance 指回执行
-    const plan = store.resolve("plan@1");
+    const plan = store.resolve("job-1/coder-1/plan@1");
     expect(plan.provenance.traceid).toBe("job-1/coder-1");
     expect(plan.provenance.node_id).toBe("writer");
 

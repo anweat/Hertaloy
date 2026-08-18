@@ -19,7 +19,15 @@
  *   2. **凭据不会被 git 记录**
  */
 
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join, relative, sep } from "node:path";
 
 export interface SandboxPaths {
@@ -115,7 +123,24 @@ export function collectArtifacts(p: SandboxPaths): readonly CollectedArtifact[] 
   return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-function walk(dir: string, visit: (file: string) => void): void {
+/** 产物收集的上界。沙箱里的东西不可信，无界递归 / 无界读取本身就是攻击面。 */
+const MAX_ARTIFACT_DEPTH = 16;
+const MAX_ARTIFACT_FILES = 1000;
+
+/**
+ * 遍历 `artifacts/`。**不跟随符号链接。**
+ *
+ * 此前用 `statSync`（跟随链接）+ `readFileSync`：agent 在 artifacts 下放一条
+ * 指向 `/etc/passwd`、`~/.aws/credentials` 或 `../.record.git` 的软链，
+ * 内容就被原样读进对象库 —— 而对象库是不可变的，读进去就撤不回来。
+ * 指向祖先目录的链接还会让递归自我循环。
+ *
+ * 用 `lstatSync` 判断**链接本身**，见到链接直接跳过而不是解析后放行：
+ * 放行需要证明"解析后仍在 artifacts 内"，而那个证明在有并发的文件系统上
+ * 有 TOCTOU 窗口（判完到读之间链接可以被换掉）。**跳过是唯一没有窗口的做法。**
+ */
+function walk(dir: string, visit: (file: string) => void, depth = 0, budget = { n: 0 }): void {
+  if (depth > MAX_ARTIFACT_DEPTH) return;
   let entries: string[];
   try {
     entries = readdirSync(dir);
@@ -123,9 +148,20 @@ function walk(dir: string, visit: (file: string) => void): void {
     return;
   }
   for (const entry of entries.sort()) {
+    if (budget.n >= MAX_ARTIFACT_FILES) return;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, visit);
-    else visit(full);
+    let info;
+    try {
+      info = lstatSync(full);
+    } catch {
+      continue;
+    }
+    if (info.isSymbolicLink()) continue; // 见 上面的说明
+    if (info.isDirectory()) walk(full, visit, depth + 1, budget);
+    else if (info.isFile()) {
+      budget.n += 1;
+      visit(full);
+    }
   }
 }
 

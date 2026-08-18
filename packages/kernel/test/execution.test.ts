@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type {
+  ArtifactSubmission,
   ExecutionBackend,
   ExecutionRequest,
   ExecutionResult,
@@ -226,7 +227,7 @@ describe("产物与观测", () => {
     rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
     await rt.stepAgent();
 
-    const plan = store.resolve("plan@1");
+    const plan = store.resolve("job-1/plan@1");
     expect(plan.body).toEqual({ n: 1 });
     expect(plan.provenance.traceid).toBe("job-1");
     expect(plan.provenance.execution_id).toBe("exec-1");
@@ -252,5 +253,49 @@ describe("产物与观测", () => {
     rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
     await rt.stepAgent();
     expect(backend.cancelled).toEqual(["exec-1"]);
+  });
+});
+
+describe("★ 产物地址由内核决定，不是 agent 报什么就写什么（外部审核 P0）", () => {
+  /** 让 agent 提交一组产物，返回本次 step 的结果。 */
+  async function submit(artifacts: readonly ArtifactSubmission[]) {
+    backend.push(async (req) => ({
+      executionId: req.executionId,
+      emissions: {},
+      artifacts,
+      termination: "DONE" as const,
+    }));
+    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    return await rt.stepAgent();
+  }
+
+  it("agent 报的名字被强制落进自己的命名空间，不落全局", async () => {
+    await submit([{ object_id: "plan", kind: "plan", body: { n: 1 }, derived_from: [] }]);
+    expect(store.has("plan")).toBe(false);
+    expect(store.has("job-1/plan")).toBe(true);
+  });
+
+  it("★ 无论报什么，写出来的一定在自己 traceid 之下", async () => {
+    await submit([
+      { object_id: "deep/nested/result", kind: "artifact", body: { ok: 1 }, derived_from: [] },
+    ]);
+    // 多级资产名允许，但整体被前缀 —— 唯一能越界的写法是 `..`，而它被拒（下一条）
+    const written = store.history("job-1/deep/nested/result");
+    expect(written).toHaveLength(1);
+    expect(store.has("deep/nested/result")).toBe(false);
+  });
+
+  it("★ `..` 逃逸被拒 → INVALID_OUTPUT，不是内核崩", async () => {
+    const r = await submit([
+      { object_id: "../root", kind: "artifact", body: { evil: true }, derived_from: [] },
+    ]);
+    expect(isFailure(r)).toBe(true);
+    expect((r as StepFailure).reason).toMatch(/产物名非法/);
+    expect(store.has("root")).toBe(false);
+  });
+
+  it("★ 受信 handler 与不受信 agent 现在同一套规则 —— 此前正好反了", async () => {
+    await submit([{ object_id: "shared", kind: "artifact", body: { from: "agent" }, derived_from: [] }]);
+    expect(store.head("job-1/shared").body).toEqual({ from: "agent" });
   });
 });

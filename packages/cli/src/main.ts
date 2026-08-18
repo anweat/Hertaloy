@@ -123,11 +123,16 @@ function extractActor(argv: readonly string[]): {
   readonly rest: readonly string[];
 } {
   const i = argv.indexOf("--as");
-  if (i === -1 || argv[i + 1] === undefined) {
-    return { actor: { kind: "human", id: "local" }, rest: argv };
-  }
+  if (i === -1) return { actor: { kind: "human", id: "local" }, rest: argv };
+  // `--as` 写了却没跟值 → 报错。静默回退成默认的 human:local 意味着
+  // 一条本想降权执行的命令**以全权跑了**，而且不留痕迹。
+  if (argv[i + 1] === undefined) throw new Error("--as 后面要跟一个主体，如 human:alice");
   const raw = argv[i + 1] as string;
-  const [kind, id] = raw.split(":", 2);
+  // 不用 split(":", 2)：JS 的 limit 是**丢弃**多余部分，不是合并 ——
+  // `agent:a:b` 会被截成 id="a"，与授权表里的 `agent:a:b` 永远对不上
+  const sep = raw.indexOf(":");
+  const kind = sep === -1 ? raw : raw.slice(0, sep);
+  const id = sep === -1 ? undefined : raw.slice(sep + 1);
   const known = ["human", "agent", "system", "service"] as const;
   if (!known.includes(kind as (typeof known)[number]) || id === undefined || id === "") {
     throw new Error(`--as 形如 human:alice / agent:coder-1，收到 ${raw}`);

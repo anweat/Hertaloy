@@ -24,6 +24,7 @@ import {
   type MessageContract,
   type NodeDefinition,
   type ObjectVersion,
+  type ArtifactSubmission,
   type JsonObject,
   type Ref,
   isKernelKind,
@@ -474,10 +475,18 @@ export class Runtime implements Snapshotable {
    *   1. `#busy` 挡住同 (实例, 节点) 的并发 claim
    *   2. apply 复核 generation 与被 claim 消息的状态（冲突域）
    */
-  async stepAgent(): Promise<StepResult | StepFailure | null> {
-    // claim 进事务：它连改四处状态，任何一步抛出都必须整体撤销。
-    // 钩子也在事务内 —— 落盘失败就当这次 claim 没发生过（§17.4）。
-    const claimed = transact(this.#parts, () => {
+  /**
+   * **只做 claim**，把执行留给调用方 —— 这是"锁外执行"的入口。
+   *
+   * `stepAgent` 把 claim / execute / apply 焊成一个 async 方法，于是持有状态目录
+   * 锁的驱动方**只能连锁一起等**：agent 挂死 → 锁一直被占 → `truncate` 拿不到锁 →
+   * "卡住的 run 杀得掉"这条承诺失效。外部审核指出的正是这个，而它是真的。
+   *
+   * 拆开之后驱动方可以：claim（持锁，落盘）→ 放锁 → 跑 agent → 重新拿锁 → apply。
+   * §10 一直把它写成三段，只是此前没有把三段各自暴露出来。
+   */
+  claimAgent(): ClaimOutcome {
+    return transact(this.#parts, () => {
       const outcome = this.#claim();
       if (outcome.kind === "claimed") {
         try {
@@ -494,43 +503,64 @@ export class Runtime implements Snapshotable {
       }
       return outcome;
     });
+  }
+
+  /**
+   * 把**在别处执行完**的结果应用回来。
+   *
+   * `record` 与入站消息从持久状态里查，不由调用方传 —— 调用方可能是
+   * 另一个进程（claim 落了盘，apply 时重新打开状态目录）。让它传就等于
+   * 让不可信的一侧决定"这是哪次执行的结果"。
+   */
+  applyAgentResult(executionId: string, raw: unknown): StepResult | StepFailure {
+    // 不断言 RUNNING：实例在执行期间被截断时记录已是 CANCELLED，而迟到的结果
+    // 该被**优雅丢弃**，不是抛异常 —— 冲突域复核在 `#apply` 里，那才是 L3 的落点。
+    const record = this.record(executionId);
+    const inputId = record.claimed[0];
+    invariant(inputId !== undefined, `execution ${executionId} 没有被 claim 的消息`);
+    const input = this.message(inputId);
+
+    this.#busy.delete(`${record.traceid}/${record.nodeId}`);
+
+    const checked = checkBackendResult(executionId, raw);
+    if (!checked.ok) {
+      return this.#applyFailure(record, input, "INVALID_OUTPUT", checked.reason);
+    }
+    return transact(this.#parts, () => {
+      const result = this.#apply(record, input, checked.result);
+      this.#commit({ kind: "apply", traceid: record.traceid, executionId });
+      return result;
+    });
+  }
+
+  /** agent 执行本身失败（backend 抛异常、超时、被杀）时的对应入口。 */
+  failAgentResult(executionId: string, termination: Termination, reason: string): StepFailure {
+    const record = this.record(executionId);
+    const inputId = record.claimed[0];
+    invariant(inputId !== undefined, `execution ${executionId} 没有被 claim 的消息`);
+    this.#busy.delete(`${record.traceid}/${record.nodeId}`);
+    return this.#applyFailure(record, this.message(inputId), termination, reason);
+  }
+
+  async stepAgent(): Promise<StepResult | StepFailure | null> {
+    const claimed = this.claimAgent();
     // 入口校验失败不是"没活干" —— 必须把失败返回给调用方，否则 drainAgents
     // 会把它当空闲提前退出，后面合法的消息被滞留
     if (claimed.kind === "idle") return null;
     if (claimed.kind === "rejected") return claimed.failure;
 
-    const { record, input, request } = claimed;
-    const key = `${record.traceid}/${record.nodeId}`;
+    const { record, request } = claimed;
+    const backend = this.#backend;
+    invariant(backend !== undefined, "未配置 ExecutionBackend，agent 节点无法执行");
 
+    let raw: unknown;
     try {
-      const backend = this.#backend;
-      invariant(backend !== undefined, "未配置 ExecutionBackend，agent 节点无法执行");
-
-      let raw: unknown;
-      try {
-        raw = await backend.run(request);
-      } catch (error) {
-        // backend 抛异常 = FAILED 可重试
-        return this.#applyFailure(record, input, "FAILED", String(error));
-      }
-
-      // backend 是不可信边界：形状、executionId、内核保留 kind 都要真校验
-      const checked = checkBackendResult(record.executionId, raw);
-      if (!checked.ok) {
-        return this.#applyFailure(record, input, "INVALID_OUTPUT", checked.reason);
-      }
-      return transact(this.#parts, () => {
-        const result = this.#apply(record, input, checked.result);
-        this.#commit({
-          kind: "apply",
-          traceid: record.traceid,
-          executionId: record.executionId,
-        });
-        return result;
-      });
-    } finally {
-      this.#busy.delete(key);
+      raw = await backend.run(request);
+    } catch (error) {
+      // backend 抛异常 = FAILED 可重试
+      return this.failAgentResult(record.executionId, "FAILED", String(error));
     }
+    return this.applyAgentResult(record.executionId, raw);
   }
 
   async drainAgents(maxSteps = 10_000): Promise<readonly (StepResult | StepFailure)[]> {
@@ -682,6 +712,37 @@ export class Runtime implements Snapshotable {
       }
     }
 
+    /**
+     * 产物地址**由内核决定**，不是 agent 报什么就写什么。
+     *
+     * 此前 backend 把沙箱里的文件名原样当 object_id，内核原样 `put` ——
+     * 于是 agent 写一个 `artifacts/job-1/coder-2/result.json`，就落进**兄弟实例**
+     * 的命名空间；写 `artifacts/root.json` 就能给根模板对象追加一版。
+     *
+     * 讽刺的是受信 handler 的 `ctx.put` 早就强制命名空间了（那个 bug 当初是
+     * 探针实证出来的），**不受信的 agent 反而没有** —— 正好反了。
+     * `checkBackendResult` 只挡了保留 kind，挡不住地址。
+     *
+     * 非法资产名归 INVALID_OUTPUT：这是不可信边界返回的坏数据，不是内核故障。
+     */
+    const namespaced: { submission: ArtifactSubmission; id: string }[] = [];
+    for (const artifact of result.artifacts ?? []) {
+      try {
+        namespaced.push({
+          submission: artifact,
+          id: namespacedId(record.traceid, artifact.object_id),
+        });
+      } catch (error) {
+        return this.#applyFailure(
+          record,
+          input,
+          "INVALID_OUTPUT",
+          `产物名非法：${(error as Error).message}`,
+          result.usage,
+        );
+      }
+    }
+
     const outcome = stageOutputs(
       this.#stageContext(template, node, record.traceid, record.nodeId, input, instance),
       result.emissions,
@@ -692,13 +753,13 @@ export class Runtime implements Snapshotable {
 
     // 产物与下游一起提交：先全部校验通过，再一次性落。
     // 边写边校验会在中途失败时留下部分版本 —— 违反零部分提交。
-    for (const artifact of result.artifacts ?? []) {
-      this.#store.put(artifact.object_id, artifact.kind, artifact.body, {
+    for (const { submission, id } of namespaced) {
+      this.#store.put(id, submission.kind, submission.body, {
         traceid: record.traceid,
         node_id: record.nodeId,
         execution_id: record.executionId,
         at_seq: 0,
-        derived_from: artifact.derived_from,
+        derived_from: submission.derived_from,
       });
     }
 

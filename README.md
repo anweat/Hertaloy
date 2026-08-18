@@ -12,26 +12,35 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 
 ## 仓库状态（2026-08-18）
 
-设计门已收束。Task 1-6 完成，**Checkpoint A / B 均通过**；外部审核轮七条 P1 已修。
-此后经历第四、第五次归约：策略节点删除（版本历史即状态）；agent 就是一条命令行
-（内核工具与工具桥整个不需要，执行面改为沙箱 + 沙箱外的 git 观察）。
+**成熟度分档**（一个 ✅ 说不清全部，所以拆开）：
 
-内核批次 0 / A / F / B / C / G 已落地；执行面沙箱 S1-S4 + S6（WSL）+ P（profile 渲染）
-已跑通，含 4 条**真跑 WSL Ubuntu** 的测试。
+| 能力 | 已设计 | 已实现 | 入口可达 | 崩溃验证 | 端到端 | 可作服务 |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| 内核编排（实例/锁/路由/截断） | ✅ | ✅ | ✅ | — | ✅ | — |
+| 沙箱执行面（local/wsl/docker + 出网） | ✅ | ✅ | ✅ | — | ✅ | — |
+| 持久化与恢复 | ✅ | ✅ | ✅ | 部分 | ✅ | — |
+| 权限层（ControlPlane + 授权文件） | ✅ | ✅ | ✅ | — | ✅ | — |
+| `hertaloy agent`、MCP、画布 | 部分 | — | — | — | — | — |
+
+**"崩溃验证"只标了部分，原因要说清**：claim 会落盘，换进程能看见 `RUNNING`
+记录，但**恢复后没有接管流程** —— 调度器只挑 `QUEUED`，那条 `CLAIMED` 消息
+不会被任何人继续。所以目前是"claim 不丢"，不是"崩了能接着跑"。
+测试也都在同一个进程里 open/close，没有真的 `kill -9` 子进程。
+
+**尚不具备**：`hertaloy agent`、MCP / 服务端 / 画布、崩溃接管、
+外部副作用的恢复语义（generation fence 拦得住内核 apply，撤不回已发出的邮件
+或已推的 commit）、真实项目工作区（沙箱目前是空临时目录，不从 repo 拉基线）。
+
+**当前是本地 CLI 切片，不是可用的工作流服务。**
 
 ```
 packages/contracts    51 条   身份/路径/变量/端口/消息/契约/模板/执行面/权限 schema
-packages/kernel      132 条   store · tx · instances · locks · context · extract · routing · runtime · control
-packages/sandbox      53 条   契约目录 · runner(local/wsl) · 外置 git 观察 · profile 渲染
-packages/cli          11 条   hertaloy doctor / validate / run
-合计                 247 条   typecheck 绿
-
-pnpm test · pnpm typecheck · pnpm hertaloy doctor
+packages/kernel      141 条   store · tx · instances · locks · context · extract · routing · runtime · control
+packages/sandbox      76 条   契约目录 · runner(local/wsl/docker) · 出网策略 · git 观察 · profile
+packages/state        35 条   对象落盘 · 可变头 · 目录锁 · 权限文件 · claim 耐久性
+packages/cli          39 条   doctor/validate/run + status/show/history/send/drain/truncate
+合计                 342 条   pnpm -r test 与 pnpm -r typecheck 退出码 0
 ```
-
-尚未具备：docker runner 与网络策略、`hertaloy agent`（我们自己的 agent CLI）、
-持久化与崩溃恢复、MCP / 服务端 / 画布。
-当前是**内核 + 执行面切片，不是可用工作流系统**。
 
 逐项状态见 [FOUNDATION_V5.md](./FOUNDATION_V5.md) §16（不变量强制表）与 §17（待开发清单）。
 全文带状态标记，与代码同步维护。

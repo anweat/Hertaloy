@@ -436,3 +436,59 @@ CLI 的 `drain` 变异步、**同步 handler 与 agent 交替推进到静止**
 漏一个就等于没有。白名单漏一个只会让某个 agent 跑不起来 ——
 **一个吵闹的失败胜过一次静默的泄漏。**
 
+
+
+---
+
+## 4. 外部审核第二轮（HEAD `ad18cc3`）的分诊
+
+**先驳一条**：审核称 sandbox 17 失败、CLI 2 失败。在 `ad18cc3` 干净工作树上
+逐包核对退出码，五个包全部为 0（sandbox 7 文件 74 条、CLI 5 文件 37 条）。
+复现不出来，按环境差异处理，不据此改动。它还据此断言"doctor 说主链可用但主链
+测试失败，所以 doctor 不可信" —— 前提不成立，结论一并作废。
+
+### 4.1 采纳并已修
+
+| 审核项 | 判断 | 处理 |
+|---|---|---|
+| drain 持锁等 agent → truncate 拿不到锁 | **属实，是我在 E1 引入的回归** | claim/apply 拆成公开两步，agent 在锁外跑 |
+| agent artifact 可构造任意 object_id | **属实，且方向反了** | 内核 apply 强制 `namespacedId` |
+| artifact 收集跟随符号链接 | 属实 | `lstat` + 拒绝链接 + 深度/数量上界 |
+| `--as` 有 flag 无值静默回退全权 | 属实 | 报错 |
+| `split(":", 2)` 截断 principal id | 属实 | 按首个冒号切 |
+| drain 100 轮后谎报静止 | 属实 | 记 `converged`，未收敛返回非零 |
+| 重试 attempt 计入流程失败 | 属实 | 只算 `retrying !== true` 的 |
+| status 漏报子树的锁与消息 | 属实 | 按 subtree 汇总，并报 CLAIMED 与在跑 execution |
+| codec `$map`/`$set` 与用户 JSON 撞名 | 属实 | 换 `$hertaloy$` 前缀 + 键转义 |
+| README 状态陈述失真 | 属实 | 改成六档成熟度表 |
+
+### 4.2 采纳判断、暂不动手（理由写明）
+
+- **claim 可见 ≠ 能恢复**。属实且重要：恢复后调度器只挑 `QUEUED`，那条
+  `CLAIMED` 消息无人接管，是永久卡住而非恢复。已写进 README 的"部分"一档。
+  接管状态机（RECONCILING / ADOPTED / ABANDONED）是下一批，不是顺手能做对的。
+- **外部副作用没有恢复语义**。属实。generation fence 只能拒绝迟到的内核 apply，
+  撤不回已发的邮件。但 `EffectIntent/Receipt/outbox` 是一整套子系统，
+  在还没有任何真实外部效果接入时建它，是为假想负载做设计。先记为已知边界。
+- **对象已写、head 未换的崩溃窗口会永久拒载**。属实。cheap 的正确修法是给每个
+  对象文件写入 append 序号，装载时按 `objectCursor` 截断 —— 一个字段的事，
+  下一批做。不上 SQLite/manifest：那是在还没被容量压到时换存储引擎。
+- **`run`/`settleAll` 的 scope 只用于授权，实际驱动整棵树**。属实，是真的权限
+  越界面。修法是让 Runtime 的 drain/settle 真正接受子树限制，属内核改动，
+  单独一批。
+- **executionId 非全局唯一**。属实但当前无路径共享 backend；记为约束。
+
+### 4.3 判为过度设计，不采纳
+
+- **抽出 `Universe/EngineRoot`**。root 的两条张力（settleAll 收敛 root、
+  恢复时 root 仍带旧 definition）是真的，但它们各自是小修；为此引入一层新的
+  顶层实体，是用架构解决两个 bug。先修 bug。
+- **`ObjectVersion` 之外再立 `Occurrence/Event`**。并发下 `history.length + 1`
+  确实不成立 —— 但内核的 handler 提交是单线程同步的，这个并发场景当前不存在。
+  记为"引入并行提交前必须先解决"，不现在加第二套版本概念。
+- **`executor.kind = builtin | sandbox`**。`node.agent !== undefined` 已经表达了
+  同一件事，换个写法不增加任何强制力。
+- **把 `isolates` 拆成六元能力向量**。WSL 的 `isolates=true` 确实夸大了
+  （同发行版同用户、看得见 `/mnt/c`），但修法是**把那个字段说准**，
+  不是先建一张六维表再去填。
+- **Attestation/AuthzReceipt 审计子系统**。审计确实缺，但当前连多用户都没有。

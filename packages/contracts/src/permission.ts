@@ -36,7 +36,18 @@ export type Grant = z.infer<typeof Grant>;
 
 export function principalMatches(pattern: string, actor: Principal): boolean {
   if (pattern === "*") return true;
-  const [kind, id] = pattern.split(":", 2);
+  /**
+   * 按**第一个**冒号切，不用 `split(":", 2)`。
+   *
+   * JS 的 limit 参数是"最多产出几段、多余的丢掉"，不是"剩下的合并进最后一段"
+   * （与 Python 相反）。于是 `agent:a:b` 被截成 `["agent","a"]`，
+   * 一条给 `agent:a:b` 的授权**永远匹配不上** id 为 `a:b` 的主体 ——
+   * 而它失败的方式是静默拒绝，看起来像"没给权限"。
+   */
+  const sep = pattern.indexOf(":");
+  if (sep === -1) return false;
+  const kind = pattern.slice(0, sep);
+  const id = pattern.slice(sep + 1);
   if (kind !== actor.kind) return false;
   return id === "*" || id === actor.id;
 }

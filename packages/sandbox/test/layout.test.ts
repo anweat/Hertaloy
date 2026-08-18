@@ -4,7 +4,15 @@
  * 纯文件操作，离线可测，不依赖 docker / wsl / git。
  */
 
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -115,5 +123,37 @@ describe("sandboxPaths 是纯函数", () => {
     const q = sandboxPaths("/nowhere");
     expect(q.workspace).toMatch(/workspace$/);
     expect(existsSync("/nowhere")).toBe(false);
+  });
+});
+
+describe("★ 产物收集不跟随符号链接（外部审核 P0）", () => {
+  it("指向沙箱外的软链被跳过 —— 不进对象库", () => {
+    const root = mkdtempSync(join(tmpdir(), "hertaloy-sym-"));
+    const outside = join(root, "outside-secret.txt");
+    writeFileSync(outside, "SECRET", "utf8");
+    const p = createSandbox(root);
+    writeFileSync(join(p.artifacts, "real.txt"), "ok", "utf8");
+    try {
+      symlinkSync(outside, join(p.artifacts, "stolen.txt"));
+    } catch {
+      return; // 没有建软链的权限（Windows 未开开发者模式）→ 跳过
+    }
+    const got = collectArtifacts(p);
+    expect(got.map((a) => a.name)).toEqual(["real.txt"]);
+    expect(JSON.stringify(got)).not.toContain("SECRET");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("指向祖先目录的软链不会让递归自我循环", () => {
+    const root = mkdtempSync(join(tmpdir(), "hertaloy-loop-"));
+    const p = createSandbox(root);
+    writeFileSync(join(p.artifacts, "a.txt"), "a", "utf8");
+    try {
+      symlinkSync(p.artifacts, join(p.artifacts, "loop"), "dir");
+    } catch {
+      return;
+    }
+    expect(collectArtifacts(p).map((a) => a.name)).toEqual(["a.txt"]);
+    rmSync(root, { recursive: true, force: true });
   });
 });
