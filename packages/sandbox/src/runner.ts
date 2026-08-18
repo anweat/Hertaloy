@@ -8,7 +8,10 @@
  * 「退出码 3 算 FAILED 还是 INVALID_OUTPUT」是 backend 的事（§14.6）。
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export interface RunSpec {
   readonly argv: readonly string[];
@@ -35,7 +38,40 @@ export interface Runner {
   readonly kind: string;
   /** **是不是安全边界。**`local` 为 false —— 这条要一路透传到文档与告警。 */
   readonly isolates: boolean;
+
+  /**
+   * 分配一个沙箱根，返回**宿主机可见**的路径（Node 的 fs 用它）。
+   *
+   * 沙箱住哪归 runner 管：`local` 放宿主机临时目录，`wsl` 放 **WSL 自己的
+   * 文件系统**（宿主机通过 UNC 访问）。后者让 agent 拿到真 Linux 语义 ——
+   * 大小写敏感、权限位、软链都对，不必绕 `/mnt/d` 那层 Windows 语义。
+   */
+  allocate(): string;
+  release(hostRoot: string): void;
+
+  /** 跑 agent：带超时与取消。 */
   run(spec: RunSpec): Promise<RunOutcome>;
+
+  /**
+   * 宿主机路径 → **运行环境内**的路径。
+   *
+   * `local` 是恒等；`wsl` 把 UNC 翻成 Linux 路径。缺了这个，传给 git 的
+   * `--git-dir` / `--work-tree` 会是宿主机路径，而 git 在 Linux 里跑 ——
+   * 真跑 WSL 的测试第一次就撞到了这条。
+   */
+  toInner(hostPath: string): string;
+
+  /**
+   * 跑**辅助命令**（目前只有 git）。
+   *
+   * 单独一个口子，是为了让 git 跟 agent 在**同一个环境**里跑。
+   * 否则 WSL 沙箱会被宿主机的 git 观察，换行、权限位、大小写全对不上 ——
+   * 那正是"落在 Linux 上避免不一致"要躲的绕弯。
+   *
+   * **argv 与 cwd 一律用运行环境内的路径**（先经 `toInner`）。混用宿主机路径
+   * 与内部路径是这块最容易出的错，所以这里只认一种。
+   */
+  exec(argv: readonly string[], innerCwd: string): string;
 }
 
 /**
@@ -69,6 +105,34 @@ function killTree(pid: number): void {
 export class LocalRunner implements Runner {
   readonly kind = "local";
   readonly isolates = false;
+  readonly #prefix: string;
+
+  constructor(workRoot: string = tmpdir()) {
+    this.#prefix = join(workRoot, "hertaloy-box-");
+  }
+
+  allocate(): string {
+    return mkdtempSync(this.#prefix);
+  }
+
+  release(hostRoot: string): void {
+    rmSync(hostRoot, { recursive: true, force: true });
+  }
+
+  /** 本机无需翻译。 */
+  toInner(hostPath: string): string {
+    return hostPath;
+  }
+
+  exec(argv: readonly string[], innerCwd: string): string {
+    const [command, ...args] = argv;
+    if (command === undefined) throw new Error("argv 不能为空");
+    return execFileSync(command, args, {
+      cwd: innerCwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
 
   async run(spec: RunSpec): Promise<RunOutcome> {
     const [command, ...args] = spec.argv;

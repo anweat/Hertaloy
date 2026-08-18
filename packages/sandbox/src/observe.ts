@@ -15,13 +15,18 @@
  * 文件差异是事实。
  */
 
-import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+export interface GitExec {
+  /** 在给定 cwd 下跑一条命令，返回 stdout；失败抛错。**路径一律用运行环境内的。** */
+  (argv: readonly string[], innerCwd: string): string;
+}
 
 export interface ObserverPaths {
-  /** 记录仓（`--git-dir`），**必须在沙箱之外**。 */
+  /**
+   * 记录仓（`--git-dir`），**必须在 workspace 之外**，且是
+   * **运行环境内的路径**（git 在哪跑，路径就按哪算）。
+   */
   readonly gitDir: string;
-  /** 工作树（`--work-tree`），指向 `<沙箱>/workspace`。 */
+  /** 工作树（`--work-tree`），运行环境内的路径。 */
   readonly workTree: string;
 }
 
@@ -38,11 +43,17 @@ export interface Observation {
   readonly deletions: number;
 }
 
-function git(paths: ObserverPaths, args: readonly string[]): string {
-  return execFileSync(
-    "git",
-    ["--git-dir", paths.gitDir, "--work-tree", paths.workTree, ...args],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+/**
+ * 所有 git 调用都经 `exec` 走 —— 它由 runner 提供。
+ *
+ * 这样 git 跟 agent 在**同一个环境**里跑：WSL 沙箱由 WSL 里的 git 观察，
+ * 换行、权限位、大小写才对得上。宿主机的 git 隔着 UNC 看 Linux 文件，
+ * 正是"落在 Linux 上避免不一致"要躲的那种绕弯。
+ */
+function git(paths: ObserverPaths, exec: GitExec, args: readonly string[]): string {
+  return exec(
+    ["git", "--git-dir", paths.gitDir, "--work-tree", paths.workTree, ...args],
+    paths.workTree,
   );
 }
 
@@ -53,25 +64,25 @@ function git(paths: ObserverPaths, args: readonly string[]): string {
  * agent 开工前的全部文件**，否则第一次 diff 会把项目里原有的东西也算成
  * "agent 改的"。
  */
-export function initObserver(paths: ObserverPaths): void {
-  mkdirSync(paths.gitDir, { recursive: true });
-  git(paths, ["init", "--quiet"]);
+export function initObserver(paths: ObserverPaths, exec: GitExec): void {
+  exec(["mkdir", "-p", paths.gitDir], paths.workTree);
+  git(paths, exec, ["init", "--quiet"]);
   // 局部身份，避免依赖宿主机的 git 全局配置
-  git(paths, ["config", "user.email", "observer@hertaloy.local"]);
-  git(paths, ["config", "user.name", "hertaloy-observer"]);
-  git(paths, ["config", "core.autocrlf", "false"]);
-  baseline(paths, "baseline");
+  git(paths, exec, ["config", "user.email", "observer@hertaloy.local"]);
+  git(paths, exec, ["config", "user.name", "hertaloy-observer"]);
+  git(paths, exec, ["config", "core.autocrlf", "false"]);
+  baseline(paths, exec, "baseline");
 }
 
-export function baseline(paths: ObserverPaths, message: string): void {
-  git(paths, ["add", "-A"]);
-  git(paths, ["commit", "--quiet", "--allow-empty", "-m", message]);
+export function baseline(paths: ObserverPaths, exec: GitExec, message: string): void {
+  git(paths, exec, ["add", "-A"]);
+  git(paths, exec, ["commit", "--quiet", "--allow-empty", "-m", message]);
 }
 
 /** 相对上一次基线，agent 改了什么。 */
-export function observe(paths: ObserverPaths): Observation {
-  git(paths, ["add", "-A"]);
-  const nameStatus = git(paths, ["diff", "--cached", "--name-status"]).trim();
+export function observe(paths: ObserverPaths, exec: GitExec): Observation {
+  git(paths, exec, ["add", "-A"]);
+  const nameStatus = git(paths, exec, ["diff", "--cached", "--name-status"]).trim();
   const changes: FileChange[] = nameStatus === ""
     ? []
     : nameStatus.split(/\r?\n/).map((line) => {
@@ -81,7 +92,7 @@ export function observe(paths: ObserverPaths): Observation {
 
   let insertions = 0;
   let deletions = 0;
-  for (const line of git(paths, ["diff", "--cached", "--numstat"]).trim().split(/\r?\n/)) {
+  for (const line of git(paths, exec, ["diff", "--cached", "--numstat"]).trim().split(/\r?\n/)) {
     if (line === "") continue;
     const [add, del] = line.split("\t");
     insertions += Number(add) || 0;
@@ -90,10 +101,10 @@ export function observe(paths: ObserverPaths): Observation {
   return { changes, insertions, deletions };
 }
 
-/** git 在不在。不在就退化成"不观察"，而不是让整条执行链挂掉。 */
-export function gitAvailable(): boolean {
+/** 目标环境里 git 在不在。不在就退化成"不观察"，而不是让整条执行链挂掉。 */
+export function gitAvailable(exec: GitExec, innerCwd: string): boolean {
   try {
-    execFileSync("git", ["--version"], { stdio: "ignore" });
+    exec(["git", "--version"], innerCwd);
     return true;
   } catch {
     return false;

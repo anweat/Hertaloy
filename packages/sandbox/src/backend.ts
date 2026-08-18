@@ -7,9 +7,6 @@
  * 一次执行 = 建沙箱 → 注入 → 打基线 → **跑一条命令行** → 读 emit → 观察 → 收产物 → 拆沙箱。
  */
 
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { z } from "zod";
 import type {
   ExecutionBackend,
@@ -67,13 +64,11 @@ export interface SandboxDiagnostics {
 
 export class SandboxBackend implements ExecutionBackend {
   readonly #runner: Runner;
-  readonly #workRoot: string;
   readonly #cleanup: boolean;
   readonly #inflight = new Map<string, AbortController>();
 
   constructor(options: SandboxOptions = {}) {
-    this.#runner = options.runner ?? new LocalRunner();
-    this.#workRoot = options.workRoot ?? tmpdir();
+    this.#runner = options.runner ?? new LocalRunner(options.workRoot);
     this.#cleanup = options.cleanup ?? true;
   }
 
@@ -92,11 +87,19 @@ export class SandboxBackend implements ExecutionBackend {
     }
     const spec = parsed.data;
 
-    const root = mkdtempSync(join(this.#workRoot, "hertaloy-box-"));
-    const gitDir = join(mkdtempSync(join(this.#workRoot, "hertaloy-rec-")), "record.git");
+    // 沙箱住哪归 runner 管：local 放宿主机临时目录，wsl 放 Linux 文件系统
+    const root = this.#runner.allocate();
     const paths = createSandbox(root);
-    const observer = { gitDir, workTree: paths.workspace };
-    const canObserve = gitAvailable();
+    // 记录仓放在沙箱**同级**的隐藏目录 —— 与工作树同一个文件系统，
+    // 但不在 workspace 内，所以 agent 看不到（S1 布局的同一条理由）
+    // ★ 传给 git 的路径必须是**运行环境内**的：git 在 WSL 里跑，
+    //   收到宿主机 UNC 路径会直接失败（真跑 WSL 的测试第一次就撞到了）
+    const observer = {
+      gitDir: this.#runner.toInner(`${root}/.record.git`),
+      workTree: this.#runner.toInner(paths.workspace),
+    };
+    const exec = (argv: readonly string[], cwd: string): string => this.#runner.exec(argv, cwd);
+    const canObserve = gitAvailable(exec, observer.workTree);
 
     const abort = new AbortController();
     this.#inflight.set(request.executionId, abort);
@@ -116,7 +119,7 @@ export class SandboxBackend implements ExecutionBackend {
         emitPath: ".hertaloy/emit.json",
         artifactsDir: ".hertaloy/artifacts",
       });
-      if (canObserve) initObserver(observer);
+      if (canObserve) initObserver(observer, exec);
 
       const outcome = await this.#runner.run({
         argv: spec.argv,
@@ -128,7 +131,7 @@ export class SandboxBackend implements ExecutionBackend {
           : { timeoutSeconds: request.limits.wallClockSeconds }),
       });
 
-      const observation = canObserve ? observe(observer) : undefined;
+      const observation = canObserve ? observe(observer, exec) : undefined;
       const emitted = readEmit(paths);
       const artifacts = collectArtifacts(paths).map((a) => ({
         object_id: a.name.replace(/\.[^./]+$/, ""),
@@ -168,10 +171,7 @@ export class SandboxBackend implements ExecutionBackend {
       };
     } finally {
       this.#inflight.delete(request.executionId);
-      if (this.#cleanup) {
-        destroySandbox(root);
-        destroySandbox(join(gitDir, ".."));
-      }
+      if (this.#cleanup) this.#runner.release(root);
     }
   }
 
