@@ -7,3 +7,4 @@ export * from "./context.js";
 export * from "./extract.js";
 export * from "./routing.js";
 export * from "./runtime.js";
+export * from "./control.js";
