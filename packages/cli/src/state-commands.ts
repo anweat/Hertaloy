@@ -15,6 +15,7 @@
  */
 
 import { RunState } from "@nodeflow/state";
+import type { ExecutionBackend } from "@nodeflow/contracts";
 import type { Json, Principal } from "@nodeflow/contracts";
 import { AuthorizationError } from "@nodeflow/kernel";
 import { BUILTIN_HANDLERS, BUILTIN_NAMES } from "./builtins.js";
@@ -176,33 +177,61 @@ export function send(
  * **限制要说清**：CLI 只认得内置 handler。模板若引用了别的 handler 名，
  * 这条命令推不动它 —— 那种图得由宿主程序驱动。装作能推是更坏的。
  */
-export function drain(dir: string, actor: Principal): CommandResult {
-  return writable(dir, (s) => {
-    const root = s.registry.rootTrace;
+export async function drain(
+  dir: string,
+  actor: Principal,
+  backend?: ExecutionBackend,
+): Promise<CommandResult> {
+  const state = RunState.open(dir, backend === undefined ? {} : { backend });
+  try {
+    const root = state.registry.rootTrace;
     if (root === null) return fail("空状态：没有根容器可推进。");
-    for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) s.runtime.registerHandler(name, fn);
+    for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) {
+      state.runtime.registerHandler(name, fn);
+    }
+
+    type Step = { traceid: string; nodeId: string; reason?: string };
+    const results: Step[] = [];
     try {
-      const results = s.control.run(actor, root);
-      const settled = s.control.settleAll(actor, root);
-      s.runtime.checkInvariants();
-      const failures = results.filter((r) => "reason" in r);
+      /**
+       * 同步 handler 与 agent **交替**推进到静止。
+       *
+       * 不能各跑一遍了事：handler 的输出会喂给 agent，agent 的输出又会喂回
+       * handler。一轮一轮来，直到两边都没活可干。
+       */
+      for (let round = 0; round < 100; round += 1) {
+        const sync = state.control.run(actor, root) as readonly Step[];
+        results.push(...sync);
+        const agents =
+          backend === undefined
+            ? ([] as readonly Step[])
+            : ((await state.control.runAgents(actor, root)) as readonly Step[]);
+        results.push(...agents);
+        if (sync.length === 0 && agents.length === 0) break;
+      }
+      const settled = state.control.settleAll(actor, root);
+      state.runtime.checkInvariants();
+      state.persist();
+
+      const failures = results.filter((r) => r.reason !== undefined);
       const text =
         `提交 ${results.length} 次，失败 ${failures.length} 次，` +
-        `终结 ${settled.length} 个实例。\n` +
-        `可用内置 handler：${BUILTIN_NAMES.join(", ")}`;
+        `终结 ${settled.length} 个实例。` +
+        (backend === undefined ? "\n（未配置执行面：agent 节点不会被推进，见 --runner）" : "") +
+        `\n可用内置 handler：${BUILTIN_NAMES.join(", ")}`;
       return failures.length > 0
         ? fail(
             `${text}\n失败：\n` +
-              failures
-                .map((f) => `  ${(f as { traceid: string; nodeId: string; reason: string }).traceid}` +
-                  `/${(f as { nodeId: string }).nodeId}：${(f as { reason: string }).reason}`)
-                .join("\n"),
+              failures.map((f) => `  ${f.traceid}/${f.nodeId}：${String(f.reason)}`).join("\n"),
           )
         : ok(text);
     } catch (error) {
+      if (error instanceof AuthorizationError) return fail(`拒绝：${error.message}`);
       return fail(`推进失败：${(error as Error).message}`);
     }
-  });
+  } finally {
+    state.close();
+  }
 }
 
 /**

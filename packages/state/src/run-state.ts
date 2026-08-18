@@ -24,6 +24,7 @@ import {
   ObjectStore,
   Runtime,
 } from "@nodeflow/kernel";
+import type { ExecutionBackend } from "@nodeflow/contracts";
 import { type LoadedPermissions, loadPermissions } from "./permissions.js";
 import { decodeHeadParts, readHead, writeHead } from "./head.js";
 import { StateLock } from "./lock.js";
@@ -32,6 +33,13 @@ import { flushObjects, loadObjects } from "./objects.js";
 export interface OpenOptions {
   /** 不拿目录锁。只给只读命令（`status` / `show`）用。 */
   readonly readOnly?: boolean;
+  /**
+   * agent 节点的执行面。不给就只能跑同步 handler 节点。
+   *
+   * 内核不自己造 backend：它是不可信边界（`checkBackendResult` 就为这个存在），
+   * 由谁来跑、跑在哪种沙箱里，是调用方的决定，不是内核的默认值。
+   */
+  readonly backend?: ExecutionBackend;
   /**
    * 关掉 claim 的自动落盘。**只给测试用。**
    *
@@ -103,7 +111,10 @@ export class RunState {
           : (event: CommitEvent): void => {
               if (event.kind === "claim") self?.persist();
             };
-      const runtime = new Runtime(store, registry, onCommit === undefined ? {} : { onCommit });
+      const runtime = new Runtime(store, registry, {
+        ...(onCommit === undefined ? {} : { onCommit }),
+        ...(options.backend === undefined ? {} : { backend: options.backend }),
+      });
       const head = readHead(dir);
 
       if (head === null) {

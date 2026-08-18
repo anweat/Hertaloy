@@ -104,6 +104,18 @@ export class ControlPlane {
     return this.#runtime.drain();
   }
 
+  /**
+   * 驱动 **agent 节点**（异步）。
+   *
+   * 与 `run` 分成两条而不是合成一条：`run` 是同步的纯引擎推进，
+   * `runAgents` 里面有 `await`，中间会跑外部进程、花钱、产生副作用。
+   * 合成一条就得让所有调用方都变成 async，也会掩盖"这一步要花钱"这件事。
+   */
+  async runAgents(actor: Principal, scope: TraceId): Promise<readonly (StepResult | StepFailure)[]> {
+    this.#authorize(actor, "run", scope);
+    return await this.#runtime.drainAgents();
+  }
+
   truncate(actor: Principal, trace: TraceId, reason: string): TruncationResult {
     this.#authorize(actor, "truncate", trace);
     return this.#runtime.truncate(trace, reason);

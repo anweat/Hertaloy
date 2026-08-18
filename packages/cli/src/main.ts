@@ -17,7 +17,8 @@
 import { readFileSync } from "node:fs";
 import { run, validate } from "./commands.js";
 import { diagnose, formatChecks } from "./doctor.js";
-import type { Principal } from "@nodeflow/contracts";
+import type { ExecutionBackend, Principal } from "@nodeflow/contracts";
+import { DockerRunner, LocalRunner, SandboxBackend, WslRunner } from "@nodeflow/sandbox";
 import {
   type CommandResult,
   drain,
@@ -40,7 +41,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy show    <dir> <object-id[@n]>        读一个对象版本
   hertaloy history <dir> <object-id>            某对象的版本历史
   hertaloy send    <dir> <traceid> <node> <port> [json]   投一条消息（人的放行走这条）
-  hertaloy drain   <dir>                        推进到静止（只认内置 handler）
+  hertaloy drain   <dir> [--runner local|wsl|docker]  推进到静止
+       不给 --runner 就没有执行面：agent 节点不会被推进
   hertaloy truncate <dir> <traceid> [原因]      强制截断实例及其子树
 
 主体：任何命令可加 --as <principal>（如 --as agent:coder-1），默认 human:local。
@@ -57,11 +59,12 @@ function readJson(path: string): unknown {
 }
 
 /** 有状态命令。参数不够就返回用法错误，而不是往下掉进"读文件"那条路。 */
-function statefulCommand(
+async function statefulCommand(
   command: string,
   args: readonly string[],
   actor: Principal,
-): CommandResult | null {
+  runner: string | undefined,
+): Promise<CommandResult | null> {
   const [dir, a, b, c, d] = args;
   const need = (n: number): CommandResult | null =>
     args.length < n ? { text: `\`${command}\` 参数不够。
@@ -76,7 +79,7 @@ ${USAGE}`, code: 2 } : null;
     case "history":
       return need(2) ?? history(dir as string, actor, a as string);
     case "drain":
-      return need(1) ?? drain(dir as string, actor);
+      return need(1) ?? (await drain(dir as string, actor, makeBackend(runner)));
     case "truncate":
       return need(2) ?? truncate(dir as string, actor, a as string, b ?? "人工截断");
     case "send": {
@@ -103,6 +106,18 @@ ${USAGE}`, code: 2 } : null;
  * 默认 `human:local`：本机开发工具，人是操作者。**agent 必须显式指定** ——
  * 它的每一份权限都得是给出来的，不是默认带的（第一不变量）。
  */
+/** 摘出 `--flag value`，返回值与剩余参数。 */
+function extractFlag(
+  argv: readonly string[],
+  flag: string,
+): { readonly value: string | undefined; readonly rest: readonly string[] } {
+  const i = argv.indexOf(flag);
+  if (i === -1) return { value: undefined, rest: argv };
+  const value = argv[i + 1];
+  if (value === undefined) throw new Error(`${flag} 后面要跟一个值`);
+  return { value, rest: [...argv.slice(0, i), ...argv.slice(i + 2)] };
+}
+
 function extractActor(argv: readonly string[]): {
   readonly actor: Principal;
   readonly rest: readonly string[];
@@ -123,11 +138,33 @@ function extractActor(argv: readonly string[]): {
   };
 }
 
-function main(rawArgv: readonly string[]): number {
+/**
+ * 执行面。**不给 `--runner` 就没有执行面** —— agent 节点不被推进。
+ *
+ * 默认不给，是因为跑 agent 意味着起进程、可能出网、可能花钱。
+ * 这种事不该是某个 flag 忘了写就悄悄发生的默认值。
+ */
+function makeBackend(runner: string | undefined): ExecutionBackend | undefined {
+  if (runner === undefined) return undefined;
+  switch (runner) {
+    case "local":
+      return new SandboxBackend({ runner: new LocalRunner() });
+    case "wsl":
+      return new SandboxBackend({ runner: new WslRunner() });
+    case "docker":
+      return new SandboxBackend({ runner: new DockerRunner() });
+    default:
+      throw new Error(`未知运行器 ${runner}，可选 local / wsl / docker`);
+  }
+}
+
+async function main(rawArgv: readonly string[]): Promise<number> {
   let actor: Principal;
   let argv: readonly string[];
+  let runner: string | undefined;
   try {
     ({ actor, rest: argv } = extractActor(rawArgv));
+    ({ value: runner, rest: argv } = extractFlag(argv, "--runner"));
   } catch (error) {
     process.stderr.write(`${(error as Error).message}
 `);
@@ -146,7 +183,7 @@ function main(rawArgv: readonly string[]): number {
     return blocked ? 1 : 0;
   }
   const rest = argv.slice(1);
-  const stateful = statefulCommand(command, rest, actor);
+  const stateful = await statefulCommand(command, rest, actor, runner);
   if (stateful !== null) {
     (stateful.code === 0 ? process.stdout : process.stderr).write(`${stateful.text}
 `);
@@ -177,4 +214,4 @@ function main(rawArgv: readonly string[]): number {
   return result.code;
 }
 
-process.exitCode = main(process.argv.slice(2));
+process.exitCode = await main(process.argv.slice(2));

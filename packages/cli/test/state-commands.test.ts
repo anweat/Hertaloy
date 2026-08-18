@@ -93,10 +93,10 @@ describe("★ send：人的放行走这条，不需要第二套审批机制", ()
 });
 
 describe("★ 全流程：投两次 → 推进 → 查资产", () => {
-  it("两条消息各算一份，凑齐后汇聚（跨四次进程调用）", () => {
+  it("两条消息各算一份，凑齐后汇聚（跨四次进程调用）", async () => {
     send(dir, HUMAN, "job-1", "gate", "in", { value: "same", expect: 2 });
     send(dir, HUMAN, "job-1", "gate", "in", { value: "same", expect: 2 });
-    const d = drain(dir, HUMAN);
+    const d = await drain(dir, HUMAN);
     expect(d.code).toBe(0);
     expect(d.text).toContain("提交 2 次，失败 0 次");
 
@@ -107,9 +107,9 @@ describe("★ 全流程：投两次 → 推进 → 查资产", () => {
 });
 
 describe("show / history", () => {
-  it("show 取最新版，show id@n 取指定版", () => {
+  it("show 取最新版，show id@n 取指定版", async () => {
     send(dir, HUMAN, "job-1", "gate", "in", { value: "x", expect: 9 });
-    drain(dir, HUMAN);
+    await drain(dir, HUMAN);
     expect(JSON.parse(show(dir, HUMAN, "job-1/parts").text).version).toBe(1);
     expect(JSON.parse(show(dir, HUMAN, "job-1/parts@1").text).body.value).toBe("x");
   });

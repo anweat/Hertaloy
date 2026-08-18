@@ -36,7 +36,13 @@ const TEMPLATE = {
   subscriptions: {},
 };
 
-/** 进程在 agent 跑到一半时死掉 —— backend 永不返回。 */
+/**
+ * 进程在 agent 跑到一半时死掉 —— backend 永不返回。
+ *
+ * **必须真传进 RunState**：不传的话 `stepAgent` 会撞上"未配置 backend"的
+ * invariant，而 `void` 调用让它变成未处理的 rejection —— 测试仍然"通过"，
+ * 整个包却以退出码 1 结束。断言绿了不等于套件绿了。
+ */
 class NeverReturns implements ExecutionBackend {
   async run(_request: ExecutionRequest): Promise<ExecutionResult> {
     return await new Promise<ExecutionResult>(() => {
@@ -54,7 +60,7 @@ function seed(state: RunState): void {
 
 describe("★ claim 熬过崩溃", () => {
   it("claim 之后进程死掉 → 新进程看得见那条 RUNNING 记录", async () => {
-    const first = RunState.open(dir);
+    const first = RunState.open(dir, { backend: new NeverReturns() });
     seed(first);
     first.persist();
     // 故意不 await：stepAgent 会在 backend.run 里永远挂着，
@@ -77,7 +83,7 @@ describe("★ claim 熬过崩溃", () => {
   });
 
   it("关掉自动落盘 → claim 就丢了（这正是没有钩子时的状况）", async () => {
-    const first = RunState.open(dir, { manualDurability: true });
+    const first = RunState.open(dir, { manualDurability: true, backend: new NeverReturns() });
     seed(first);
     first.persist();
     void first.runtime.stepAgent();
