@@ -1,0 +1,615 @@
+{
+  "files": [
+    {
+      "fileCategory": "docs",
+      "path": "archive/README.md",
+      "language": "markdown"
+    },
+    {
+      "fileCategory": "config",
+      "path": "examples/aggregate-template.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "config",
+      "path": "examples/aggregate.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "docs",
+      "path": "FOUNDATION_V5.md",
+      "language": "markdown"
+    },
+    {
+      "fileCategory": "config",
+      "path": "package.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/cli/package.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/src/agent.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/src/builtins.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/src/commands.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/src/doctor.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/src/index.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/src/main.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/src/scenario.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/src/state-commands.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/test/agent-run.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/test/agent.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/test/builtins.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/test/cli.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/test/doctor.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/test/hung-agent.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/test/state-commands.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/test/workflow.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/cli/tsconfig.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/cli/vitest.config.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/contracts/package.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/contract.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/execution.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/identity.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/index.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/json.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/message.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/object.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/path.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/permission.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/port.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/resource.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/template.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/tokens.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/src/variable.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/test/identity.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/test/message.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/test/object.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/test/path.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/test/port.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/test/variable.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/contracts/tsconfig.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/contracts/vitest.config.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/kernel/package.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/context.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/control.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/errors.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/extract.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/index.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/instances.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/locks.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/routing.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/runtime.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/store.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/src/tx.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/checkpoint-b.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/container-tools.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/execution.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/extract.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/fanout-merge.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/gateway.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/inheritance.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/instances.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/json-guard.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/patterns.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/permission.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/review-p1.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/runtime.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/test/store.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/kernel/tsconfig.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/kernel/vitest.config.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/mcp/package.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/mcp/src/index.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/mcp/src/server.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/mcp/src/tools.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/mcp/test/tools.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/mcp/tsconfig.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/sandbox/package.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/backend.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/docker.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/index.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/layout.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/network.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/observe.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/profile.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/resources.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/runner.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/src/wsl.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/test/backend.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/test/docker.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/test/layout.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/test/observe.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/test/profile.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/test/resources.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/test/runner.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/test/wsl.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/sandbox/tsconfig.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/sandbox/vitest.config.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/state/package.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/codec.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/head.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/index.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/lock.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/objects.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/paths.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/permissions.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/resources.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/src/run-state.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/test/claim-durability.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/test/paths.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/test/resources.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "code",
+      "path": "packages/state/test/round-trip.test.ts",
+      "language": "typescript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "packages/state/tsconfig.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "config",
+      "path": "pnpm-workspace.yaml",
+      "language": "yaml"
+    },
+    {
+      "fileCategory": "docs",
+      "path": "README.md",
+      "language": "markdown"
+    },
+    {
+      "fileCategory": "code",
+      "path": "scripts/reachability.mjs",
+      "language": "javascript"
+    },
+    {
+      "fileCategory": "config",
+      "path": "tsconfig.base.json",
+      "language": "json"
+    },
+    {
+      "fileCategory": "docs",
+      "path": "V5_WORKPLAN.md",
+      "language": "markdown"
+    }
+  ],
+  "projectRoot": "D:/codeproject/Hertaloy"
+}

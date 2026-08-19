@@ -1,0 +1,1551 @@
+{
+  "nodes": [
+    {
+      "id": "config:packages/state/package.json",
+      "type": "config",
+      "name": "package.json",
+      "filePath": "packages/state/package.json",
+      "summary": "定义 @nodeflow/state 工作区包的元数据：包入口指向 src/index.ts，声明 contracts/kernel 工作区依赖以及 vitest、typescript 等开发依赖。",
+      "tags": [
+        "configuration",
+        "package-manifest",
+        "typescript",
+        "workspace",
+        "test"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:packages/state/src/codec.ts",
+      "type": "file",
+      "name": "codec.ts",
+      "filePath": "packages/state/src/codec.ts",
+      "summary": "实现可变头 JSON 编解码器，识别并转义 Map/Set 与内部标记，确保重启后运行时容器语义不丢。",
+      "tags": [
+        "serialization",
+        "state-persistence",
+        "codec",
+        "typescript"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "使用内部前缀 $hertaloy$ 转义用户载荷中的冲突键，并用 Object.freeze 保证恢复对象不可变。"
+    },
+    {
+      "id": "file:packages/state/src/head.ts",
+      "type": "file",
+      "name": "head.ts",
+      "filePath": "packages/state/src/head.ts",
+      "summary": "管理状态根下的可变头 head.json：将实例树、锁账本与运行时快照以 JSON 原子写入（临时文件+rename），并在装载时校验格式版本。",
+      "tags": [
+        "state-persistence",
+        "filesystem",
+        "atomic-write",
+        "serialization",
+        "typescript"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/src/index.ts",
+      "type": "file",
+      "name": "index.ts",
+      "filePath": "packages/state/src/index.ts",
+      "summary": "state 包的桶文件，统一 re-export 路径、编解码、对象库、head、锁、run-state、权限与资源模块的公共 API。",
+      "tags": [
+        "barrel",
+        "entry-point",
+        "re-export",
+        "typescript"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:packages/state/src/lock.ts",
+      "type": "file",
+      "name": "lock.ts",
+      "filePath": "packages/state/src/lock.ts",
+      "summary": "实现状态目录级排他锁 head.lock，用 wx 原子创建防止多进程同时写同一个 run，并提供锁信息读取与持有状态查询。",
+      "tags": [
+        "filesystem",
+        "locking",
+        "concurrency",
+        "state-persistence"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/src/objects.ts",
+      "type": "file",
+      "name": "objects.ts",
+      "filePath": "packages/state/src/objects.ts",
+      "summary": "实现对象库的落盘与装载：按 object_id 展开目录、版本号即文件名，写一次不可变，并在装载时校验大小写碰撞与版本连续性。",
+      "tags": [
+        "object-store",
+        "persistence",
+        "filesystem",
+        "immutable",
+        "typescript"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/src/paths.ts",
+      "type": "file",
+      "name": "paths.ts",
+      "filePath": "packages/state/src/paths.ts",
+      "summary": "实现 object_id 到安全文件路径的可逆编码：处理大小写、Windows 保留名、相对段与空段等路径陷阱。",
+      "tags": [
+        "path-encoding",
+        "filesystem",
+        "security",
+        "typescript"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/src/permissions.ts",
+      "type": "file",
+      "name": "permissions.ts",
+      "filePath": "packages/state/src/permissions.ts",
+      "summary": "实现根权限表 permissions.json 的读写与解析：缺省为人类全权、agent 无权，单条授权非法即整表拒绝。",
+      "tags": [
+        "permissions",
+        "security",
+        "configuration",
+        "validation"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/src/resources.ts",
+      "type": "file",
+      "name": "resources.ts",
+      "filePath": "packages/state/src/resources.ts",
+      "summary": "实现资源注册表 resources.json 的读写与动态上载/移除，支持别名到实际路径的映射并拒绝同名覆盖。",
+      "tags": [
+        "resources",
+        "configuration",
+        "registry",
+        "validation"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/src/run-state.ts",
+      "type": "file",
+      "name": "run-state.ts",
+      "filePath": "packages/state/src/run-state.ts",
+      "summary": "将对象库、可变头与目录锁组装成 RunState：open 新建或恢复 run、claim 自动落盘、恢复时认领孤儿执行，并暴露带权限检查的 control 入口。",
+      "tags": [
+        "state-persistence",
+        "runtime",
+        "recovery",
+        "orchestration",
+        "typescript"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/test/claim-durability.test.ts",
+      "type": "file",
+      "name": "claim-durability.test.ts",
+      "filePath": "packages/state/test/claim-durability.test.ts",
+      "summary": "K1 验收测试：验证 claim 在跨进程恢复后仍留在盘上、只读打开可见，以及孤儿执行会在新进程 open 时被认领重跑。",
+      "tags": [
+        "test",
+        "durability",
+        "recovery",
+        "vitest",
+        "typescript"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/test/paths.test.ts",
+      "type": "file",
+      "name": "paths.test.ts",
+      "filePath": "packages/state/test/paths.test.ts",
+      "summary": "覆盖路径编码的可逆性、Windows 保留名/相对段转义、大小写保持以及非法 object_id 拒绝行为。",
+      "tags": [
+        "test",
+        "path-encoding",
+        "vitest",
+        "typescript"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/test/resources.test.ts",
+      "type": "file",
+      "name": "resources.test.ts",
+      "filePath": "packages/state/test/resources.test.ts",
+      "summary": "覆盖资源注册表的缺省空表、动态 add/remove、同名拒绝、整表校验失败与目录不存在时登记等行为。",
+      "tags": [
+        "test",
+        "resources",
+        "configuration",
+        "vitest",
+        "typescript"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/state/test/round-trip.test.ts",
+      "type": "file",
+      "name": "round-trip.test.ts",
+      "filePath": "packages/state/test/round-trip.test.ts",
+      "summary": "跨进程持久化验收：每个用例关闭再重新打开 RunState，验证对象库版本、可变头、目录锁、完整性与恢复语义。",
+      "tags": [
+        "test",
+        "persistence",
+        "round-trip",
+        "recovery",
+        "vitest"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "config:packages/state/tsconfig.json",
+      "type": "config",
+      "name": "tsconfig.json",
+      "filePath": "packages/state/tsconfig.json",
+      "summary": "state 包的 TypeScript 配置，继承仓库根 tsconfig.base.json 并包含 src 与 test 目录。",
+      "tags": [
+        "configuration",
+        "typescript",
+        "build-system"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:scripts/reachability.mjs",
+      "type": "file",
+      "name": "reachability.mjs",
+      "filePath": "scripts/reachability.mjs",
+      "summary": "可达性体检脚本：扫描各包 src 下非 index 的导出函数/类，找出在项目内没有生产调用点的孤儿符号，支持 --check 供 CI 使用。",
+      "tags": [
+        "script",
+        "static-analysis",
+        "developer-tools",
+        "ci",
+        "javascript"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/state/src/codec.ts:encode",
+      "type": "function",
+      "name": "encode",
+      "filePath": "packages/state/src/codec.ts",
+      "lineRange": [
+        38,
+        61
+      ],
+      "summary": "将未知值递归编码为 JSON，支持 Map/Set、数组与对象，并对内部标记前缀键做转义。",
+      "tags": [
+        "serialization",
+        "codec",
+        "recursive"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/codec.ts:decode",
+      "type": "function",
+      "name": "decode",
+      "filePath": "packages/state/src/codec.ts",
+      "lineRange": [
+        63,
+        84
+      ],
+      "summary": "将编码后的 JSON 递归解码回 Map/Set/冻结对象，并还原被转义的对象键。",
+      "tags": [
+        "serialization",
+        "codec",
+        "recursive"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/head.ts:headPath",
+      "type": "function",
+      "name": "headPath",
+      "filePath": "packages/state/src/head.ts",
+      "lineRange": [
+        30,
+        32
+      ],
+      "summary": "返回状态根下 head.json 的路径。",
+      "tags": [
+        "path-helper",
+        "state-persistence",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/head.ts:writeHead",
+      "type": "function",
+      "name": "writeHead",
+      "filePath": "packages/state/src/head.ts",
+      "lineRange": [
+        34,
+        56
+      ],
+      "summary": "把可变头三部件编码后原子写入 head.json（临时文件加 rename）。",
+      "tags": [
+        "atomic-write",
+        "state-persistence",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/head.ts:readHead",
+      "type": "function",
+      "name": "readHead",
+      "filePath": "packages/state/src/head.ts",
+      "lineRange": [
+        58,
+        69
+      ],
+      "summary": "读取并解析 head.json，格式版本不匹配时拒绝装载。",
+      "tags": [
+        "state-persistence",
+        "validation",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/head.ts:decodeHeadParts",
+      "type": "function",
+      "name": "decodeHeadParts",
+      "filePath": "packages/state/src/head.ts",
+      "lineRange": [
+        71,
+        81
+      ],
+      "summary": "从 head 中解码出 registry/ledger/runtime 三部分原始结构。",
+      "tags": [
+        "state-persistence",
+        "codec",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/lock.ts:lockPath",
+      "type": "function",
+      "name": "lockPath",
+      "filePath": "packages/state/src/lock.ts",
+      "lineRange": [
+        22,
+        24
+      ],
+      "summary": "返回状态目录锁 head.lock 的路径。",
+      "tags": [
+        "path-helper",
+        "locking",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/lock.ts:isLocked",
+      "type": "function",
+      "name": "isLocked",
+      "filePath": "packages/state/src/lock.ts",
+      "lineRange": [
+        71,
+        73
+      ],
+      "summary": "检查状态目录当前是否被锁。",
+      "tags": [
+        "locking",
+        "filesystem",
+        "state-persistence"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:packages/state/src/lock.ts:StateLock",
+      "type": "class",
+      "name": "StateLock",
+      "filePath": "packages/state/src/lock.ts",
+      "lineRange": [
+        26,
+        60
+      ],
+      "summary": "封装状态目录排他锁：acquire 用 wx 原子创建、release 删除，并保存持有者 pid 与时间。",
+      "tags": [
+        "locking",
+        "concurrency",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/objects.ts:flushObjects",
+      "type": "function",
+      "name": "flushObjects",
+      "filePath": "packages/state/src/objects.ts",
+      "lineRange": [
+        24,
+        41
+      ],
+      "summary": "将游标后的新对象版本写入 objects/ 目录，检测大小写碰撞，返回新游标。",
+      "tags": [
+        "object-store",
+        "persistence",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/objects.ts:loadObjects",
+      "type": "function",
+      "name": "loadObjects",
+      "filePath": "packages/state/src/objects.ts",
+      "lineRange": [
+        49,
+        70
+      ],
+      "summary": "递归装载 objects/ 下全部对象版本并按序交给 ObjectStore，校验对象 id 与目录一致。",
+      "tags": [
+        "object-store",
+        "persistence",
+        "recovery"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/objects.ts:versionsOnDisk",
+      "type": "function",
+      "name": "versionsOnDisk",
+      "filePath": "packages/state/src/objects.ts",
+      "lineRange": [
+        88,
+        95
+      ],
+      "summary": "返回某个对象在磁盘上的版本号列表，供 CLI 与测试直接查询。",
+      "tags": [
+        "object-store",
+        "query",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/objects.ts:walk",
+      "type": "function",
+      "name": "walk",
+      "filePath": "packages/state/src/objects.ts",
+      "lineRange": [
+        73,
+        85
+      ],
+      "summary": "深度优先遍历对象目录，产出所有包含版本文件的目录及其解码后的 object_id。",
+      "tags": [
+        "filesystem",
+        "traversal",
+        "object-store"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/paths.ts:encodeSegment",
+      "type": "function",
+      "name": "encodeSegment",
+      "filePath": "packages/state/src/paths.ts",
+      "lineRange": [
+        43,
+        51
+      ],
+      "summary": "把 object_id 的一个段编码为安全文件名（百分号转义、保留名/相对段转义）。",
+      "tags": [
+        "path-encoding",
+        "security",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/paths.ts:decodeSegment",
+      "type": "function",
+      "name": "decodeSegment",
+      "filePath": "packages/state/src/paths.ts",
+      "lineRange": [
+        53,
+        56
+      ],
+      "summary": "把编码后的文件名段还原为原始 object_id 段。",
+      "tags": [
+        "path-encoding",
+        "decoding",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/paths.ts:objectDir",
+      "type": "function",
+      "name": "objectDir",
+      "filePath": "packages/state/src/paths.ts",
+      "lineRange": [
+        64,
+        71
+      ],
+      "summary": "把完整 object_id 映射为安全目录路径，并拒绝空段。",
+      "tags": [
+        "path-encoding",
+        "validation",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/paths.ts:decodeObjectDir",
+      "type": "function",
+      "name": "decodeObjectDir",
+      "filePath": "packages/state/src/paths.ts",
+      "lineRange": [
+        73,
+        75
+      ],
+      "summary": "把目录路径还原为原始 object_id。",
+      "tags": [
+        "path-encoding",
+        "decoding",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/paths.ts:versionFile",
+      "type": "function",
+      "name": "versionFile",
+      "filePath": "packages/state/src/paths.ts",
+      "lineRange": [
+        78,
+        83
+      ],
+      "summary": "根据正整数版本号生成版本文件名 @N.json。",
+      "tags": [
+        "path-encoding",
+        "naming",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/paths.ts:parseVersionFile",
+      "type": "function",
+      "name": "parseVersionFile",
+      "filePath": "packages/state/src/paths.ts",
+      "lineRange": [
+        85,
+        88
+      ],
+      "summary": "解析版本文件名，返回版本号或 null（拒绝前导零）。",
+      "tags": [
+        "path-encoding",
+        "parsing",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/paths.ts:objectPath",
+      "type": "function",
+      "name": "objectPath",
+      "filePath": "packages/state/src/paths.ts",
+      "lineRange": [
+        91,
+        93
+      ],
+      "summary": "拼接对象目录与版本文件名，得到对象的完整相对路径。",
+      "tags": [
+        "path-encoding",
+        "filesystem",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/permissions.ts:permissionsPath",
+      "type": "function",
+      "name": "permissionsPath",
+      "filePath": "packages/state/src/permissions.ts",
+      "lineRange": [
+        46,
+        48
+      ],
+      "summary": "返回状态根下 permissions.json 的路径。",
+      "tags": [
+        "path-helper",
+        "permissions",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/permissions.ts:loadPermissions",
+      "type": "function",
+      "name": "loadPermissions",
+      "filePath": "packages/state/src/permissions.ts",
+      "lineRange": [
+        50,
+        56
+      ],
+      "summary": "加载权限表：无文件时返回缺省授权，有文件时解析并逐条校验 grant。",
+      "tags": [
+        "permissions",
+        "configuration",
+        "validation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/permissions.ts:parseFile",
+      "type": "function",
+      "name": "parseFile",
+      "filePath": "packages/state/src/permissions.ts",
+      "lineRange": [
+        58,
+        84
+      ],
+      "summary": "解析 permissions.json，校验格式版本与 grants 数组，任何一条非法即整表拒绝。",
+      "tags": [
+        "permissions",
+        "validation",
+        "parsing"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/permissions.ts:writePermissions",
+      "type": "function",
+      "name": "writePermissions",
+      "filePath": "packages/state/src/permissions.ts",
+      "lineRange": [
+        87,
+        93
+      ],
+      "summary": "把授权表写成 permissions.json（用于 hertaloy permissions init）。",
+      "tags": [
+        "permissions",
+        "configuration",
+        "write"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/resources.ts:resourcesPath",
+      "type": "function",
+      "name": "resourcesPath",
+      "filePath": "packages/state/src/resources.ts",
+      "lineRange": [
+        27,
+        29
+      ],
+      "summary": "返回状态根下 resources.json 的路径。",
+      "tags": [
+        "path-helper",
+        "resources",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/resources.ts:loadResources",
+      "type": "function",
+      "name": "loadResources",
+      "filePath": "packages/state/src/resources.ts",
+      "lineRange": [
+        37,
+        51
+      ],
+      "summary": "加载资源注册表：无文件返回空表，有文件用 zod 严格校验并整表拒绝坏数据。",
+      "tags": [
+        "resources",
+        "configuration",
+        "validation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/resources.ts:writeResources",
+      "type": "function",
+      "name": "writeResources",
+      "filePath": "packages/state/src/resources.ts",
+      "lineRange": [
+        53,
+        64
+      ],
+      "summary": "把资源注册表写入 resources.json，必要时先创建目录。",
+      "tags": [
+        "resources",
+        "configuration",
+        "write"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/resources.ts:addResource",
+      "type": "function",
+      "name": "addResource",
+      "filePath": "packages/state/src/resources.ts",
+      "lineRange": [
+        70,
+        91
+      ],
+      "summary": "向资源注册表添加一条别名映射，同名已存在即拒绝。",
+      "tags": [
+        "resources",
+        "registry",
+        "validation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/state/src/resources.ts:removeResource",
+      "type": "function",
+      "name": "removeResource",
+      "filePath": "packages/state/src/resources.ts",
+      "lineRange": [
+        93,
+        100
+      ],
+      "summary": "从资源注册表删除指定别名，不存在则报错。",
+      "tags": [
+        "resources",
+        "registry",
+        "mutation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:packages/state/src/run-state.ts:RunState",
+      "type": "class",
+      "name": "RunState",
+      "filePath": "packages/state/src/run-state.ts",
+      "lineRange": [
+        54,
+        204
+      ],
+      "summary": "状态门面：组合对象库、可变头、权限/资源配置与目录锁，提供 open/persist/control/close 生命周期。",
+      "tags": [
+        "state-persistence",
+        "runtime",
+        "orchestration"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:packages/state/test/claim-durability.test.ts:NeverReturns",
+      "type": "class",
+      "name": "NeverReturns",
+      "filePath": "packages/state/test/claim-durability.test.ts",
+      "lineRange": [
+        46,
+        53
+      ],
+      "summary": "测试用 ExecutionBackend，run 永不返回，用于模拟 agent 执行中进程崩溃。",
+      "tags": [
+        "test",
+        "mock",
+        "execution-backend"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:packages/state/test/claim-durability.test.ts:SucceedsOnRetry",
+      "type": "class",
+      "name": "SucceedsOnRetry",
+      "filePath": "packages/state/test/claim-durability.test.ts",
+      "lineRange": [
+        108,
+        121
+      ],
+      "summary": "测试用 ExecutionBackend，第一次调用永不返回，第二次成功，用于验证孤儿认领重跑。",
+      "tags": [
+        "test",
+        "mock",
+        "execution-backend"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:scripts/reachability.mjs:sources",
+      "type": "function",
+      "name": "sources",
+      "filePath": "scripts/reachability.mjs",
+      "lineRange": [
+        71,
+        83
+      ],
+      "summary": "扫描各包 src 下的非 index.ts 文件，返回文件内容供可达性分析。",
+      "tags": [
+        "script",
+        "scanning",
+        "static-analysis"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:scripts/reachability.mjs:main",
+      "type": "function",
+      "name": "main",
+      "filePath": "scripts/reachability.mjs",
+      "lineRange": [
+        97,
+        135
+      ],
+      "summary": "执行可达性体检：统计导出函数/类、查找无生产调用点的孤儿并输出报告；--check 时失败退出码 1。",
+      "tags": [
+        "script",
+        "static-analysis",
+        "reporting"
+      ],
+      "complexity": "simple"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:packages/state/src/codec.ts",
+      "target": "function:packages/state/src/codec.ts:encode",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/codec.ts",
+      "target": "function:packages/state/src/codec.ts:decode",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "function:packages/state/src/head.ts:headPath",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "function:packages/state/src/head.ts:writeHead",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "function:packages/state/src/head.ts:readHead",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "function:packages/state/src/head.ts:decodeHeadParts",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/lock.ts",
+      "target": "function:packages/state/src/lock.ts:lockPath",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/lock.ts",
+      "target": "function:packages/state/src/lock.ts:isLocked",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/lock.ts",
+      "target": "class:packages/state/src/lock.ts:StateLock",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "function:packages/state/src/objects.ts:flushObjects",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "function:packages/state/src/objects.ts:loadObjects",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "function:packages/state/src/objects.ts:versionsOnDisk",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "function:packages/state/src/objects.ts:walk",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:encodeSegment",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:decodeSegment",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:objectDir",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:decodeObjectDir",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:versionFile",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:parseVersionFile",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:objectPath",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/permissions.ts",
+      "target": "function:packages/state/src/permissions.ts:permissionsPath",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/permissions.ts",
+      "target": "function:packages/state/src/permissions.ts:loadPermissions",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/permissions.ts",
+      "target": "function:packages/state/src/permissions.ts:parseFile",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/permissions.ts",
+      "target": "function:packages/state/src/permissions.ts:writePermissions",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:resourcesPath",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:loadResources",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:writeResources",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:addResource",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:removeResource",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "class:packages/state/src/run-state.ts:RunState",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/test/claim-durability.test.ts",
+      "target": "class:packages/state/test/claim-durability.test.ts:NeverReturns",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/test/claim-durability.test.ts",
+      "target": "class:packages/state/test/claim-durability.test.ts:SucceedsOnRetry",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scripts/reachability.mjs",
+      "target": "function:scripts/reachability.mjs:sources",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scripts/reachability.mjs",
+      "target": "function:scripts/reachability.mjs:main",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/state/src/codec.ts",
+      "target": "function:packages/state/src/codec.ts:encode",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/codec.ts",
+      "target": "function:packages/state/src/codec.ts:decode",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "function:packages/state/src/head.ts:headPath",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "function:packages/state/src/head.ts:writeHead",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "function:packages/state/src/head.ts:readHead",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "function:packages/state/src/head.ts:decodeHeadParts",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/lock.ts",
+      "target": "function:packages/state/src/lock.ts:lockPath",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/lock.ts",
+      "target": "class:packages/state/src/lock.ts:StateLock",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/lock.ts",
+      "target": "function:packages/state/src/lock.ts:isLocked",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "function:packages/state/src/objects.ts:flushObjects",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "function:packages/state/src/objects.ts:loadObjects",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "function:packages/state/src/objects.ts:versionsOnDisk",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:encodeSegment",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:decodeSegment",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:objectDir",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:decodeObjectDir",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:versionFile",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:parseVersionFile",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "function:packages/state/src/paths.ts:objectPath",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/permissions.ts",
+      "target": "function:packages/state/src/permissions.ts:permissionsPath",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/permissions.ts",
+      "target": "function:packages/state/src/permissions.ts:loadPermissions",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/permissions.ts",
+      "target": "function:packages/state/src/permissions.ts:writePermissions",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:resourcesPath",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:loadResources",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:writeResources",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:addResource",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "function:packages/state/src/resources.ts:removeResource",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "class:packages/state/src/run-state.ts:RunState",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/state/src/codec.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/head.ts",
+      "target": "file:packages/state/src/codec.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/index.ts",
+      "target": "file:packages/state/src/paths.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/index.ts",
+      "target": "file:packages/state/src/codec.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/index.ts",
+      "target": "file:packages/state/src/objects.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/index.ts",
+      "target": "file:packages/state/src/head.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/index.ts",
+      "target": "file:packages/state/src/lock.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/index.ts",
+      "target": "file:packages/state/src/run-state.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/index.ts",
+      "target": "file:packages/state/src/permissions.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/index.ts",
+      "target": "file:packages/state/src/resources.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "file:packages/state/src/paths.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/permissions.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/state/src/permissions.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/state/src/resources.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/state/src/head.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/state/src/lock.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/state/src/objects.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/claim-durability.test.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/claim-durability.test.ts",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/claim-durability.test.ts",
+      "target": "file:packages/state/src/run-state.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/paths.test.ts",
+      "target": "file:packages/state/src/paths.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/resources.test.ts",
+      "target": "file:packages/state/src/resources.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/round-trip.test.ts",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/round-trip.test.ts",
+      "target": "file:packages/state/src/run-state.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/round-trip.test.ts",
+      "target": "file:packages/state/src/objects.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/test/round-trip.test.ts",
+      "target": "file:packages/state/src/lock.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/state/test/claim-durability.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/contracts/src/index.ts",
+      "target": "file:packages/state/test/claim-durability.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/state/test/claim-durability.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/state/src/paths.ts",
+      "target": "file:packages/state/test/paths.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/state/src/resources.ts",
+      "target": "file:packages/state/test/resources.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/state/src/run-state.ts",
+      "target": "file:packages/state/test/round-trip.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/state/src/objects.ts",
+      "target": "file:packages/state/test/round-trip.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/state/src/lock.ts",
+      "target": "file:packages/state/test/round-trip.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/state/test/round-trip.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:packages/state/package.json",
+      "target": "file:packages/state/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:packages/state/tsconfig.json",
+      "target": "file:packages/state/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    }
+  ]
+}

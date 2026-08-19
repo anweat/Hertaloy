@@ -1,0 +1,22 @@
+{
+  "projectRoot": "D:\\codeproject\\Hertaloy",
+  "batchFiles": [
+    {"path": "packages/state/package.json", "language": "json", "sizeLines": 18, "fileCategory": "config"},
+    {"path": "packages/state/src/codec.ts", "language": "typescript", "sizeLines": 84, "fileCategory": "code"},
+    {"path": "packages/state/src/head.ts", "language": "typescript", "sizeLines": 81, "fileCategory": "code"},
+    {"path": "packages/state/src/index.ts", "language": "typescript", "sizeLines": 8, "fileCategory": "code"},
+    {"path": "packages/state/src/lock.ts", "language": "typescript", "sizeLines": 73, "fileCategory": "code"},
+    {"path": "packages/state/src/objects.ts", "language": "typescript", "sizeLines": 97, "fileCategory": "code"},
+    {"path": "packages/state/src/paths.ts", "language": "typescript", "sizeLines": 93, "fileCategory": "code"},
+    {"path": "packages/state/src/permissions.ts", "language": "typescript", "sizeLines": 93, "fileCategory": "code"},
+    {"path": "packages/state/src/resources.ts", "language": "typescript", "sizeLines": 100, "fileCategory": "code"},
+    {"path": "packages/state/src/run-state.ts", "language": "typescript", "sizeLines": 204, "fileCategory": "code"},
+    {"path": "packages/state/test/claim-durability.test.ts", "language": "typescript", "sizeLines": 198, "fileCategory": "code"},
+    {"path": "packages/state/test/paths.test.ts", "language": "typescript", "sizeLines": 91, "fileCategory": "code"},
+    {"path": "packages/state/test/resources.test.ts", "language": "typescript", "sizeLines": 112, "fileCategory": "code"},
+    {"path": "packages/state/test/round-trip.test.ts", "language": "typescript", "sizeLines": 211, "fileCategory": "code"},
+    {"path": "packages/state/tsconfig.json", "language": "json", "sizeLines": 4, "fileCategory": "config"},
+    {"path": "scripts/reachability.mjs", "language": "javascript", "sizeLines": 137, "fileCategory": "code"}
+  ],
+  "batchImportData": {}
+}

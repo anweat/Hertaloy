@@ -1,0 +1,315 @@
+{
+  "nodes": [
+    {
+      "id": "document:FOUNDATION_V5.md",
+      "type": "document",
+      "name": "FOUNDATION_V5.md",
+      "filePath": "FOUNDATION_V5.md",
+      "summary": "Nodeflow V5 的概念基础文档，系统阐述嵌套容器运行时设计：容器 is-a 实例、资产即变量、等待即锁、版本历史即状态、agent 即命令行等五次归约；覆盖实体模型、端口/servo/handler、变量与预算、网关与锁、权限、事务并发、持久化、沙箱执行面、不变量总表与验收方法。全文以 ✅/🚧/📋/❓ 状态标记与代码同步维护。",
+      "tags": ["documentation", "architecture", "design", "v5", "nested-runtime"],
+      "complexity": "complex",
+      "languageNotes": "使用状态标记（✅/🚧/📋/❓）逐条绑定设计与实现状态，是后续实现与测试计划的单一概念基线。"
+    },
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "README.md",
+      "summary": "Hertaloy / Nodeflow V5 仓库状态总览，说明项目已进入 V5 嵌套容器运行时重建阶段；列出概念入口、测试与实现计划、五包规模与成熟度分档，并明确崩溃接管、MCP/画布等尚不具备的能力以及 archive/ 只读历史边界。",
+      "tags": ["documentation", "overview", "readme", "v5", "entry-point"],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:V5_WORKPLAN.md",
+      "type": "document",
+      "name": "V5_WORKPLAN.md",
+      "filePath": "V5_WORKPLAN.md",
+      "summary": "V5 测试与实现工作计划：从开工前设计门收束、测试集分层 Task 1-6、Checkpoint A/B、外部审核修复记录，到问题点清单与沙箱保留决策；逐项记录验收标准、未做事项与范围取舍，是 FOUNDATION_V5.md 的落地执行文档。",
+      "tags": ["documentation", "workplan", "testing", "implementation", "v5"],
+      "complexity": "complex",
+      "languageNotes": "以任务验收表和审核分诊记录推进实现，明确区分已修、暂不做与过度设计，防止范围膨胀。"
+    },
+    {
+      "id": "config:package.json",
+      "type": "config",
+      "name": "package.json",
+      "filePath": "package.json",
+      "summary": "根 package.json 定义 hertaloy 私有 monorepo 的包管理器、Node 版本与脚本：`pnpm -r test/typecheck` 统一运行各包测试与类型检查，`hertaloy` 通过 tsx 启动 packages/cli/src/main.ts，并含 reachability 检查脚本。",
+      "tags": ["configuration", "monorepo", "build-system", "pnpm", "typescript"],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:pnpm-workspace.yaml",
+      "type": "config",
+      "name": "pnpm-workspace.yaml",
+      "filePath": "pnpm-workspace.yaml",
+      "summary": "pnpm workspace 配置，声明 `packages/*` 为工作区包集合，是 contracts/kernel/sandbox/state/cli 等 TypeScript 包被统一安装、测试与类型检查的基础。",
+      "tags": ["configuration", "pnpm", "workspace", "monorepo"],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:tsconfig.base.json",
+      "type": "config",
+      "name": "tsconfig.base.json",
+      "filePath": "tsconfig.base.json",
+      "summary": "TypeScript 基础编译配置，开启 strict、noUncheckedIndexedAccess、exactOptionalPropertyTypes、verbatimModuleSyntax 等严格检查，采用 ESNext + Bundler module resolution，为 monorepo 全部 TS 包提供统一严格基线。",
+      "tags": ["configuration", "typescript", "strict", "build-system"],
+      "complexity": "simple",
+      "languageNotes": "exactOptionalPropertyTypes 与 noUncheckedIndexedAccess 对契约/状态类型设计影响显著，是保证运行时边界安全的关键选项。"
+    }
+  ],
+  "edges": [
+    {
+      "source": "document:README.md",
+      "target": "document:FOUNDATION_V5.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:V5_WORKPLAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:packages/cli/src/main.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:packages/sandbox/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:packages/state/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:FOUNDATION_V5.md",
+      "target": "document:V5_WORKPLAN.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:FOUNDATION_V5.md",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:FOUNDATION_V5.md",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:FOUNDATION_V5.md",
+      "target": "file:packages/sandbox/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:FOUNDATION_V5.md",
+      "target": "file:packages/state/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:FOUNDATION_V5.md",
+      "target": "file:packages/cli/src/main.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:FOUNDATION_V5.md",
+      "target": "file:packages/sandbox/src/runner.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:FOUNDATION_V5.md",
+      "target": "file:packages/sandbox/src/layout.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:V5_WORKPLAN.md",
+      "target": "document:FOUNDATION_V5.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:V5_WORKPLAN.md",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:V5_WORKPLAN.md",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:V5_WORKPLAN.md",
+      "target": "file:packages/sandbox/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:V5_WORKPLAN.md",
+      "target": "file:packages/state/src/index.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:V5_WORKPLAN.md",
+      "target": "file:packages/cli/src/main.ts",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:packages/cli/src/main.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:packages/sandbox/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:package.json",
+      "target": "file:packages/state/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:pnpm-workspace.yaml",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:pnpm-workspace.yaml",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:pnpm-workspace.yaml",
+      "target": "file:packages/sandbox/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:pnpm-workspace.yaml",
+      "target": "file:packages/state/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:pnpm-workspace.yaml",
+      "target": "file:packages/cli/src/main.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:tsconfig.base.json",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:tsconfig.base.json",
+      "target": "file:packages/kernel/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:tsconfig.base.json",
+      "target": "file:packages/sandbox/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:tsconfig.base.json",
+      "target": "file:packages/state/src/index.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:tsconfig.base.json",
+      "target": "file:packages/cli/src/main.ts",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    }
+  ]
+}

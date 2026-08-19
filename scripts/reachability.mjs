@@ -66,6 +66,7 @@ const ALLOWED = new Map([
   ["validateResponse", "同上，本地自校验的判据要能单独测"],
   ["checkAssetName", "同上，与内核 namespacedId 同一条规则"],
   ["extractJson", "同上，模型总会把 JSON 包进代码块"],
+  ["pickExecPort", "runExec 在同文件里调；退出码→端口的判据要能单独测"],
 ]);
 
 function sources() {

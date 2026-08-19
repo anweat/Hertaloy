@@ -13,7 +13,10 @@ import {
   checkAssetName,
   extractJson,
   runAgent,
+  pickExecPort,
+  runExec,
   validateResponse,
+  type CommandRunner,
 } from "../src/agent.js";
 
 const REQUEST = {
@@ -230,5 +233,60 @@ describe("从模型回答里挖 JSON", () => {
 
   it("不带语言标记的代码块也认", () => {
     expect(extractJson("```\n{\"a\":1}\n```")).toEqual({ a: 1 });
+  });
+});
+
+describe("★ --exec：任意命令行包成合规节点", () => {
+  const runner = (code: number, out = "", err = ""): CommandRunner =>
+    async () => ({ code, stdout: out, stderr: err });
+
+  it("退出 0 → 走 ok 端口，带上退出码与输出", async () => {
+    const io = memIO({
+      "../.hertaloy/request.json": JSON.stringify({ ...REQUEST, allowedEmitPorts: ["ok", "err"] }),
+    });
+    expect(await runExec(io, ["git", "commit"], runner(0, "1 file changed"))).toBe(0);
+    const emit = JSON.parse(io.files["../.hertaloy/emit.json"] as string);
+    expect(emit.ok.exitCode).toBe(0);
+    expect(emit.ok.stdout).toContain("1 file changed");
+  });
+
+  it("退出非 0 → 走 err 端口 —— 失败也是流程的一条正常分支", async () => {
+    const io = memIO({
+      "../.hertaloy/request.json": JSON.stringify({ ...REQUEST, allowedEmitPorts: ["ok", "err"] }),
+    });
+    expect(await runExec(io, ["git", "commit"], runner(1, "", "nothing to commit"))).toBe(0);
+    const emit = JSON.parse(io.files["../.hertaloy/emit.json"] as string);
+    expect(emit.err.exitCode).toBe(1);
+    expect(emit.err.stderr).toContain("nothing to commit");
+  });
+
+  it("★ 没声明 err 端口时失败就是真失败 —— 不悄悄路由成另一条边", async () => {
+    const io = memIO({
+      "../.hertaloy/request.json": JSON.stringify({ ...REQUEST, allowedEmitPorts: ["ok"] }),
+    });
+    expect(await runExec(io, ["git", "commit"], runner(1, "", "炸了"))).toBe(1);
+    expect(io.files["../.hertaloy/emit.json"]).toBeUndefined();
+    expect(io.logs.join("")).toContain("显式声明一个 err 端口");
+  });
+
+  it("没有 ok 端口就用第一个允许的 —— 不强求命名", () => {
+    expect(pickExecPort(0, ["结果"])).toBe("结果");
+    expect(pickExecPort(0, ["ok", "结果"])).toBe("ok");
+    expect(pickExecPort(1, ["ok"])).toBeNull();
+    expect(pickExecPort(1, ["ok", "err"])).toBe("err");
+  });
+
+  it("输出很长时只留尾部 —— 一次 pnpm test 能有几兆", async () => {
+    const io = memIO({
+      "../.hertaloy/request.json": JSON.stringify({ ...REQUEST, allowedEmitPorts: ["ok"] }),
+    });
+    await runExec(io, ["x"], runner(0, "A".repeat(20000)));
+    const emit = JSON.parse(io.files["../.hertaloy/emit.json"] as string);
+    expect(emit.ok.stdout.length).toBeLessThan(5000);
+    expect(emit.ok.stdout).toContain("略去");
+  });
+
+  it("命令为空就报用法", async () => {
+    expect(await runExec(memIO(), [], runner(0))).toBe(2);
   });
 });

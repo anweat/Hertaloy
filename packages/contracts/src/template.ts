@@ -51,9 +51,34 @@ export const AgentSpec = z
      * 模板因此可移植：同一份模板在不同机器上跑不同的仓库，而 agent 始终
      * 拿不到真实位置。
      */
+    /**
+     * 工作区来源，**二选一**：
+     *
+     *   `source`  从具名仓库克隆一份新的（起点可用 `base` 钉住）
+     *   `from`    **接过本容器内某个上游节点的工作区** —— 子流程的关键
+     *
+     * `from` 只能写**本容器内的节点名**，于是交接天然被限定在自己的命名空间里：
+     * 一个实例接不到兄弟实例的工作区。这不是靠额外检查实现的，
+     * 是靠"节点名是模板局部的"这条本来就有的性质。
+     *
+     * 交接而不是共享：下游拿到的是上游工作区的**一份拷贝**，各自仍有独立沙箱、
+     * 独立快照。共享目录会让并行的两个节点互相踩，而沙箱一次性正是并行安全的来源。
+     */
     workspace: z
-      .object({ source: Ident, base: z.string().min(1).optional() })
+      .object({
+        source: Ident.optional(),
+        base: z.string().min(1).optional(),
+        from: NodeId.optional(),
+      })
       .strict()
+      .refine(
+        (w) => (w.source === undefined) !== (w.from === undefined),
+        "workspace 要么给 source（从具名仓库克隆），要么给 from（接过上游节点的工作区），不能都给也不能都不给",
+      )
+      .refine(
+        (w) => w.base === undefined || w.source !== undefined,
+        "base 只在 source 模式下有意义 —— 接过上游工作区时起点由上游决定",
+      )
       .optional(),
     /**
      * 参考资料：别名 → 具名资源。落在 `.hertaloy/resources/<别名>/`。

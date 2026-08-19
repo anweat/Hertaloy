@@ -1,0 +1,1839 @@
+{
+  "scriptCompleted": true,
+  "filesAnalyzed": 16,
+  "filesSkipped": [],
+  "results": [
+    {
+      "path": "packages/state/package.json",
+      "language": "json",
+      "fileCategory": "config",
+      "totalLines": 18,
+      "nonEmptyLines": 18,
+      "sections": [
+        {
+          "heading": "name",
+          "level": 1,
+          "line": 2
+        },
+        {
+          "heading": "version",
+          "level": 1,
+          "line": 3
+        },
+        {
+          "heading": "private",
+          "level": 1,
+          "line": 4
+        },
+        {
+          "heading": "type",
+          "level": 1,
+          "line": 5
+        },
+        {
+          "heading": "main",
+          "level": 1,
+          "line": 6
+        },
+        {
+          "heading": "exports",
+          "level": 1,
+          "line": 7
+        },
+        {
+          "heading": "scripts",
+          "level": 1,
+          "line": 8
+        },
+        {
+          "heading": "dependencies",
+          "level": 1,
+          "line": 9
+        },
+        {
+          "heading": "devDependencies",
+          "level": 1,
+          "line": 13
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 9
+      }
+    },
+    {
+      "path": "packages/state/src/codec.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 84,
+      "nonEmptyLines": 76,
+      "functions": [
+        {
+          "name": "escapeKey",
+          "startLine": 30,
+          "endLine": 32,
+          "params": [
+            "key"
+          ]
+        },
+        {
+          "name": "unescapeKey",
+          "startLine": 34,
+          "endLine": 36,
+          "params": [
+            "key"
+          ]
+        },
+        {
+          "name": "encode",
+          "startLine": 38,
+          "endLine": 61,
+          "params": [
+            "value"
+          ]
+        },
+        {
+          "name": "decode",
+          "startLine": 63,
+          "endLine": 84,
+          "params": [
+            "value"
+          ]
+        }
+      ],
+      "exports": [
+        {
+          "name": "encode",
+          "line": 38,
+          "isDefault": false
+        },
+        {
+          "name": "decode",
+          "line": 63,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "escapeKey",
+          "callee": "key.startsWith",
+          "lineNumber": 31
+        },
+        {
+          "caller": "unescapeKey",
+          "callee": "key.startsWith",
+          "lineNumber": 35
+        },
+        {
+          "caller": "unescapeKey",
+          "callee": "key.slice",
+          "lineNumber": 35
+        },
+        {
+          "caller": "encode",
+          "callee": "[...value].map",
+          "lineNumber": 41
+        },
+        {
+          "caller": "encode",
+          "callee": "encode",
+          "lineNumber": 41
+        },
+        {
+          "caller": "encode",
+          "callee": "encode",
+          "lineNumber": 41
+        },
+        {
+          "caller": "encode",
+          "callee": "[...value].map",
+          "lineNumber": 44
+        },
+        {
+          "caller": "encode",
+          "callee": "Array.isArray",
+          "lineNumber": 46
+        },
+        {
+          "caller": "encode",
+          "callee": "value.map",
+          "lineNumber": 46
+        },
+        {
+          "caller": "encode",
+          "callee": "Object.entries",
+          "lineNumber": 49
+        },
+        {
+          "caller": "encode",
+          "callee": "escapeKey",
+          "lineNumber": 53
+        },
+        {
+          "caller": "encode",
+          "callee": "encode",
+          "lineNumber": 53
+        },
+        {
+          "caller": "encode",
+          "callee": "Number.isFinite",
+          "lineNumber": 57
+        },
+        {
+          "caller": "encode",
+          "callee": "String",
+          "lineNumber": 58
+        },
+        {
+          "caller": "decode",
+          "callee": "Array.isArray",
+          "lineNumber": 65
+        },
+        {
+          "caller": "decode",
+          "callee": "Object.freeze",
+          "lineNumber": 65
+        },
+        {
+          "caller": "decode",
+          "callee": "value.map",
+          "lineNumber": 65
+        },
+        {
+          "caller": "decode",
+          "callee": "entries.map",
+          "lineNumber": 71
+        },
+        {
+          "caller": "decode",
+          "callee": "decode",
+          "lineNumber": 71
+        },
+        {
+          "caller": "decode",
+          "callee": "decode",
+          "lineNumber": 71
+        },
+        {
+          "caller": "decode",
+          "callee": "(setItems as readonly Json[]).map",
+          "lineNumber": 75
+        },
+        {
+          "caller": "decode",
+          "callee": "Object.entries",
+          "lineNumber": 79
+        },
+        {
+          "caller": "decode",
+          "callee": "unescapeKey",
+          "lineNumber": 79
+        },
+        {
+          "caller": "decode",
+          "callee": "decode",
+          "lineNumber": 79
+        },
+        {
+          "caller": "decode",
+          "callee": "Object.freeze",
+          "lineNumber": 83
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 2,
+        "functionCount": 4,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/src/head.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 81,
+      "nonEmptyLines": 74,
+      "functions": [
+        {
+          "name": "headPath",
+          "startLine": 30,
+          "endLine": 32,
+          "params": [
+            "root"
+          ]
+        },
+        {
+          "name": "writeHead",
+          "startLine": 34,
+          "endLine": 56,
+          "params": [
+            "root",
+            "parts"
+          ]
+        },
+        {
+          "name": "readHead",
+          "startLine": 58,
+          "endLine": 69,
+          "params": [
+            "root"
+          ]
+        },
+        {
+          "name": "decodeHeadParts",
+          "startLine": 71,
+          "endLine": 81,
+          "params": [
+            "head"
+          ]
+        }
+      ],
+      "exports": [
+        {
+          "name": "HEAD_FORMAT",
+          "line": 18,
+          "isDefault": false
+        },
+        {
+          "name": "headPath",
+          "line": 30,
+          "isDefault": false
+        },
+        {
+          "name": "writeHead",
+          "line": 34,
+          "isDefault": false
+        },
+        {
+          "name": "readHead",
+          "line": 58,
+          "isDefault": false
+        },
+        {
+          "name": "decodeHeadParts",
+          "line": 71,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "headPath",
+          "callee": "join",
+          "lineNumber": 31
+        },
+        {
+          "caller": "writeHead",
+          "callee": "encode",
+          "lineNumber": 48
+        },
+        {
+          "caller": "writeHead",
+          "callee": "encode",
+          "lineNumber": 49
+        },
+        {
+          "caller": "writeHead",
+          "callee": "encode",
+          "lineNumber": 50
+        },
+        {
+          "caller": "writeHead",
+          "callee": "headPath",
+          "lineNumber": 52
+        },
+        {
+          "caller": "writeHead",
+          "callee": "writeFileSync",
+          "lineNumber": 54
+        },
+        {
+          "caller": "writeHead",
+          "callee": "JSON.stringify",
+          "lineNumber": 54
+        },
+        {
+          "caller": "writeHead",
+          "callee": "renameSync",
+          "lineNumber": 55
+        },
+        {
+          "caller": "readHead",
+          "callee": "headPath",
+          "lineNumber": 59
+        },
+        {
+          "caller": "readHead",
+          "callee": "existsSync",
+          "lineNumber": 60
+        },
+        {
+          "caller": "readHead",
+          "callee": "JSON.parse",
+          "lineNumber": 61
+        },
+        {
+          "caller": "readHead",
+          "callee": "readFileSync",
+          "lineNumber": 61
+        },
+        {
+          "caller": "readHead",
+          "callee": "String",
+          "lineNumber": 64
+        },
+        {
+          "caller": "decodeHeadParts",
+          "callee": "decode",
+          "lineNumber": 77
+        },
+        {
+          "caller": "decodeHeadParts",
+          "callee": "decode",
+          "lineNumber": 78
+        },
+        {
+          "caller": "decodeHeadParts",
+          "callee": "decode",
+          "lineNumber": 79
+        }
+      ],
+      "metrics": {
+        "importCount": 1,
+        "exportCount": 5,
+        "functionCount": 4,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/src/index.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 8,
+      "nonEmptyLines": 8,
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/src/lock.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 73,
+      "nonEmptyLines": 63,
+      "functions": [
+        {
+          "name": "lockPath",
+          "startLine": 22,
+          "endLine": 24,
+          "params": [
+            "root"
+          ]
+        },
+        {
+          "name": "describe",
+          "startLine": 62,
+          "endLine": 69,
+          "params": [
+            "path"
+          ]
+        },
+        {
+          "name": "isLocked",
+          "startLine": 71,
+          "endLine": 73,
+          "params": [
+            "root"
+          ]
+        }
+      ],
+      "classes": [
+        {
+          "name": "StateLock",
+          "startLine": 26,
+          "endLine": 60,
+          "methods": [
+            "constructor",
+            "held",
+            "acquire",
+            "release"
+          ],
+          "properties": []
+        }
+      ],
+      "exports": [
+        {
+          "name": "lockPath",
+          "line": 22,
+          "isDefault": false
+        },
+        {
+          "name": "StateLock",
+          "line": 26,
+          "isDefault": false
+        },
+        {
+          "name": "isLocked",
+          "line": 71,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "lockPath",
+          "callee": "join",
+          "lineNumber": 23
+        },
+        {
+          "caller": "constructor",
+          "callee": "lockPath",
+          "lineNumber": 31
+        },
+        {
+          "caller": "acquire",
+          "callee": "openSync",
+          "lineNumber": 41
+        },
+        {
+          "caller": "acquire",
+          "callee": "new Date().toISOString",
+          "lineNumber": 42
+        },
+        {
+          "caller": "acquire",
+          "callee": "writeSync",
+          "lineNumber": 43
+        },
+        {
+          "caller": "acquire",
+          "callee": "JSON.stringify",
+          "lineNumber": 43
+        },
+        {
+          "caller": "acquire",
+          "callee": "closeSync",
+          "lineNumber": 44
+        },
+        {
+          "caller": "acquire",
+          "callee": "describe",
+          "lineNumber": 49
+        },
+        {
+          "caller": "release",
+          "callee": "rmSync",
+          "lineNumber": 57
+        },
+        {
+          "caller": "describe",
+          "callee": "JSON.parse",
+          "lineNumber": 64
+        },
+        {
+          "caller": "describe",
+          "callee": "readFileSync",
+          "lineNumber": 64
+        },
+        {
+          "caller": "describe",
+          "callee": "String",
+          "lineNumber": 65
+        },
+        {
+          "caller": "isLocked",
+          "callee": "existsSync",
+          "lineNumber": 72
+        },
+        {
+          "caller": "isLocked",
+          "callee": "lockPath",
+          "lineNumber": 72
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 3,
+        "functionCount": 3,
+        "classCount": 1
+      }
+    },
+    {
+      "path": "packages/state/src/objects.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 97,
+      "nonEmptyLines": 89,
+      "functions": [
+        {
+          "name": "flushObjects",
+          "startLine": 24,
+          "endLine": 41,
+          "params": [
+            "root",
+            "store",
+            "cursor"
+          ]
+        },
+        {
+          "name": "loadObjects",
+          "startLine": 49,
+          "endLine": 70,
+          "params": [
+            "root",
+            "store"
+          ]
+        },
+        {
+          "name": "versionsOnDisk",
+          "startLine": 88,
+          "endLine": 95,
+          "params": [
+            "root",
+            "objectId"
+          ]
+        }
+      ],
+      "exports": [
+        {
+          "name": "flushObjects",
+          "line": 24,
+          "isDefault": false
+        },
+        {
+          "name": "loadObjects",
+          "line": 49,
+          "isDefault": false
+        },
+        {
+          "name": "versionsOnDisk",
+          "line": 88,
+          "isDefault": false
+        },
+        {
+          "name": "versionFile",
+          "line": 97,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "flushObjects",
+          "callee": "store.appended",
+          "lineNumber": 25
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "join",
+          "lineNumber": 26
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "objectPath",
+          "lineNumber": 26
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "existsSync",
+          "lineNumber": 27
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "JSON.parse",
+          "lineNumber": 28
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "readFileSync",
+          "lineNumber": 28
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "mkdirSync",
+          "lineNumber": 37
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "dirname",
+          "lineNumber": 37
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "writeFileSync",
+          "lineNumber": 38
+        },
+        {
+          "caller": "flushObjects",
+          "callee": "JSON.stringify",
+          "lineNumber": 38
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "join",
+          "lineNumber": 50
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "existsSync",
+          "lineNumber": 51
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "walk",
+          "lineNumber": 53
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "readdirSync",
+          "lineNumber": 55
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "parseVersionFile",
+          "lineNumber": 56
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "versions.push",
+          "lineNumber": 58
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "JSON.parse",
+          "lineNumber": 58
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "readFileSync",
+          "lineNumber": 58
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "join",
+          "lineNumber": 58
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "versions.sort",
+          "lineNumber": 61
+        },
+        {
+          "caller": "loadObjects",
+          "callee": "store.load",
+          "lineNumber": 67
+        },
+        {
+          "caller": "versionsOnDisk",
+          "callee": "join",
+          "lineNumber": 89
+        },
+        {
+          "caller": "versionsOnDisk",
+          "callee": "objectDir",
+          "lineNumber": 89
+        },
+        {
+          "caller": "versionsOnDisk",
+          "callee": "existsSync",
+          "lineNumber": 90
+        },
+        {
+          "caller": "versionsOnDisk",
+          "callee": "readdirSync(dir)\n    .map(parseVersionFile)\n    .filter((n): n is number => n !== null)\n    .sort",
+          "lineNumber": 91
+        },
+        {
+          "caller": "versionsOnDisk",
+          "callee": "readdirSync(dir)\n    .map(parseVersionFile)\n    .filter",
+          "lineNumber": 91
+        },
+        {
+          "caller": "versionsOnDisk",
+          "callee": "readdirSync(dir)\n    .map",
+          "lineNumber": 91
+        },
+        {
+          "caller": "versionsOnDisk",
+          "callee": "readdirSync",
+          "lineNumber": 91
+        }
+      ],
+      "metrics": {
+        "importCount": 1,
+        "exportCount": 4,
+        "functionCount": 3,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/src/paths.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 93,
+      "nonEmptyLines": 82,
+      "functions": [
+        {
+          "name": "pct",
+          "startLine": 32,
+          "endLine": 35,
+          "params": [
+            "ch"
+          ]
+        },
+        {
+          "name": "isReserved",
+          "startLine": 37,
+          "endLine": 40,
+          "params": [
+            "segment"
+          ]
+        },
+        {
+          "name": "encodeSegment",
+          "startLine": 43,
+          "endLine": 51,
+          "params": [
+            "segment"
+          ]
+        },
+        {
+          "name": "decodeSegment",
+          "startLine": 53,
+          "endLine": 56,
+          "params": [
+            "encoded"
+          ]
+        },
+        {
+          "name": "objectDir",
+          "startLine": 64,
+          "endLine": 71,
+          "params": [
+            "objectId"
+          ]
+        },
+        {
+          "name": "decodeObjectDir",
+          "startLine": 73,
+          "endLine": 75,
+          "params": [
+            "dir"
+          ]
+        },
+        {
+          "name": "versionFile",
+          "startLine": 78,
+          "endLine": 83,
+          "params": [
+            "version"
+          ]
+        },
+        {
+          "name": "parseVersionFile",
+          "startLine": 85,
+          "endLine": 88,
+          "params": [
+            "name"
+          ]
+        },
+        {
+          "name": "objectPath",
+          "startLine": 91,
+          "endLine": 93,
+          "params": [
+            "objectId",
+            "version"
+          ]
+        }
+      ],
+      "exports": [
+        {
+          "name": "encodeSegment",
+          "line": 43,
+          "isDefault": false
+        },
+        {
+          "name": "decodeSegment",
+          "line": 53,
+          "isDefault": false
+        },
+        {
+          "name": "objectDir",
+          "line": 64,
+          "isDefault": false
+        },
+        {
+          "name": "decodeObjectDir",
+          "line": 73,
+          "isDefault": false
+        },
+        {
+          "name": "versionFile",
+          "line": 78,
+          "isDefault": false
+        },
+        {
+          "name": "parseVersionFile",
+          "line": 85,
+          "isDefault": false
+        },
+        {
+          "name": "objectPath",
+          "line": 91,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "pct",
+          "callee": "new TextEncoder().encode",
+          "lineNumber": 33
+        },
+        {
+          "caller": "pct",
+          "callee": "[...bytes].map((b) => `%${b.toString(16).toUpperCase().padStart(2, \"0\")}`).join",
+          "lineNumber": 34
+        },
+        {
+          "caller": "pct",
+          "callee": "[...bytes].map",
+          "lineNumber": 34
+        },
+        {
+          "caller": "pct",
+          "callee": "b.toString(16).toUpperCase().padStart",
+          "lineNumber": 34
+        },
+        {
+          "caller": "pct",
+          "callee": "b.toString(16).toUpperCase",
+          "lineNumber": 34
+        },
+        {
+          "caller": "pct",
+          "callee": "b.toString",
+          "lineNumber": 34
+        },
+        {
+          "caller": "isReserved",
+          "callee": "segment.split",
+          "lineNumber": 38
+        },
+        {
+          "caller": "isReserved",
+          "callee": "RESERVED.has",
+          "lineNumber": 39
+        },
+        {
+          "caller": "isReserved",
+          "callee": "stem.toLowerCase",
+          "lineNumber": 39
+        },
+        {
+          "caller": "encodeSegment",
+          "callee": "segment.replace",
+          "lineNumber": 45
+        },
+        {
+          "caller": "encodeSegment",
+          "callee": "isReserved",
+          "lineNumber": 47
+        },
+        {
+          "caller": "encodeSegment",
+          "callee": "pct",
+          "lineNumber": 50
+        },
+        {
+          "caller": "encodeSegment",
+          "callee": "rest.join",
+          "lineNumber": 50
+        },
+        {
+          "caller": "decodeSegment",
+          "callee": "decodeURIComponent",
+          "lineNumber": 55
+        },
+        {
+          "caller": "objectDir",
+          "callee": "objectId.split",
+          "lineNumber": 66
+        },
+        {
+          "caller": "objectDir",
+          "callee": "segments.some",
+          "lineNumber": 67
+        },
+        {
+          "caller": "objectDir",
+          "callee": "segments.map(encodeSegment).join",
+          "lineNumber": 70
+        },
+        {
+          "caller": "objectDir",
+          "callee": "segments.map",
+          "lineNumber": 70
+        },
+        {
+          "caller": "decodeObjectDir",
+          "callee": "dir.split(\"/\").map(decodeSegment).join",
+          "lineNumber": 74
+        },
+        {
+          "caller": "decodeObjectDir",
+          "callee": "dir.split(\"/\").map",
+          "lineNumber": 74
+        },
+        {
+          "caller": "decodeObjectDir",
+          "callee": "dir.split",
+          "lineNumber": 74
+        },
+        {
+          "caller": "versionFile",
+          "callee": "Number.isInteger",
+          "lineNumber": 79
+        },
+        {
+          "caller": "versionFile",
+          "callee": "String",
+          "lineNumber": 80
+        },
+        {
+          "caller": "parseVersionFile",
+          "callee": "/^@([1-9][0-9]*)\\.json$/.exec",
+          "lineNumber": 86
+        },
+        {
+          "caller": "parseVersionFile",
+          "callee": "Number",
+          "lineNumber": 87
+        },
+        {
+          "caller": "objectPath",
+          "callee": "objectDir",
+          "lineNumber": 92
+        },
+        {
+          "caller": "objectPath",
+          "callee": "versionFile",
+          "lineNumber": 92
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 7,
+        "functionCount": 9,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/src/permissions.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 93,
+      "nonEmptyLines": 85,
+      "functions": [
+        {
+          "name": "permissionsPath",
+          "startLine": 46,
+          "endLine": 48,
+          "params": [
+            "dir"
+          ]
+        },
+        {
+          "name": "loadPermissions",
+          "startLine": 50,
+          "endLine": 56,
+          "params": [
+            "dir"
+          ]
+        },
+        {
+          "name": "parseFile",
+          "startLine": 58,
+          "endLine": 84,
+          "params": [
+            "path"
+          ]
+        },
+        {
+          "name": "writePermissions",
+          "startLine": 87,
+          "endLine": 93,
+          "params": [
+            "dir",
+            "grants"
+          ]
+        }
+      ],
+      "exports": [
+        {
+          "name": "PERMISSIONS_FILE",
+          "line": 20,
+          "isDefault": false
+        },
+        {
+          "name": "PERMISSIONS_FORMAT",
+          "line": 21,
+          "isDefault": false
+        },
+        {
+          "name": "DEFAULT_GRANTS",
+          "line": 36,
+          "isDefault": false
+        },
+        {
+          "name": "permissionsPath",
+          "line": 46,
+          "isDefault": false
+        },
+        {
+          "name": "loadPermissions",
+          "line": 50,
+          "isDefault": false
+        },
+        {
+          "name": "writePermissions",
+          "line": 87,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "permissionsPath",
+          "callee": "join",
+          "lineNumber": 47
+        },
+        {
+          "caller": "loadPermissions",
+          "callee": "permissionsPath",
+          "lineNumber": 51
+        },
+        {
+          "caller": "loadPermissions",
+          "callee": "existsSync",
+          "lineNumber": 52
+        },
+        {
+          "caller": "loadPermissions",
+          "callee": "parseFile",
+          "lineNumber": 52
+        },
+        {
+          "caller": "loadPermissions",
+          "callee": "table.grant",
+          "lineNumber": 54
+        },
+        {
+          "caller": "loadPermissions",
+          "callee": "existsSync",
+          "lineNumber": 55
+        },
+        {
+          "caller": "parseFile",
+          "callee": "JSON.parse",
+          "lineNumber": 59
+        },
+        {
+          "caller": "parseFile",
+          "callee": "readFileSync",
+          "lineNumber": 59
+        },
+        {
+          "caller": "parseFile",
+          "callee": "String",
+          "lineNumber": 65
+        },
+        {
+          "caller": "parseFile",
+          "callee": "Array.isArray",
+          "lineNumber": 69
+        },
+        {
+          "caller": "parseFile",
+          "callee": "raw.grants.map",
+          "lineNumber": 74
+        },
+        {
+          "caller": "parseFile",
+          "callee": "Grant.safeParse",
+          "lineNumber": 75
+        },
+        {
+          "caller": "parseFile",
+          "callee": "parsed.error.issues.map((x) => `${x.path.join(\".\")} ${x.message}`).join",
+          "lineNumber": 79
+        },
+        {
+          "caller": "parseFile",
+          "callee": "parsed.error.issues.map",
+          "lineNumber": 79
+        },
+        {
+          "caller": "parseFile",
+          "callee": "x.path.join",
+          "lineNumber": 79
+        },
+        {
+          "caller": "writePermissions",
+          "callee": "writeFileSync",
+          "lineNumber": 88
+        },
+        {
+          "caller": "writePermissions",
+          "callee": "permissionsPath",
+          "lineNumber": 89
+        },
+        {
+          "caller": "writePermissions",
+          "callee": "JSON.stringify",
+          "lineNumber": 90
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 6,
+        "functionCount": 4,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/src/resources.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 100,
+      "nonEmptyLines": 91,
+      "functions": [
+        {
+          "name": "resourcesPath",
+          "startLine": 27,
+          "endLine": 29,
+          "params": [
+            "dir"
+          ]
+        },
+        {
+          "name": "loadResources",
+          "startLine": 37,
+          "endLine": 51,
+          "params": [
+            "dir"
+          ]
+        },
+        {
+          "name": "writeResources",
+          "startLine": 53,
+          "endLine": 64,
+          "params": [
+            "dir",
+            "registry"
+          ]
+        },
+        {
+          "name": "addResource",
+          "startLine": 70,
+          "endLine": 91,
+          "params": [
+            "dir",
+            "name",
+            "source"
+          ]
+        },
+        {
+          "name": "removeResource",
+          "startLine": 93,
+          "endLine": 100,
+          "params": [
+            "dir",
+            "name"
+          ]
+        }
+      ],
+      "exports": [
+        {
+          "name": "RESOURCES_FILE",
+          "line": 20,
+          "isDefault": false
+        },
+        {
+          "name": "resourcesPath",
+          "line": 27,
+          "isDefault": false
+        },
+        {
+          "name": "loadResources",
+          "line": 37,
+          "isDefault": false
+        },
+        {
+          "name": "writeResources",
+          "line": 53,
+          "isDefault": false
+        },
+        {
+          "name": "addResource",
+          "line": 70,
+          "isDefault": false
+        },
+        {
+          "name": "removeResource",
+          "line": 93,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "resourcesPath",
+          "callee": "join",
+          "lineNumber": 28
+        },
+        {
+          "caller": "loadResources",
+          "callee": "resourcesPath",
+          "lineNumber": 38
+        },
+        {
+          "caller": "loadResources",
+          "callee": "existsSync",
+          "lineNumber": 39
+        },
+        {
+          "caller": "loadResources",
+          "callee": "JSON.parse",
+          "lineNumber": 41
+        },
+        {
+          "caller": "loadResources",
+          "callee": "readFileSync",
+          "lineNumber": 41
+        },
+        {
+          "caller": "loadResources",
+          "callee": "ResourcesFile.safeParse",
+          "lineNumber": 42
+        },
+        {
+          "caller": "loadResources",
+          "callee": "parsed.error.issues\n        .map((i) => `${i.path.join(\".\") || \"(根)\"} ${i.message}`)\n        .join",
+          "lineNumber": 45
+        },
+        {
+          "caller": "loadResources",
+          "callee": "parsed.error.issues\n        .map",
+          "lineNumber": 45
+        },
+        {
+          "caller": "loadResources",
+          "callee": "i.path.join",
+          "lineNumber": 46
+        },
+        {
+          "caller": "writeResources",
+          "callee": "mkdirSync",
+          "lineNumber": 58
+        },
+        {
+          "caller": "writeResources",
+          "callee": "writeFileSync",
+          "lineNumber": 59
+        },
+        {
+          "caller": "writeResources",
+          "callee": "resourcesPath",
+          "lineNumber": 60
+        },
+        {
+          "caller": "writeResources",
+          "callee": "JSON.stringify",
+          "lineNumber": 61
+        },
+        {
+          "caller": "addResource",
+          "callee": "ResourceSource.safeParse",
+          "lineNumber": 75
+        },
+        {
+          "caller": "addResource",
+          "callee": "parsed.error.issues.map((i) => `${i.path.join(\".\")} ${i.message}`).join",
+          "lineNumber": 78
+        },
+        {
+          "caller": "addResource",
+          "callee": "parsed.error.issues.map",
+          "lineNumber": 78
+        },
+        {
+          "caller": "addResource",
+          "callee": "i.path.join",
+          "lineNumber": 78
+        },
+        {
+          "caller": "addResource",
+          "callee": "loadResources",
+          "lineNumber": 81
+        },
+        {
+          "caller": "addResource",
+          "callee": "writeResources",
+          "lineNumber": 89
+        },
+        {
+          "caller": "removeResource",
+          "callee": "loadResources",
+          "lineNumber": 94
+        },
+        {
+          "caller": "removeResource",
+          "callee": "writeResources",
+          "lineNumber": 98
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 6,
+        "functionCount": 5,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/src/run-state.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 204,
+      "nonEmptyLines": 189,
+      "classes": [
+        {
+          "name": "RunState",
+          "startLine": 54,
+          "endLine": 204,
+          "methods": [
+            "constructor",
+            "open",
+            "persist",
+            "control",
+            "close"
+          ],
+          "properties": [
+            "dir",
+            "store",
+            "registry",
+            "runtime",
+            "recovered",
+            "permissions",
+            "resources",
+            "reconciled"
+          ]
+        }
+      ],
+      "exports": [
+        {
+          "name": "RunState",
+          "line": 54,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "open",
+          "callee": "mkdirSync",
+          "lineNumber": 94
+        },
+        {
+          "caller": "open",
+          "callee": "lock?.acquire",
+          "lineNumber": 97
+        },
+        {
+          "caller": "open",
+          "callee": "loadPermissions",
+          "lineNumber": 100
+        },
+        {
+          "caller": "open",
+          "callee": "loadResources",
+          "lineNumber": 101
+        },
+        {
+          "caller": "open",
+          "callee": "self?.persist",
+          "lineNumber": 121
+        },
+        {
+          "caller": "open",
+          "callee": "readHead",
+          "lineNumber": 127
+        },
+        {
+          "caller": "open",
+          "callee": "loadObjects",
+          "lineNumber": 136
+        },
+        {
+          "caller": "open",
+          "callee": "decodeHeadParts",
+          "lineNumber": 137
+        },
+        {
+          "caller": "open",
+          "callee": "registry.restore",
+          "lineNumber": 138
+        },
+        {
+          "caller": "open",
+          "callee": "runtime.locks.restore",
+          "lineNumber": 139
+        },
+        {
+          "caller": "open",
+          "callee": "runtime.restore",
+          "lineNumber": 140
+        },
+        {
+          "caller": "open",
+          "callee": "runtime.reconcile",
+          "lineNumber": 161
+        },
+        {
+          "caller": "open",
+          "callee": "self.persist",
+          "lineNumber": 162
+        },
+        {
+          "caller": "open",
+          "callee": "lock?.release",
+          "lineNumber": 166
+        },
+        {
+          "caller": "persist",
+          "callee": "flushObjects",
+          "lineNumber": 180
+        },
+        {
+          "caller": "persist",
+          "callee": "writeHead",
+          "lineNumber": 181
+        },
+        {
+          "caller": "persist",
+          "callee": "this.registry.snapshot",
+          "lineNumber": 184
+        },
+        {
+          "caller": "persist",
+          "callee": "this.runtime.locks.snapshot",
+          "lineNumber": 185
+        },
+        {
+          "caller": "persist",
+          "callee": "this.runtime.snapshot",
+          "lineNumber": 186
+        },
+        {
+          "caller": "close",
+          "callee": "this.#lock?.release",
+          "lineNumber": 202
+        }
+      ],
+      "metrics": {
+        "importCount": 5,
+        "exportCount": 1,
+        "functionCount": 0,
+        "classCount": 1
+      }
+    },
+    {
+      "path": "packages/state/test/claim-durability.test.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 198,
+      "nonEmptyLines": 178,
+      "functions": [
+        {
+          "name": "seed",
+          "startLine": 55,
+          "endLine": 59,
+          "params": [
+            "state"
+          ]
+        }
+      ],
+      "classes": [
+        {
+          "name": "NeverReturns",
+          "startLine": 46,
+          "endLine": 53,
+          "methods": [
+            "run",
+            "cancel"
+          ],
+          "properties": []
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "seed",
+          "callee": "registerContainerTemplate",
+          "lineNumber": 56
+        },
+        {
+          "caller": "seed",
+          "callee": "state.registry.createRoot",
+          "lineNumber": 57
+        },
+        {
+          "caller": "seed",
+          "callee": "state.runtime.send",
+          "lineNumber": 58
+        }
+      ],
+      "metrics": {
+        "importCount": 1,
+        "exportCount": 0,
+        "functionCount": 1,
+        "classCount": 1
+      }
+    },
+    {
+      "path": "packages/state/test/paths.test.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 91,
+      "nonEmptyLines": 79,
+      "metrics": {
+        "importCount": 1,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/test/resources.test.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 112,
+      "nonEmptyLines": 96,
+      "metrics": {
+        "importCount": 1,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/test/round-trip.test.ts",
+      "language": "typescript",
+      "fileCategory": "code",
+      "totalLines": 211,
+      "nonEmptyLines": 190,
+      "functions": [
+        {
+          "name": "session",
+          "startLine": 42,
+          "endLine": 50,
+          "params": [
+            "fn"
+          ]
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "session",
+          "callee": "RunState.open",
+          "lineNumber": 43
+        },
+        {
+          "caller": "session",
+          "callee": "fn",
+          "lineNumber": 45
+        },
+        {
+          "caller": "session",
+          "callee": "state.persist",
+          "lineNumber": 46
+        },
+        {
+          "caller": "session",
+          "callee": "state.close",
+          "lineNumber": 48
+        }
+      ],
+      "metrics": {
+        "importCount": 3,
+        "exportCount": 0,
+        "functionCount": 1,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "packages/state/tsconfig.json",
+      "language": "json",
+      "fileCategory": "config",
+      "totalLines": 4,
+      "nonEmptyLines": 4,
+      "sections": [
+        {
+          "heading": "extends",
+          "level": 1,
+          "line": 2
+        },
+        {
+          "heading": "include",
+          "level": 1,
+          "line": 3
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 2
+      }
+    },
+    {
+      "path": "scripts/reachability.mjs",
+      "language": "javascript",
+      "fileCategory": "code",
+      "totalLines": 137,
+      "nonEmptyLines": 126,
+      "functions": [
+        {
+          "name": "sources",
+          "startLine": 71,
+          "endLine": 83,
+          "params": []
+        },
+        {
+          "name": "main",
+          "startLine": 97,
+          "endLine": 135,
+          "params": []
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "sources",
+          "callee": "join",
+          "lineNumber": 74
+        },
+        {
+          "caller": "sources",
+          "callee": "readdirSync",
+          "lineNumber": 75
+        },
+        {
+          "caller": "sources",
+          "callee": "name.endsWith",
+          "lineNumber": 76
+        },
+        {
+          "caller": "sources",
+          "callee": "join",
+          "lineNumber": 77
+        },
+        {
+          "caller": "sources",
+          "callee": "statSync(path).isFile",
+          "lineNumber": 78
+        },
+        {
+          "caller": "sources",
+          "callee": "statSync",
+          "lineNumber": 78
+        },
+        {
+          "caller": "sources",
+          "callee": "out.push",
+          "lineNumber": 79
+        },
+        {
+          "caller": "sources",
+          "callee": "readFileSync",
+          "lineNumber": 79
+        },
+        {
+          "caller": "main",
+          "callee": "sources",
+          "lineNumber": 98
+        },
+        {
+          "caller": "main",
+          "callee": "f.text.matchAll",
+          "lineNumber": 102
+        },
+        {
+          "caller": "main",
+          "callee": "declared.has",
+          "lineNumber": 104
+        },
+        {
+          "caller": "main",
+          "callee": "declared.set",
+          "lineNumber": 104
+        },
+        {
+          "caller": "main",
+          "callee": "ALLOWED.has",
+          "lineNumber": 110
+        },
+        {
+          "caller": "main",
+          "callee": "files.filter",
+          "lineNumber": 112
+        },
+        {
+          "caller": "main",
+          "callee": "pattern.test",
+          "lineNumber": 112
+        },
+        {
+          "caller": "main",
+          "callee": "orphans.push",
+          "lineNumber": 113
+        },
+        {
+          "caller": "main",
+          "callee": "process.argv.includes",
+          "lineNumber": 116
+        },
+        {
+          "caller": "main",
+          "callee": "process.stdout.write",
+          "lineNumber": 118
+        },
+        {
+          "caller": "main",
+          "callee": "process.stdout.write",
+          "lineNumber": 122
+        },
+        {
+          "caller": "main",
+          "callee": "[\n      `可达性体检：${declared.size} 个导出符号，${orphans.length} 个只在自己文件里出现。`,\n      \"\",\n      \"以下符号在**生产代码**里没有任何调用点。可能是：\",\n      \"  (a) 真的漏接了一根线 —— 这类咬过我们四次\",\n      \"  (b) 给外部用的 API —— 那就加进 scripts/reachability.mjs 的 ALLOWED 并写明理由\",\n      \"\",\n      ...orphans.map((o) => `  ${o.symbol.padEnd(28)} ${o.home}`),\n      \"\",\n    ].join",
+          "lineNumber": 123
+        },
+        {
+          "caller": "main",
+          "callee": "orphans.map",
+          "lineNumber": 130
+        },
+        {
+          "caller": "main",
+          "callee": "o.symbol.padEnd",
+          "lineNumber": 130
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 2,
+        "classCount": 0
+      }
+    }
+  ]
+}

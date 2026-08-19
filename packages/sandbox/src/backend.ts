@@ -31,6 +31,7 @@ import { LocalRunner, type RunOutcome, type Runner } from "./runner.js";
 import {
   type ProvisionedWorkspace,
   type ResourceRegistry,
+  inheritWorkspace,
   provisionResources,
   provisionWorkspace,
 } from "./resources.js";
@@ -116,6 +117,14 @@ export class SandboxBackend implements ExecutionBackend {
   readonly #runner: Runner;
   readonly #retain: RetainPolicy;
   readonly #resources: ResourceRegistry;
+  /**
+   * `<traceid>/<节点>` → 那次执行的工作区路径。
+   *
+   * backend 自己记账，不扫目录：WSL 的沙箱住在 Linux 文件系统里，
+   * 宿主机扫不到。记账对三种运行器一视同仁。
+   * 键里含 traceid ⇒ **命名空间限定是天然的**，查不到兄弟实例的。
+   */
+  readonly #workspaces = new Map<string, string>();
   readonly #inflight = new Map<string, AbortController>();
 
   constructor(options: SandboxOptions = {}) {
@@ -123,6 +132,7 @@ export class SandboxBackend implements ExecutionBackend {
     // cleanup 是旧名字：true 意为"跑完就删"，等价于 never
     this.#retain = options.retain ?? (options.cleanup === true ? "never" : "always");
     this.#resources = options.resources ?? {};
+
   }
 
   async run(request: ExecutionRequest): Promise<ExecutionResult> {
@@ -147,7 +157,13 @@ export class SandboxBackend implements ExecutionBackend {
      * id 带上 traceid，因为 executionId 每个 Runtime 都从 exec-1 起 ——
      * 沙箱跑完即删时无所谓，留着就会在共享目录里真的撞名。
      */
-    const root = this.#runner.allocate(`${request.traceid}/${request.executionId}`);
+    /**
+     * id 里带上**节点名**，因为"接过上游工作区"要靠它找人（见 inheritWorkspace）。
+     * 顺带 traceid 在前 —— 于是搜索前缀天然把范围限定在自己的命名空间内。
+     */
+    const root = this.#runner.allocate(
+      `${request.traceid}/${request.nodeId}/${request.executionId}`,
+    );
     const paths = createSandbox(root);
     // 记录仓放在沙箱**同级**的隐藏目录 —— 与工作树同一个文件系统，
     // 但不在 workspace 内，所以 agent 看不到（S1 布局的同一条理由）
@@ -176,8 +192,19 @@ export class SandboxBackend implements ExecutionBackend {
       let workspace: ProvisionedWorkspace | undefined;
       let placed: Readonly<Record<string, string>> = {};
       try {
-        if (spec.workspace !== undefined) {
-          workspace = provisionWorkspace(this.#resources, spec.workspace, paths.workspace);
+        if (spec.workspace?.from !== undefined) {
+          const key = `${request.traceid}/${spec.workspace.from}`;
+          workspace = inheritWorkspace(
+            this.#workspaces.get(key) ?? "（上游还没跑过）",
+            spec.workspace.from,
+            paths.workspace,
+          );
+        } else if (spec.workspace?.source !== undefined) {
+          workspace = provisionWorkspace(
+            this.#resources,
+            { source: spec.workspace.source, base: spec.workspace.base },
+            paths.workspace,
+          );
         }
         if (spec.resources !== undefined) {
           // 放哪由 profile 决定 —— 同一个别名在不同 agent 下展开成不同位置
@@ -259,6 +286,9 @@ export class SandboxBackend implements ExecutionBackend {
       for (const [rel, content] of Object.entries(rendered)) {
         writeSandboxFile(paths, rel, content);
       }
+
+      // 记下自己的工作区，好让下游节点接得过去
+      this.#workspaces.set(`${request.traceid}/${request.nodeId}`, paths.workspace);
 
       if (canObserve) initObserver(observer, exec);
 

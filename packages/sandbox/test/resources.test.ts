@@ -14,6 +14,7 @@ import { LocalRunner } from "../src/runner.js";
 import { resolveProfile } from "../src/profile.js";
 import {
   ResourceError,
+  inheritWorkspace,
   provisionResources,
   provisionWorkspace,
   type ResourceRegistry,
@@ -209,5 +210,54 @@ describe("★ 别名当宏：同一个名字，profile 决定落在哪", () => {
     expect(
       readFileSync(join(box, "workspace", ".claude", "skills", "review", "guide.md"), "utf8"),
     ).toBe("参考资料");
+  });
+});
+
+describe("★ 工作区交接：子流程能成立的关键", () => {
+  it("下游拿到上游工作区的**内容**，包括未提交的改动", () => {
+    const up = join(home, "up");
+    provisionWorkspace(registry(), { source: "primary" }, up);
+    writeFileSync(join(up, "README.md"), "上游改过了", "utf8");
+
+    const down = join(home, "down");
+    const got = inheritWorkspace(up, "edit", down);
+    expect(readFileSync(join(down, "README.md"), "utf8")).toBe("上游改过了");
+    expect(got.source).toContain("edit");
+  });
+
+  it("★ 是拷贝不是共享 —— 两个并行下游各拿一份，互不踩", () => {
+    const up = join(home, "up");
+    provisionWorkspace(registry(), { source: "primary" }, up);
+
+    const a = join(home, "a");
+    const b = join(home, "b");
+    inheritWorkspace(up, "edit", a);
+    inheritWorkspace(up, "edit", b);
+    writeFileSync(join(a, "README.md"), "A 改的", "utf8");
+
+    expect(readFileSync(join(b, "README.md"), "utf8")).toBe("第二版");
+    expect(readFileSync(join(up, "README.md"), "utf8")).toBe("第二版");
+  });
+
+  it("git 历史一并接过去 —— 下游能在上游基础上提交", () => {
+    const up = join(home, "up");
+    provisionWorkspace(registry(), { source: "primary" }, up);
+    const down = join(home, "down");
+    const got = inheritWorkspace(up, "edit", down);
+    expect(got.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(git(["rev-list", "--count", "HEAD"], down).trim()).toBe("2");
+  });
+
+  it("上游没跑过 → 说清楚是接不到，不是别的错", () => {
+    expect(() => inheritWorkspace(join(home, "不存在"), "edit", join(home, "x"))).toThrow(
+      /接不到上游节点/,
+    );
+  });
+
+  it("接过来的不是 git 仓库也不炸，只是没有 commit", () => {
+    const plain = join(home, "plain");
+    mkdirSync(plain, { recursive: true });
+    writeFileSync(join(plain, "a.txt"), "x", "utf8");
+    expect(inheritWorkspace(plain, "edit", join(home, "out")).commit).toBe("");
   });
 });

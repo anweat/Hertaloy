@@ -1,0 +1,803 @@
+{
+  "scriptCompleted": true,
+  "filesAnalyzed": 6,
+  "filesSkipped": [],
+  "results": [
+    {
+      "path": "FOUNDATION_V5.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 1195,
+      "nonEmptyLines": 827,
+      "sections": [
+        {
+          "heading": "Nodeflow V5 基础设计 —— 嵌套容器运行时",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "0. 为什么重做，以及四次归约",
+          "level": 2,
+          "line": 20
+        },
+        {
+          "heading": "1. 命题与四个目标",
+          "level": 2,
+          "line": 48
+        },
+        {
+          "heading": "2. 主线剧本与覆盖状态",
+          "level": 2,
+          "line": 66
+        },
+        {
+          "heading": "3. 第一性：容器 is-a 实例",
+          "level": 2,
+          "line": 96
+        },
+        {
+          "heading": "3.1 根容器：递归的终止条件 ✅",
+          "level": 3,
+          "line": 105
+        },
+        {
+          "heading": "3.2 traceid ✅",
+          "level": 3,
+          "line": 114
+        },
+        {
+          "heading": "4. 实体表",
+          "level": 2,
+          "line": 141
+        },
+        {
+          "heading": "4.1 唯一的一等公民：实例",
+          "level": 3,
+          "line": 143
+        },
+        {
+          "heading": "4.2 非实例的东西",
+          "level": 3,
+          "line": 157
+        },
+        {
+          "heading": "5. 容器定义的八个部分",
+          "level": 2,
+          "line": 173
+        },
+        {
+          "heading": "5.1 版本管理：eager 物化继承 ✅",
+          "level": 3,
+          "line": 188
+        },
+        {
+          "heading": "6. 节点只有一类",
+          "level": 2,
+          "line": 209
+        },
+        {
+          "heading": "6.1 策略节点为什么被删掉 ✅",
+          "level": 3,
+          "line": 217
+        },
+        {
+          "heading": "6.2 端口 = 变量的出入口 ✅",
+          "level": 3,
+          "line": 237
+        },
+        {
+          "heading": "6.3 servo = 映射表，不是程序 ✅",
+          "level": 3,
+          "line": 256
+        },
+        {
+          "heading": "6.4 逻辑在受信 handler 里 ✅",
+          "level": 3,
+          "line": 271
+        },
+        {
+          "heading": "handler 的只读世界 ✅",
+          "level": 4,
+          "line": 283
+        },
+        {
+          "heading": "7. 变量、上下文与资产",
+          "level": 2,
+          "line": 316
+        },
+        {
+          "heading": "7.1 资产即变量 ✅",
+          "level": 3,
+          "line": 318
+        },
+        {
+          "heading": "7.2 三种类型 ✅",
+          "level": 3,
+          "line": 322
+        },
+        {
+          "heading": "7.3 位置即绑定时机 ✅",
+          "level": 3,
+          "line": 334
+        },
+        {
+          "heading": "7.4 作用域 ✅",
+          "level": 3,
+          "line": 345
+        },
+        {
+          "heading": "7.5 预算 ✅",
+          "level": 3,
+          "line": 349
+        },
+        {
+          "heading": "7.6 资产写入 —— 运行期内容进入版本层 ✅",
+          "level": 3,
+          "line": 366
+        },
+        {
+          "heading": "7.7 对象命名空间 ✅",
+          "level": 3,
+          "line": 376
+        },
+        {
+          "heading": "8. 传递：内网边 / 网关 / 隧道 ✅",
+          "level": 2,
+          "line": 417
+        },
+        {
+          "heading": "9. 锁与终止",
+          "level": 2,
+          "line": 438
+        },
+        {
+          "heading": "9.1 强制截断是第一位的保证 ✅",
+          "level": 3,
+          "line": 440
+        },
+        {
+          "heading": "9.2 锁 = 网关的账本，2 种 ✅",
+          "level": 3,
+          "line": 453
+        },
+        {
+          "heading": "9.3 终止 ✅",
+          "level": 3,
+          "line": 470
+        },
+        {
+          "heading": "10. 事务、并发与隔离",
+          "level": 2,
+          "line": 499
+        },
+        {
+          "heading": "10.1 提交是一次事务 ✅",
+          "level": 3,
+          "line": 501
+        },
+        {
+          "heading": "10.2 竞争分三层，只有中间一层归内核",
+          "level": 3,
+          "line": 509
+        },
+        {
+          "heading": "10.3 隔离级别 ✅",
+          "level": 3,
+          "line": 524
+        },
+        {
+          "heading": "10.4 状态不变量断言 ✅",
+          "level": 3,
+          "line": 535
+        },
+        {
+          "heading": "11. 权限与信任边界 ✅",
+          "level": 2,
+          "line": 547
+        },
+        {
+          "heading": "11.1 操作分三类",
+          "level": 3,
+          "line": 549
+        },
+        {
+          "heading": "11.2 授权 = (principal, scope, 操作类)",
+          "level": 3,
+          "line": 559
+        },
+        {
+          "heading": "11.3 其余",
+          "level": 3,
+          "line": 578
+        },
+        {
+          "heading": "12. 文件控制 📋",
+          "level": 2,
+          "line": 589
+        },
+        {
+          "heading": "13. 观测与画布 🚧",
+          "level": 2,
+          "line": 604
+        },
+        {
+          "heading": "14. 执行面：沙箱 + 命令行",
+          "level": 2,
+          "line": 614
+        },
+        {
+          "heading": "14.1 四个命令行面 📋",
+          "level": 3,
+          "line": 630
+        },
+        {
+          "heading": "14.2 沙箱契约 📋",
+          "level": 3,
+          "line": 642
+        },
+        {
+          "heading": "14.3 适配 = 把卡片渲染成各家认识的文件 📋",
+          "level": 3,
+          "line": 659
+        },
+        {
+          "heading": "14.4 记录靠沙箱外的 git 📋",
+          "level": 3,
+          "line": 674
+        },
+        {
+          "heading": "14.5 沙箱强度：两堵墙，要分开认 ✅",
+          "level": 3,
+          "line": 693
+        },
+        {
+          "heading": "14.6 五种终止原因不能混成一种 ✅",
+          "level": 3,
+          "line": 732
+        },
+        {
+          "heading": "15. 从 V4 继承与丢弃",
+          "level": 2,
+          "line": 750
+        },
+        {
+          "heading": "直接继承（约 V4 代码的 40%）",
+          "level": 3,
+          "line": 752
+        },
+        {
+          "heading": "明确删除",
+          "level": 3,
+          "line": 756
+        },
+        {
+          "heading": "已修的 V4 实质缺陷 ✅",
+          "level": 3,
+          "line": 760
+        },
+        {
+          "heading": "16. 不变量总表与强制状态",
+          "level": 2,
+          "line": 770
+        },
+        {
+          "heading": "17. 持久化 ✅（对象库 + 可变头 + 目录锁已实现）",
+          "level": 2,
+          "line": 805
+        },
+        {
+          "heading": "17.1 现状：一处都没落盘",
+          "level": 3,
+          "line": 807
+        },
+        {
+          "heading": "17.2 第六次归约：状态只有两个形态",
+          "level": 3,
+          "line": 816
+        },
+        {
+          "heading": "17.3 目录布局",
+          "level": 3,
+          "line": 851
+        },
+        {
+          "heading": "17.4 耐久性边界：claim 必须落，其余可以攒",
+          "level": 3,
+          "line": 884
+        },
+        {
+          "heading": "17.5 重放幂等靠内容寻址，不靠额外机制",
+          "level": 3,
+          "line": 902
+        },
+        {
+          "heading": "17.6 不是状态的四样东西",
+          "level": 3,
+          "line": 918
+        },
+        {
+          "heading": "17.7 密钥：绝不进对象库",
+          "level": 3,
+          "line": 936
+        },
+        {
+          "heading": "17.8 两种锁，别混",
+          "level": 3,
+          "line": 962
+        },
+        {
+          "heading": "17.9 权限的自举",
+          "level": 3,
+          "line": 976
+        },
+        {
+          "heading": "17.10 你列的九项，各自去哪",
+          "level": 3,
+          "line": 985
+        },
+        {
+          "heading": "17.12 实现中撞出来的一条：计数类写法必须把序号写进 body",
+          "level": 3,
+          "line": 1000
+        },
+        {
+          "heading": "17.14 用切面而不是状态机 —— 孤儿执行与执行观测",
+          "level": 3,
+          "line": 1020
+        },
+        {
+          "heading": "孤儿执行：不需要 `RECONCILING / ADOPTED / ABANDONED`",
+          "level": 4,
+          "line": 1026
+        },
+        {
+          "heading": "执行观测：落成对象，不给记录加字段",
+          "level": 4,
+          "line": 1050
+        },
+        {
+          "heading": "17.16 GC：三处需要，两处不需要",
+          "level": 3,
+          "line": 1063
+        },
+        {
+          "heading": "1. 头：只丢 CONSUMED",
+          "level": 4,
+          "line": 1080
+        },
+        {
+          "heading": "2. 沙箱：按**版本序**回收，不按墙钟",
+          "level": 4,
+          "line": 1097
+        },
+        {
+          "heading": "3. 明确不自建压缩",
+          "level": 4,
+          "line": 1107
+        },
+        {
+          "heading": "17.17 明确不做",
+          "level": 3,
+          "line": 1112
+        },
+        {
+          "heading": "18. 待开发清单",
+          "level": 2,
+          "line": 1120
+        },
+        {
+          "heading": "V4 迁移纪律（批 I）",
+          "level": 3,
+          "line": 1143
+        },
+        {
+          "heading": "19. 开放项",
+          "level": 2,
+          "line": 1156
+        },
+        {
+          "heading": "20. 验收方法",
+          "level": 2,
+          "line": 1180
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 78
+      }
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 54,
+      "nonEmptyLines": 39,
+      "sections": [
+        {
+          "heading": "Hertaloy / Nodeflow V5",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "当前基线",
+          "level": 2,
+          "line": 5
+        },
+        {
+          "heading": "仓库状态（2026-08-18）",
+          "level": 2,
+          "line": 13
+        },
+        {
+          "heading": "边界",
+          "level": 2,
+          "line": 50
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 4
+      }
+    },
+    {
+      "path": "V5_WORKPLAN.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 530,
+      "nonEmptyLines": 374,
+      "sections": [
+        {
+          "heading": "V5 测试与实现工作计划",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "1. 开工前设计门 —— **已关闭（2026-08-17）**",
+          "level": 2,
+          "line": 5
+        },
+        {
+          "heading": "语言与工具",
+          "level": 3,
+          "line": 24
+        },
+        {
+          "heading": "2. 测试集分层",
+          "level": 2,
+          "line": 29
+        },
+        {
+          "heading": "Task 1：纯契约与身份模型",
+          "level": 3,
+          "line": 31
+        },
+        {
+          "heading": "Task 2：根容器与实例树最小切片",
+          "level": 3,
+          "line": 43
+        },
+        {
+          "heading": "Task 3：纯转发内网链路",
+          "level": 3,
+          "line": 55
+        },
+        {
+          "heading": "Checkpoint A —— **已通过（2026-08-17）**",
+          "level": 3,
+          "line": 67
+        },
+        {
+          "heading": "不变量覆盖对照",
+          "level": 4,
+          "line": 78
+        },
+        {
+          "heading": "本阶段的三处有意留白（均已在代码注释写明理由）",
+          "level": 4,
+          "line": 100
+        },
+        {
+          "heading": "实现中对 `FOUNDATION_V5.md` 的两处回写",
+          "level": 4,
+          "line": 106
+        },
+        {
+          "heading": "Task 4：网关 REQUEST/REPLY 与锁账本",
+          "level": 3,
+          "line": 111
+        },
+        {
+          "heading": "Task 5：claim / execute / apply 与失败恢复",
+          "level": 3,
+          "line": 123
+        },
+        {
+          "heading": "Task 6：变量上下文与注册期预算",
+          "level": 3,
+          "line": 135
+        },
+        {
+          "heading": "Checkpoint B",
+          "level": 3,
+          "line": 147
+        },
+        {
+          "heading": "2.9 外部审核轮（2026-08-17）—— 结论：要求修改，已修",
+          "level": 2,
+          "line": 153
+        },
+        {
+          "heading": "仍未做（承认，不含糊）",
+          "level": 3,
+          "line": 175
+        },
+        {
+          "heading": "2.10 RunSnapshot + Task 6 + Checkpoint B（2026-08-17）",
+          "level": 2,
+          "line": 185
+        },
+        {
+          "heading": "RunSnapshot —— 欠账已还",
+          "level": 3,
+          "line": 189
+        },
+        {
+          "heading": "Task 6 —— B1 两半都落地",
+          "level": 3,
+          "line": 201
+        },
+        {
+          "heading": "写场景暴露的真 bug",
+          "level": 3,
+          "line": 213
+        },
+        {
+          "heading": "Checkpoint B —— 通过",
+          "level": 3,
+          "line": 219
+        },
+        {
+          "heading": "仍未做",
+          "level": 3,
+          "line": 226
+        },
+        {
+          "heading": "2.11 第四次归约与范围重定（2026-08-17，待开工）",
+          "level": 2,
+          "line": 234
+        },
+        {
+          "heading": "被删掉的（约 900 行不用写）",
+          "level": 3,
+          "line": 239
+        },
+        {
+          "heading": "确认的取舍",
+          "level": 3,
+          "line": 251
+        },
+        {
+          "heading": "待开工范围",
+          "level": 3,
+          "line": 258
+        },
+        {
+          "heading": "仍未做（明确挂起）",
+          "level": 3,
+          "line": 272
+        },
+        {
+          "heading": "3. 后续阶段",
+          "level": 2,
+          "line": 279
+        },
+        {
+          "heading": "4. codex-cli 分工",
+          "level": 2,
+          "line": 283
+        },
+        {
+          "heading": "5. 暂不做",
+          "level": 2,
+          "line": 294
+        },
+        {
+          "heading": "3. 问题点清单（持久化落地后的一次全面盘点）",
+          "level": 2,
+          "line": 305
+        },
+        {
+          "heading": "3.1 内核（先补这组）",
+          "level": 3,
+          "line": 309
+        },
+        {
+          "heading": "K5 —— 契约与实现各自演进，没人对过账",
+          "level": 4,
+          "line": 319
+        },
+        {
+          "heading": "K1 —— 两个问题，同一个修法",
+          "level": 4,
+          "line": 332
+        },
+        {
+          "heading": "K2 —— 权限层是不可达代码",
+          "level": 4,
+          "line": 365
+        },
+        {
+          "heading": "K3 —— 卡住的 run 杀不掉",
+          "level": 4,
+          "line": 377
+        },
+        {
+          "heading": "K4 —— 两个前缀对不上",
+          "level": 4,
+          "line": 382
+        },
+        {
+          "heading": "3.2 执行面 / 运维面（内核补完再说）",
+          "level": 3,
+          "line": 388
+        },
+        {
+          "heading": "K2 的落定 —— 根权限表是外部配置文件",
+          "level": 4,
+          "line": 398
+        },
+        {
+          "heading": "E1 的落定 —— 不造第三种执行面",
+          "level": 4,
+          "line": 414
+        },
+        {
+          "heading": "E2 的落定 —— 白名单而不是黑名单",
+          "level": 4,
+          "line": 433
+        },
+        {
+          "heading": "4. 外部审核第二轮（HEAD `ad18cc3`）的分诊",
+          "level": 2,
+          "line": 443
+        },
+        {
+          "heading": "4.1 采纳并已修",
+          "level": 3,
+          "line": 450
+        },
+        {
+          "heading": "4.2 采纳判断、暂不动手（理由写明）",
+          "level": 3,
+          "line": 465
+        },
+        {
+          "heading": "4.3 判为过度设计，不采纳",
+          "level": 3,
+          "line": 483
+        },
+        {
+          "heading": "5. 沙箱保留（本轮）",
+          "level": 2,
+          "line": 501
+        },
+        {
+          "heading": "改出来的两个真问题",
+          "level": 3,
+          "line": 514
+        },
+        {
+          "heading": "顺带补上的契约不一致",
+          "level": 3,
+          "line": 525
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 49
+      }
+    },
+    {
+      "path": "package.json",
+      "language": "json",
+      "fileCategory": "config",
+      "totalLines": 18,
+      "nonEmptyLines": 18,
+      "sections": [
+        {
+          "heading": "name",
+          "level": 1,
+          "line": 2
+        },
+        {
+          "heading": "private",
+          "level": 1,
+          "line": 3
+        },
+        {
+          "heading": "type",
+          "level": 1,
+          "line": 4
+        },
+        {
+          "heading": "packageManager",
+          "level": 1,
+          "line": 5
+        },
+        {
+          "heading": "engines",
+          "level": 1,
+          "line": 6
+        },
+        {
+          "heading": "scripts",
+          "level": 1,
+          "line": 9
+        },
+        {
+          "heading": "devDependencies",
+          "level": 1,
+          "line": 15
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 7
+      }
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "language": "yaml",
+      "fileCategory": "config",
+      "totalLines": 2,
+      "nonEmptyLines": 2,
+      "sections": [
+        {
+          "heading": "packages",
+          "level": 1,
+          "line": 1
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 1
+      }
+    },
+    {
+      "path": "tsconfig.base.json",
+      "language": "json",
+      "fileCategory": "config",
+      "totalLines": 17,
+      "nonEmptyLines": 17,
+      "sections": [
+        {
+          "heading": "compilerOptions",
+          "level": 1,
+          "line": 2
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 1
+      }
+    }
+  ]
+}

@@ -29,9 +29,14 @@ export {
   extractJson,
   nodeIO,
   openAiClient,
+  pickExecPort,
   runAgent,
+  runExec,
+  spawnRunner,
   validateResponse,
   type AgentIO,
+  type CommandRunner,
+  type ExecOutcome,
   type ModelClient,
 } from "./agent.js";
 export { Scenario, SendSpec } from "./scenario.js";

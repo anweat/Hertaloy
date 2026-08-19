@@ -1,0 +1,3 @@
+Loaded 122 files (101 code).
+Info: compute-batches: merged 109 small batches (116 files) into 5 misc batches — singletons and orphans consolidated
+Wrote 6 batches (sizes: max=25, min=6) to D:\codeproject\Hertaloy\.understand-anything\intermediate\batches.json

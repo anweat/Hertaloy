@@ -19,6 +19,7 @@
  * 这与 G1 的自我修正是同一个循环，只是发生在更内层。
  */
 
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -194,6 +195,112 @@ export function buildPrompt(
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * **把任意命令行包成一个合规的 agent 节点** —— `hertaloy agent --exec <命令>`。
+ *
+ * 第五次归约说"agent 就是命令行"。反过来推论就是：`git commit`、
+ * `codegraph index`、`pnpm test` 这些**本身就是命令行的东西，
+ * 不该为了当一个节点而先套一个模型**。它们缺的只是"按契约写 emit.json"。
+ *
+ * 出口按退出码选，而**端口仍然是白名单**：
+ *
+ *   退出 0     → `ok` 端口（没声明就用第一个允许的）
+ *   退出非 0   → `err` 端口（**没声明就真失败**，让内核按 FAILED 重试）
+ *
+ * 最后半句是有意的：失败没有声明出口时不该被悄悄路由成"成功走了另一条边"。
+ * 想处理失败就显式声明 `err` 端口 —— 这样"这条流程会怎么处理失败"
+ * 写在模板里看得见，而不是藏在某个默认行为里。
+ *
+ * 条件分支因此仍然落在端口 + 边上（M1 没被绕过）：
+ * exec 节点只是**选端口**，路由还是边说了算。
+ */
+export interface ExecOutcome {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+export type CommandRunner = (argv: readonly string[], cwd: string) => Promise<ExecOutcome>;
+
+/** 退出码 → 走哪个端口。返回 null 表示"没有出口，这是真失败"。 */
+export function pickExecPort(
+  code: number,
+  allowedEmitPorts: readonly string[],
+): string | null {
+  if (code === 0) {
+    return allowedEmitPorts.includes("ok") ? "ok" : (allowedEmitPorts[0] ?? null);
+  }
+  return allowedEmitPorts.includes("err") ? "err" : null;
+}
+
+const TAIL = 4000;
+
+/** 只留尾部 —— 一次 `pnpm test` 的输出能有几兆，全塞进消息载荷没意义。 */
+function tail(text: string): string {
+  return text.length <= TAIL ? text : `…（略去前 ${String(text.length - TAIL)} 字）
+${text.slice(-TAIL)}`;
+}
+
+export async function runExec(
+  io: AgentIO,
+  argv: readonly string[],
+  run: CommandRunner,
+): Promise<number> {
+  let request: AgentRequest;
+  try {
+    request = AgentRequest.parse(JSON.parse(io.read("../.hertaloy/request.json")));
+  } catch (error) {
+    io.log(`读不到契约：${(error as Error).message}`);
+    return 2;
+  }
+  if (argv.length === 0) {
+    io.log("--exec 后面要跟一条命令");
+    return 2;
+  }
+
+  const outcome = await run(argv, io.cwd);
+  const port = pickExecPort(outcome.code, request.allowedEmitPorts);
+  if (port === null) {
+    io.log(
+      `命令退出 ${String(outcome.code)}，而本节点没有声明 \`err\` 端口 —— ` +
+        `按真失败处理。想在流程里处理失败就显式声明一个 err 端口。
+${tail(outcome.stderr)}`,
+    );
+    return outcome.code === 0 ? 1 : outcome.code;
+  }
+
+  io.write(
+    request.emitPath,
+    `${JSON.stringify(
+      { [port]: { exitCode: outcome.code, stdout: tail(outcome.stdout), stderr: tail(outcome.stderr) } },
+      null,
+      2,
+    )}
+`,
+  );
+  return 0;
+}
+
+/**
+ * 真的起进程。`shell: false` —— argv 原样执行，不被 shell 二次解释。
+ *
+ * 这与运行器的选择一致：让 shell 插一脚意味着模板里的一个字符串
+ * 可能变成三条命令，而模板是 agent 也能写的东西。
+ */
+export function spawnRunner(): CommandRunner {
+  return async (argv, cwd) =>
+    await new Promise<ExecOutcome>((resolve) => {
+      const [command, ...rest] = argv;
+      const child = spawn(command as string, rest, { cwd, shell: false });
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+      child.stderr?.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+      child.on("error", (e) => resolve({ code: 127, stdout, stderr: `${stderr}${e.message}` }));
+      child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+    });
+}
 
 export interface ModelClient {
   complete(prompt: string): Promise<string>;

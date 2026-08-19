@@ -1,0 +1,1282 @@
+{
+  "nodes": [
+    {
+      "id": "file:packages/kernel/src/index.ts",
+      "type": "file",
+      "name": "index.ts",
+      "filePath": "packages/kernel/src/index.ts",
+      "summary": "内核包统一出口，重导出错误、存储、事务、实例、锁、上下文、提取、路由、运行时与控制面模块，供 @nodeflow/kernel 使用。",
+      "tags": ["entry-point", "barrel", "exports"],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:packages/kernel/src/instances.ts",
+      "type": "file",
+      "name": "instances.ts",
+      "filePath": "packages/kernel/src/instances.ts",
+      "summary": "实现 V5 实例树：InstanceRegistry 管理根/子容器实例，registerContainerTemplate 在注册期全量校验并物化覆盖层，namespacedId 限定资产命名空间。",
+      "tags": ["instance-tree", "container-runtime", "registry", "validation", "namespace"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:packages/kernel/src/locks.ts",
+      "type": "file",
+      "name": "locks.ts",
+      "filePath": "packages/kernel/src/locks.ts",
+      "summary": "网关锁账本：只在内核跨网关穿越时记录 request/child 两类锁，支持快照回滚、按 key 释放与等待图死锁检测。",
+      "tags": ["locks", "deadlock-detection", "gateway", "snapshotable"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/kernel/src/routing.ts",
+      "type": "file",
+      "name": "routing.ts",
+      "filePath": "packages/kernel/src/routing.ts",
+      "summary": "输出排期模块：把 handler/agent 的端口输出转换为下游消息、锁与请求，统一同步与 agent 两条路径的 M1/M3 路由语义。",
+      "tags": ["routing", "staging", "ports", "zero-partial-commit"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:packages/kernel/src/runtime.ts",
+      "type": "file",
+      "name": "runtime.ts",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "summary": "内核核心编排器：内网转发、网关、锁账本、agent claim/execute/apply 三段式、自然终止与强制截断，以及提交事务与 RunSnapshot 因果记录。",
+      "tags": ["orchestrator", "runtime", "state-machine", "transaction", "termination"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:packages/kernel/src/store.ts",
+      "type": "file",
+      "name": "store.ts",
+      "filePath": "packages/kernel/src/store.ts",
+      "summary": "ObjectStore 版本对象存储：内容寻址、幂等写入、深冻结、追加日志、跨实例 collect 与版本 DAG lineage，是版本分配唯一权威。",
+      "tags": ["object-store", "content-addressing", "versioning", "snapshotable"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:packages/kernel/src/tx.ts",
+      "type": "file",
+      "name": "tx.ts",
+      "filePath": "packages/kernel/src/tx.ts",
+      "summary": "提交事务工具：对一组 Snapshotable 部件先快照后执行，异常时全部回滚，保证内核提交原子性。",
+      "tags": ["transaction", "atomicity", "rollback", "utility"],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "type": "file",
+      "name": "checkpoint-b.test.ts",
+      "filePath": "packages/kernel/test/checkpoint-b.test.ts",
+      "summary": "针对 Checkpoint B 场景的回归测试，覆盖实例模板注册、网关请求回复、消息状态与 RunSnapshot 的完整流程。",
+      "tags": ["test", "checkpoint", "runtime", "integration"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/kernel/test/container-tools.test.ts",
+      "type": "file",
+      "name": "container-tools.test.ts",
+      "filePath": "packages/kernel/test/container-tools.test.ts",
+      "summary": "测试容器工具能力：从 handler 内建子容器、通过 entry 投递初始载荷并验证父子通信。",
+      "tags": ["test", "container-tools", "spawn", "runtime"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/kernel/test/execution.test.ts",
+      "type": "file",
+      "name": "execution.test.ts",
+      "filePath": "packages/kernel/test/execution.test.ts",
+      "summary": "覆盖同步执行与 agent 三段式执行：ScriptedBackend 驱动 claim/apply、失败重试、INVALID_OUTPUT 等执行语义。",
+      "tags": ["test", "execution", "agent", "runtime"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:packages/kernel/test/extract.test.ts",
+      "type": "file",
+      "name": "extract.test.ts",
+      "filePath": "packages/kernel/test/extract.test.ts",
+      "summary": "单元测试 extractPortVars/evaluatePath 的端口变量提取与路径求值逻辑。",
+      "tags": ["test", "extract", "ports", "unit"],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:packages/kernel/test/fanout-merge.test.ts",
+      "type": "file",
+      "name": "fanout-merge.test.ts",
+      "filePath": "packages/kernel/test/fanout-merge.test.ts",
+      "summary": "测试扇出-汇聚模式：多个子容器并行写 results，父容器用 ctx.collect 汇聚并合并输出。",
+      "tags": ["test", "fanout", "merge", "pattern"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:packages/kernel/test/gateway.test.ts",
+      "type": "file",
+      "name": "gateway.test.ts",
+      "filePath": "packages/kernel/test/gateway.test.ts",
+      "summary": "测试网关语义：实例间通过隧道与 REQUEST/REPLY 通信、锁账本记录和回执路由。",
+      "tags": ["test", "gateway", "tunnel", "request-reply"],
+      "complexity": "complex"
+    },
+    {
+      "id": "class:packages/kernel/src/instances.ts:InstanceRegistry",
+      "type": "class",
+      "name": "InstanceRegistry",
+      "filePath": "packages/kernel/src/instances.ts",
+      "lineRange": [71, 236],
+      "summary": "管理 V5 容器实例树：根容器唯一、spawn 只从已声明子槽创建、subtree/children 查询、状态/seq/generation 变更与快照回滚。",
+      "tags": ["registry", "container-instance", "snapshotable", "tree"],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:packages/kernel/src/instances.ts:registerContainerTemplate",
+      "type": "function",
+      "name": "registerContainerTemplate",
+      "filePath": "packages/kernel/src/instances.ts",
+      "lineRange": [245, 296],
+      "summary": "注册容器模板/消息契约/覆盖层，注册期执行结构校验、子槽引用校验与覆盖层物化后落版本。",
+      "tags": ["template-registration", "validation", "overlay", "store"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/instances.ts:namespacedId",
+      "type": "function",
+      "name": "namespacedId",
+      "filePath": "packages/kernel/src/instances.ts",
+      "lineRange": [310, 321],
+      "summary": "将资产名限定到实例命名空间，拒绝 .. 与非法路径段，防止跨实例对象污染。",
+      "tags": ["namespace", "asset-id", "validation"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/instances.ts:materializeOverlay",
+      "type": "function",
+      "name": "materializeOverlay",
+      "filePath": "packages/kernel/src/instances.ts",
+      "lineRange": [339, 387],
+      "summary": "注册期 eager 解析覆盖层继承链：解析基模板、施加 overlay、校验合并结果并落成 materialized 版本。",
+      "tags": ["overlay", "inheritance", "materialization", "validation"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/instances.ts:validateChildEntries",
+      "type": "function",
+      "name": "validateChildEntries",
+      "filePath": "packages/kernel/src/instances.ts",
+      "lineRange": [396, 440],
+      "summary": "跨模板校验子槽 entry 必须指向子模板已声明的 receive 端口，依赖 store 解析引用。",
+      "tags": ["template-validation", "child-slots", "ports", "store"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:packages/kernel/src/locks.ts:LockLedger",
+      "type": "class",
+      "name": "LockLedger",
+      "filePath": "packages/kernel/src/locks.ts",
+      "lineRange": [49, 152],
+      "summary": "记录 request/child 两类网关锁，支持快照、按 key 释放、持有/等待查询与等待图死锁环检测。",
+      "tags": ["lock-ledger", "gateway", "deadlock", "snapshotable"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/routing.ts:undeclaredPorts",
+      "type": "function",
+      "name": "undeclaredPorts",
+      "filePath": "packages/kernel/src/routing.ts",
+      "lineRange": [73, 79],
+      "summary": "计算输出端口集合中未在 allowed_emit_ports 声明内的端口列表。",
+      "tags": ["port-validation", "routing"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/routing.ts:describeUndeclared",
+      "type": "function",
+      "name": "describeUndeclared",
+      "filePath": "packages/kernel/src/routing.ts",
+      "lineRange": [81, 91],
+      "summary": "生成未声明输出端口的可读错误描述。",
+      "tags": ["port-validation", "error-message"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/routing.ts:assertDeclaredPorts",
+      "type": "function",
+      "name": "assertDeclaredPorts",
+      "filePath": "packages/kernel/src/routing.ts",
+      "lineRange": [100, 109],
+      "summary": "受信路径使用：端口越界即抛 InvariantError，作为编程错误处理。",
+      "tags": ["port-validation", "invariant"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/routing.ts:stageOutputs",
+      "type": "function",
+      "name": "stageOutputs",
+      "filePath": "packages/kernel/src/routing.ts",
+      "lineRange": [111, 217],
+      "summary": "核心排期函数：将节点输出按端口声明转换为消息、锁、请求与 dangling 观测，不执行提交。",
+      "tags": ["routing", "staging", "zero-partial-commit"],
+      "complexity": "complex"
+    },
+    {
+      "id": "class:packages/kernel/src/runtime.ts:Runtime",
+      "type": "class",
+      "name": "Runtime",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [248, 1447],
+      "summary": "V5 内核运行时：统一调度内网消息与网关请求，执行 agent 三段式，维护锁账本、执行记录、RunSnapshot 因果与终止/截断逻辑。",
+      "tags": ["runtime", "orchestrator", "state-machine", "transaction"],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:checkInvariants",
+      "type": "function",
+      "name": "checkInvariants",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [359, 416],
+      "summary": "跨消息/执行/实例/锁四套状态检查不变量，发现半状态即抛 InvariantError。",
+      "tags": ["invariants", "validation", "runtime"],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:registerHandler",
+      "type": "function",
+      "name": "registerHandler",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [444, 459],
+      "summary": "注册内置 handler 并包装 JSON 合法性校验，拒绝非法 JSON 输出。",
+      "tags": ["handler", "json-validation", "registration"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:step",
+      "type": "function",
+      "name": "step",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [499, 508],
+      "summary": "同步路径单步执行：选取一个 handler 节点消息，事务内完成消费、排期、提交。",
+      "tags": ["sync-step", "scheduler", "transaction"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:drain",
+      "type": "function",
+      "name": "drain",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [510, 518],
+      "summary": "循环调用 step 直到队列收敛，超过 maxSteps 抛未收敛异常。",
+      "tags": ["drain", "scheduler", "loop"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:claimAgent",
+      "type": "function",
+      "name": "claimAgent",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [542, 560],
+      "summary": "agent 三段式第一步：事务内 claim 一条消息并落盘，把 execute 留给调用方在锁外执行。",
+      "tags": ["agent", "claim", "transaction", "lock-free-execute"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:applyAgentResult",
+      "type": "function",
+      "name": "applyAgentResult",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [569, 588],
+      "summary": "把在别处执行的 agent 结果应用回来：校验后端结果、复核冲突域并事务性提交产物与下游。",
+      "tags": ["agent", "apply", "result-validation", "transaction"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:stepAgent",
+      "type": "function",
+      "name": "stepAgent",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [599, 618],
+      "summary": "把 claim/execute/apply 焊成 async 单步；backend 异常映射为 FAILED 失败路径。",
+      "tags": ["agent", "async", "step"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:drainAgents",
+      "type": "function",
+      "name": "drainAgents",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [620, 628],
+      "summary": "循环执行 stepAgent 直到没有 agent 工作，超限抛未收敛异常。",
+      "tags": ["agent", "drain", "async"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:terminationBlockers",
+      "type": "function",
+      "name": "terminationBlockers",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [908, 927],
+      "summary": "返回阻止实例终止的三类原因：待处理消息、在途 execution、持有锁。",
+      "tags": ["termination", "blockers", "locks"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:settle",
+      "type": "function",
+      "name": "settle",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [940, 953],
+      "summary": "自然终止：三个终止谓词满足后置实例 TERMINAL、释放父 child 锁并通知父容器。",
+      "tags": ["termination", "settle", "lock-release"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:settleAll",
+      "type": "function",
+      "name": "settleAll",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [986, 1000],
+      "summary": "自底向上反复 settle 整个实例子树直到没有进展，返回成功终态的 traceid 列表。",
+      "tags": ["termination", "tree", "settle-all"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:truncate",
+      "type": "function",
+      "name": "truncate",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [1009, 1015],
+      "summary": "强制截断入口：事务内推进 generation、取消 execution、丢弃消息、清锁并级联子树。",
+      "tags": ["truncate", "generation-fence", "cancellation"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:reconcile",
+      "type": "function",
+      "name": "reconcile",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [1214, 1222],
+      "summary": "认领孤儿 RUNNING 执行并复用失败路径：重排队/计数/超限 FAILED。",
+      "tags": ["reconcile", "orphan-execution", "recovery"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/runtime.ts:causesOf",
+      "type": "function",
+      "name": "causesOf",
+      "filePath": "packages/kernel/src/runtime.ts",
+      "lineRange": [1266, 1278],
+      "summary": "通过 RunSnapshot 的 produced/consumed 反查某条消息的因果前因。",
+      "tags": ["causality", "runsnapshot", "query"],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:packages/kernel/src/store.ts:ObjectStore",
+      "type": "class",
+      "name": "ObjectStore",
+      "filePath": "packages/kernel/src/store.ts",
+      "lineRange": [82, 257],
+      "summary": "版本对象存储：以 object_id@version 精确引用，支持 put/load/get/history/collect/lineage 与快照回滚。",
+      "tags": ["object-store", "versioning", "content-addressing", "snapshotable"],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:packages/kernel/src/store.ts:stableStringify",
+      "type": "function",
+      "name": "stableStringify",
+      "filePath": "packages/kernel/src/store.ts",
+      "lineRange": [29, 36],
+      "summary": "稳定 JSON 序列化：对象键排序，保证同内容跨进程得到逐字节相同字符串，用于内容哈希。",
+      "tags": ["serialization", "hash", "json"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/store.ts:contentHash",
+      "type": "function",
+      "name": "contentHash",
+      "filePath": "packages/kernel/src/store.ts",
+      "lineRange": [45, 47],
+      "summary": "计算 JsonObject 的全量 SHA-256 内容哈希，作为内容寻址与幂等版本的去重依据。",
+      "tags": ["hash", "content-addressing", "sha256"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/store.ts:refOf",
+      "type": "function",
+      "name": "refOf",
+      "filePath": "packages/kernel/src/store.ts",
+      "lineRange": [259, 261],
+      "summary": "将 ObjectVersion 转换为 object_id@version 精确引用字符串。",
+      "tags": ["ref", "utility"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/src/tx.ts:transact",
+      "type": "function",
+      "name": "transact",
+      "filePath": "packages/kernel/src/tx.ts",
+      "lineRange": [25, 35],
+      "summary": "在多个 Snapshotable 部件上执行原子事务，失败时全部回滚并重抛异常。",
+      "tags": ["transaction", "atomicity", "rollback"],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:packages/kernel/test/checkpoint-b.test.ts:FakeBackend",
+      "type": "class",
+      "name": "FakeBackend",
+      "filePath": "packages/kernel/test/checkpoint-b.test.ts",
+      "lineRange": [71, 90],
+      "summary": "测试用假 ExecutionBackend：记录 seen 并支持 cancel，用于驱动 checkpoint 流程。",
+      "tags": ["test-double", "backend", "test"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/test/container-tools.test.ts:buildRoot",
+      "type": "function",
+      "name": "buildRoot",
+      "filePath": "packages/kernel/test/container-tools.test.ts",
+      "lineRange": [35, 65],
+      "summary": "测试辅助：注册根容器模板、创建根实例并注册 handler，返回就绪的 Runtime/Registry。",
+      "tags": ["test-helper", "fixture", "runtime"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:packages/kernel/test/execution.test.ts:ScriptedBackend",
+      "type": "class",
+      "name": "ScriptedBackend",
+      "filePath": "packages/kernel/test/execution.test.ts",
+      "lineRange": [35, 56],
+      "summary": "按脚本队列返回 ExecutionResult 的测试后端，可断言 seen/cancelled 调用序列。",
+      "tags": ["test-double", "backend", "scripted"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:packages/kernel/test/fanout-merge.test.ts:build",
+      "type": "function",
+      "name": "build",
+      "filePath": "packages/kernel/test/fanout-merge.test.ts",
+      "lineRange": [35, 104],
+      "summary": "测试辅助：搭建扇出-汇聚模板，注册多个子容器 handler 并驱动消息流。",
+      "tags": ["test-helper", "fanout", "fixture"],
+      "complexity": "moderate"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/errors.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/store.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/tx.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/instances.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/locks.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/context.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/extract.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/routing.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/runtime.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/index.ts",
+      "target": "file:packages/kernel/src/control.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/kernel/src/errors.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/kernel/src/store.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/kernel/src/tx.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/locks.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/locks.ts",
+      "target": "file:packages/kernel/src/tx.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "file:packages/kernel/src/errors.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "file:packages/kernel/src/locks.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/src/errors.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/src/context.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/src/extract.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/src/instances.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/src/locks.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/src/routing.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/src/store.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/src/tx.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "file:packages/kernel/src/errors.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "file:packages/kernel/src/tx.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "target": "file:packages/kernel/src/instances.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "target": "file:packages/kernel/src/store.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "target": "file:packages/kernel/src/runtime.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "target": "file:packages/kernel/src/errors.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/container-tools.test.ts",
+      "target": "file:packages/kernel/src/instances.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/container-tools.test.ts",
+      "target": "file:packages/kernel/src/store.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/container-tools.test.ts",
+      "target": "file:packages/kernel/src/runtime.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/container-tools.test.ts",
+      "target": "file:packages/kernel/src/errors.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/execution.test.ts",
+      "target": "file:packages/contracts/src/index.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/execution.test.ts",
+      "target": "file:packages/kernel/src/instances.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/execution.test.ts",
+      "target": "file:packages/kernel/src/store.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/execution.test.ts",
+      "target": "file:packages/kernel/src/runtime.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/extract.test.ts",
+      "target": "file:packages/kernel/src/extract.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/fanout-merge.test.ts",
+      "target": "file:packages/kernel/src/instances.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/fanout-merge.test.ts",
+      "target": "file:packages/kernel/src/store.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/fanout-merge.test.ts",
+      "target": "file:packages/kernel/src/runtime.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/gateway.test.ts",
+      "target": "file:packages/kernel/src/instances.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/gateway.test.ts",
+      "target": "file:packages/kernel/src/store.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/test/gateway.test.ts",
+      "target": "file:packages/kernel/src/runtime.ts",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "class:packages/kernel/src/instances.ts:InstanceRegistry",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "function:packages/kernel/src/instances.ts:registerContainerTemplate",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "function:packages/kernel/src/instances.ts:namespacedId",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "function:packages/kernel/src/instances.ts:materializeOverlay",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "function:packages/kernel/src/instances.ts:validateChildEntries",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/locks.ts",
+      "target": "class:packages/kernel/src/locks.ts:LockLedger",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "function:packages/kernel/src/routing.ts:undeclaredPorts",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "function:packages/kernel/src/routing.ts:describeUndeclared",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "function:packages/kernel/src/routing.ts:assertDeclaredPorts",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "function:packages/kernel/src/routing.ts:stageOutputs",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "class:packages/kernel/src/runtime.ts:Runtime",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:checkInvariants",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:registerHandler",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:step",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:drain",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:claimAgent",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:applyAgentResult",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:stepAgent",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:drainAgents",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:terminationBlockers",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:settle",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:settleAll",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:truncate",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:reconcile",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "function:packages/kernel/src/runtime.ts:causesOf",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "class:packages/kernel/src/store.ts:ObjectStore",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "function:packages/kernel/src/store.ts:stableStringify",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "function:packages/kernel/src/store.ts:contentHash",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "function:packages/kernel/src/store.ts:refOf",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/tx.ts",
+      "target": "function:packages/kernel/src/tx.ts:transact",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "target": "class:packages/kernel/test/checkpoint-b.test.ts:FakeBackend",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/test/container-tools.test.ts",
+      "target": "function:packages/kernel/test/container-tools.test.ts:buildRoot",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/test/execution.test.ts",
+      "target": "class:packages/kernel/test/execution.test.ts:ScriptedBackend",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/test/fanout-merge.test.ts",
+      "target": "function:packages/kernel/test/fanout-merge.test.ts:build",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "class:packages/kernel/src/instances.ts:InstanceRegistry",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "function:packages/kernel/src/instances.ts:registerContainerTemplate",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "function:packages/kernel/src/instances.ts:namespacedId",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/locks.ts",
+      "target": "class:packages/kernel/src/locks.ts:LockLedger",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "function:packages/kernel/src/routing.ts:undeclaredPorts",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "function:packages/kernel/src/routing.ts:describeUndeclared",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "function:packages/kernel/src/routing.ts:assertDeclaredPorts",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/routing.ts",
+      "target": "function:packages/kernel/src/routing.ts:stageOutputs",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "class:packages/kernel/src/runtime.ts:Runtime",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "class:packages/kernel/src/store.ts:ObjectStore",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "function:packages/kernel/src/store.ts:stableStringify",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "function:packages/kernel/src/store.ts:contentHash",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "function:packages/kernel/src/store.ts:refOf",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/tx.ts",
+      "target": "function:packages/kernel/src/tx.ts:transact",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/errors.ts",
+      "target": "file:packages/kernel/test/checkpoint-b.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/kernel/test/container-tools.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "file:packages/kernel/test/container-tools.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/test/container-tools.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/errors.ts",
+      "target": "file:packages/kernel/test/container-tools.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/kernel/test/execution.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "file:packages/kernel/test/execution.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/test/execution.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/extract.ts",
+      "target": "file:packages/kernel/test/extract.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/kernel/test/fanout-merge.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "file:packages/kernel/test/fanout-merge.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/test/fanout-merge.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/instances.ts",
+      "target": "file:packages/kernel/test/gateway.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/store.ts",
+      "target": "file:packages/kernel/test/gateway.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:packages/kernel/src/runtime.ts",
+      "target": "file:packages/kernel/test/gateway.test.ts",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    }
+  ]
+}

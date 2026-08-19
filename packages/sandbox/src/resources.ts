@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   type ResourceKind,
@@ -63,6 +63,43 @@ export interface ProvisionedWorkspace {
  * `--no-hardlinks`：硬链接会让沙箱里的对象库与源仓库共享 inode，
  * 沙箱里一次 `git gc` 就可能动到源仓库的对象。一次性沙箱不值得冒这个险。
  */
+/**
+ * 接过上游节点的工作区 —— **子流程能成立的关键**。
+ *
+ * 上游沙箱的位置由调用方给（backend 记得自己分配过哪些），**不扫目录**：
+ * 扫目录只对宿主机可见的沙箱有效，而 WSL 的沙箱住在 Linux 文件系统里，
+ * 宿主机 `readdirSync` 根本列不到。让 backend 记账对三种运行器一视同仁。
+ *
+ * **命名空间限定**由调用方的查表键保证：键是 `<traceid>/<节点>`，
+ * 而 traceid 是调用者自己的 —— 一个实例查不到兄弟实例的沙箱。
+ *
+ * 拷贝而不是共享目录：两个并行节点接同一个上游时各拿一份，互不踩。
+ * 沙箱一次性正是并行安全的来源，共享会把它拆掉。
+ */
+export function inheritWorkspace(
+  upstreamWorkspace: string,
+  fromNode: string,
+  targetDir: string,
+): ProvisionedWorkspace {
+  if (!existsSync(upstreamWorkspace)) {
+    throw new ResourceError(
+      `接不到上游节点 \`${fromNode}\` 的工作区：${upstreamWorkspace} 不存在。` +
+        "可能是它还没跑、或者沙箱已被回收（hertaloy reclaim）。",
+    );
+  }
+  cpSync(upstreamWorkspace, targetDir, { recursive: true, dereference: false });
+  return { source: `${fromNode}（上游工作区）`, base: "inherited", commit: headOf(targetDir) };
+}
+
+/** 接过来的目录未必是 git 仓库（上游没有工作区源时）—— 那就没有 commit。 */
+function headOf(dir: string): string {
+  try {
+    return git(["rev-parse", "HEAD"], dir).trim();
+  } catch {
+    return "";
+  }
+}
+
 export function provisionWorkspace(
   registry: ResourceRegistry,
   request: { readonly source: string; readonly base?: string | undefined },

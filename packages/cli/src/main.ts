@@ -17,7 +17,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run, validate } from "./commands.js";
-import { nodeIO, openAiClient, runAgent } from "./agent.js";
+import { nodeIO, openAiClient, runAgent, runExec, spawnRunner } from "./agent.js";
 import { diagnose, formatChecks } from "./doctor.js";
 import type { ExecutionBackend, Principal } from "@nodeflow/contracts";
 import { DockerRunner, LocalRunner, SandboxBackend, WslRunner } from "@nodeflow/sandbox";
@@ -45,6 +45,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy run <scenario.json>        跑一个一次性场景并打印报告
   hertaloy agent [--dry-run]          在沙箱里跑我们自己的 agent（读契约目录）
        配置来自环境：HERTALOY_BASE_URL / HERTALOY_MODEL / HERTALOY_API_KEY
+  hertaloy agent --exec <命令...>     把任意命令行包成合规节点（不调模型）
+       退出 0 → ok 端口；非 0 → err 端口，没声明 err 就是真失败
 
 作用在磁盘上的 run（<dir> 是状态目录）：
   hertaloy init    <dir> <scenario.json>        从场景文件建一个持久化的 run
@@ -228,6 +230,14 @@ function makeBackend(runner: string | undefined, dir: string): ExecutionBackend 
  */
 async function runOwnAgent(argv: readonly string[]): Promise<number> {
   const io = nodeIO(process.cwd());
+
+  /**
+   * `--exec` 把**任意命令行**包成合规节点 —— `git commit`、`pnpm test`、
+   * `codegraph index` 都不必先套一个模型。`--exec` 之后的全部参数即命令。
+   */
+  const execAt = argv.indexOf("--exec");
+  if (execAt !== -1) return await runExec(io, argv.slice(execAt + 1), spawnRunner());
+
   const dry = argv.includes("--dry-run");
 
   if (dry) {
