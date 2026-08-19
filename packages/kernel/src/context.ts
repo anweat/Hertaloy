@@ -59,6 +59,44 @@ function checkBound(
   return actual;
 }
 
+/** 解引用失败时的哨兵 —— 失败已记进 failures，别再往变量袋里塞坏值。 */
+const SKIP = Symbol("skip") as unknown as Json;
+
+/**
+ * `ref` 变量的解引用 —— **让"资产写入 → 下游以 ref 引入"这条链真的通**。
+ *
+ * 此前 `ref` 只是个声明：`VAR_TYPES` 收它、B1 按 `long` 要求它声明 `max_tokens`，
+ * 但全仓没有一处解引用。于是它到 agent 手里是字符串 `"id@3"`，沙箱里没有
+ * 解析途径；而它的 `max_tokens` 量的是**那个字符串**（约 5 tokens）——
+ * **B1 的运行期一半对 ref 恒为真空**。
+ *
+ * 解引用之后再量上界，那一半才变真：一份 8000 token 的资产声明成
+ * `max_tokens: 100` 会当场失败，而不是悄悄通过。
+ *
+ * 取值约定与 `bind.card` 一致（`body.text` 优先），因为它们是同一件事的
+ * 两个时机：card 是编译期绑定、ref 是运行期填充。
+ */
+function dereference(
+  store: ObjectStore,
+  name: string,
+  value: Json,
+  failures: ContextFailure[],
+): Json {
+  if (typeof value !== "string") {
+    failures.push({
+      variable: name,
+      message: `声明为 ref，但提取到的不是字符串（${typeof value}）—— ref 变量要取到一个 \`id@N\``,
+    });
+    return SKIP;
+  }
+  try {
+    return cardText(store.resolve(value).body);
+  } catch (error) {
+    failures.push({ variable: name, message: `解引用 ${value} 失败：${String(error)}` });
+    return SKIP;
+  }
+}
+
 /**
  * 编译一次调用的完整变量袋 = `bind` 段 + 端口 servo 已提取的变量。
  *
@@ -104,8 +142,10 @@ export function compileContext(
   }
   for (const [name, value] of Object.entries(runtimeVars)) {
     const decl = portVars.get(name);
-    if (decl !== undefined) tokens += checkBound(name, decl, value, failures);
-    vars[name] = value;
+    const resolved = decl?.type === "ref" ? dereference(store, name, value, failures) : value;
+    if (resolved === SKIP) continue;
+    if (decl !== undefined) tokens += checkBound(name, decl, resolved, failures);
+    vars[name] = resolved;
   }
 
   if (failures.length > 0) return { ok: false, failures };
