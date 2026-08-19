@@ -22,6 +22,17 @@ export interface ProfileInput {
   readonly artifactsDir: string;
   readonly traceid: string;
   readonly nodeId: string;
+  /** 工作区从哪个具名源、哪个 commit 起的。没有工作区时不给。 */
+  readonly workspace?: { readonly source: string; readonly base: string; readonly commit: string };
+  /** 限额。**要告诉 agent** —— 它才好决定花多少力气。 */
+  readonly limits?: {
+    readonly tokenBudget?: number | undefined;
+    readonly wallClockSeconds?: number | undefined;
+  };
+  /** `.hertaloy/resources/` 下有哪些别名可用。 */
+  readonly resources?: readonly string[];
+  /** 改动是否被沙箱外的 git 观察。 */
+  readonly observed?: boolean;
 }
 
 export interface Profile {
@@ -61,9 +72,64 @@ function emitInstruction(input: ProfileInput): string {
     "",
     `需要留下版本化产物就写进 \`${input.artifactsDir}\`，目录里的每个文件会被收成一份资产。`,
     "",
+    ...environment(input),
     `本次执行：\`${input.traceid}\` 的节点 \`${input.nodeId}\`。`,
     "",
   ].join("\n");
+}
+
+
+/**
+ * 环境交代 —— agent 干活前**必须知道**的几件事。
+ *
+ * 之前这一段是没有的：agent 不知道工作区是哪个 commit、不知道自己有多少预算、
+ * 不知道有哪些参考资料、更不知道自己的每一次文件改动都被沙箱外的 git 记着。
+ * 一个不知道这些的 agent 只能瞎猜 —— 而瞎猜的代价由预算和重试付。
+ *
+ * 尤其是**被观察**这条要明说。不是为了吓它，是因为"改了什么"会成为不可变的证据，
+ * 它应该据此决定改动的粒度（一次做完 vs 边试边改）。
+ */
+function environment(input: ProfileInput): readonly string[] {
+  const out: string[] = ["# 环境", ""];
+
+  if (input.workspace !== undefined) {
+    out.push(
+      `工作区是具名源 \`${input.workspace.source}\` 的一份克隆，起点 ` +
+        `\`${input.workspace.base}\`（${input.workspace.commit.slice(0, 12)}）。` +
+        "直接在里面改，不必也不要去动 remote。",
+    );
+  } else {
+    out.push("工作区是空目录 —— 本次任务不基于任何仓库。");
+  }
+
+  if (input.resources !== undefined && input.resources.length > 0) {
+    out.push(
+      "",
+      `参考资料在 \`../.hertaloy/resources/\` 下：${input.resources
+        .map((r) => `\`${r}\``)
+        .join("、")}。它们**只读参考**，改了不会被收走。`,
+    );
+  }
+
+  const limits: string[] = [];
+  if (input.limits?.tokenBudget !== undefined) {
+    limits.push(`token 预算 ${String(input.limits.tokenBudget)}`);
+  }
+  if (input.limits?.wallClockSeconds !== undefined) {
+    limits.push(`墙钟上限 ${String(input.limits.wallClockSeconds)} 秒（超时进程会被杀）`);
+  }
+  if (limits.length > 0) out.push("", `限额：${limits.join("，")}。`);
+
+  if (input.observed === true) {
+    out.push(
+      "",
+      "**你对工作区的每一次改动都被沙箱外的 git 记录**，形成不可变的快照。" +
+        "这不是监视，是产出的凭据 —— 改动会被原样保留下来供人复查。",
+    );
+  }
+
+  out.push("");
+  return out;
 }
 
 function varsJson(input: ProfileInput): string {

@@ -22,12 +22,16 @@ function fakeAgent(body: string): string {
   return file;
 }
 
-function request(argv: readonly string[], over: Partial<ExecutionRequest> = {}): ExecutionRequest {
+function request(
+  argv: readonly string[],
+  spec: Record<string, unknown> = {},
+  over: Partial<ExecutionRequest> = {},
+): ExecutionRequest {
   return {
     executionId: "exec-1",
     traceid: "job-1/coder-1",
     nodeId: "work",
-    agentSpec: { argv: [...argv] } as never,
+    agentSpec: { argv: [...argv], ...spec } as never,
     vars: { task: "写个导出功能" },
     outputContract: { allowedEmitPorts: ["out", "err"] },
     limits: {},
@@ -114,7 +118,7 @@ describe("★ 退出码 → 终止原因（§14.6，判据是「重试会不会�
   it("超时被杀 → BUDGET（是限额意图，不是故障，不重试）", async () => {
     const agent = fakeAgent(`setTimeout(() => process.exit(0), 60_000);`);
     const r = await backend.run(
-      request(["node", agent], { limits: { wallClockSeconds: 0.5 } }),
+      request(["node", agent], {}, { limits: { wallClockSeconds: 0.5 } }),
     );
     expect(r.termination).toBe("BUDGET");
   }, 30_000);
@@ -127,7 +131,7 @@ describe("★ 退出码 → 终止原因（§14.6，判据是「重试会不会�
   }, 30_000);
 
   it("agentSpec 不是合法沙箱规格 → INVALID_OUTPUT，错误说清哪不对", async () => {
-    const r = await backend.run(request([], { agentSpec: { nope: 1 } as never }));
+    const r = await backend.run(request([], {}, { agentSpec: { nope: 1 } as never }));
     expect(r.termination).toBe("INVALID_OUTPUT");
     expect((r.diagnostics as never as SandboxDiagnostics).stderrTail).toMatch(/不是合法的沙箱规格/);
   }, 30_000);
@@ -140,12 +144,77 @@ describe("凭据与环境", () => {
       writeFileSync("../.hertaloy/emit.json", JSON.stringify({ out: { key: process.env.FAKE_KEY } }));
     `);
     const r = await backend.run(
-      request(["node", agent], {
-        agentSpec: { argv: ["node", agent], env: { FAKE_KEY: "sk-假的" } } as never,
-      }),
+      request(["node", agent], { env: { FAKE_KEY: "sk-假的" } }),
     );
     expect(r.emissions).toEqual({ out: { key: "sk-假的" } });
     const diag = r.diagnostics as never as SandboxDiagnostics;
     expect(diag.observation?.changes).toEqual([]); // 工作区没动，凭据没留痕
   }, 30_000);
+});
+
+
+describe("★ 告诉 agent 的话必须是对的", () => {
+  /**
+   * 一个**只照着 request.json 做**的 agent：不猜路径，用契约里给的。
+   * 契约写错的话它必然失败 —— 这正是我们要抓的。
+   */
+  const literalAgent = [
+    'import { mkdirSync, readFileSync, writeFileSync } from "node:fs";',
+    'const r = JSON.parse(readFileSync("../.hertaloy/request.json", "utf8"));',
+    "mkdirSync(r.artifactsDir, { recursive: true });",
+    'writeFileSync(r.artifactsDir + "/note.txt", "产物");',
+    "writeFileSync(r.emitPath, JSON.stringify({ [r.allowedEmitPorts[0]]: { ok: true } }));",
+  ].join("\n");
+
+  it("agent 逐字照 request.json 的路径写，内核就读得到", async () => {
+    const agent = fakeAgent(literalAgent);
+    const result = await backend.run(request(["node", agent]));
+    expect(result.termination).toBe("DONE");
+    expect(result.emissions).toEqual({ out: { ok: true } });
+    expect(result.artifacts?.map((a) => a.object_id)).toContain("note");
+  }, 60_000);
+});
+describe("★ profile 渲染真的发生了", () => {
+  /** 读一个 workspace 下的文件，把内容原样 emit 出来。 */
+  function reader(expr: string): string {
+    return [
+      'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+      `writeFileSync("../.hertaloy/emit.json", JSON.stringify({ out: ${expr} }));`,
+      "void existsSync; void readFileSync;",
+    ].join("\n");
+  }
+
+  it("claude-code 拿到 CLAUDE.md", async () => {
+    const agent = fakeAgent(reader('{ md: readFileSync("CLAUDE.md", "utf8") }'));
+    const result = await backend.run(request(["node", agent], { profile: "claude-code" }));
+    expect(result.termination).toBe("DONE");
+    expect(String((result.emissions.out as { md: string }).md)).toContain("本次任务上下文");
+  }, 60_000);
+
+  it("codex 拿到 AGENTS.md，claude 的那份不在", async () => {
+    const agent = fakeAgent(
+      reader('{ a: existsSync("AGENTS.md"), c: existsSync("CLAUDE.md") }'),
+    );
+    const result = await backend.run(request(["node", agent], { profile: "codex" }));
+    expect(result.emissions.out).toEqual({ a: true, c: false });
+  }, 60_000);
+
+  it("★ 渲染出的文件不算 agent 的改动 —— 它在打基线之前", async () => {
+    const agent = fakeAgent(reader("{}"));
+    const result = await backend.run(request(["node", agent], { profile: "claude-code" }));
+    const d = result.diagnostics as never as SandboxDiagnostics;
+    expect(d.observation?.changes).toEqual([]);
+  }, 60_000);
+
+  it("★ 环境交代里有关键信息：限额、可用资源、被观察", async () => {
+    const agent = fakeAgent(reader('{ md: readFileSync("CLAUDE.md", "utf8") }'));
+    const result = await backend.run(
+      request(["node", agent], { profile: "claude-code" }, { limits: { tokenBudget: 5000 } }),
+    );
+    const md = String((result.emissions.out as { md: string }).md);
+    expect(md).toContain("# 环境");
+    expect(md).toContain("token 预算 5000");
+    expect(md).toContain("被沙箱外的 git 记录");
+    expect(md).toContain("输出契约");
+  }, 60_000);
 });

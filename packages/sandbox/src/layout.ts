@@ -112,8 +112,15 @@ export function writeContext(p: SandboxPaths, files: Readonly<Record<string, str
  * profile 渲染要用它 —— `CLAUDE.md` 得落在 `workspace/` 里，不在 `context/`。
  * 越界校验与 `writeContext` 同规。
  */
+/**
+ * 写一个 agent 可见的文件。`rel` 相对 **box**，不是相对沙箱根。
+ *
+ * box 才是交给 agent 的那一层（记录仓在它外面），所以 profile 渲染出的
+ * `workspace/CLAUDE.md`、`.hertaloy/context/vars.json` 都以它为基准。
+ * 拼 `root` 的话会写到 `<root>/workspace/…` —— 那个目录 agent 根本看不见。
+ */
 export function writeSandboxFile(p: SandboxPaths, rel: string, content: string): void {
-  const target = safeJoin(p.root, rel);
+  const target = safeJoin(p.box, rel);
   mkdirSync(join(target, ".."), { recursive: true });
   writeFileSync(target, content, "utf8");
 }

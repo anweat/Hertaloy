@@ -168,23 +168,9 @@ export class SandboxBackend implements ExecutionBackend {
     let termination: Termination = "FAILED";
 
     try {
-      writeContext(paths, {
-        ...spec.context,
-        // 变量以 JSON 落盘：批 P 的 profile 渲染器会把它铺成各家认识的形态
-        "vars.json": `${JSON.stringify(request.vars, null, 2)}\n`,
-      });
-      writeRequest(paths, {
-        executionId: request.executionId,
-        traceid: request.traceid,
-        nodeId: request.nodeId,
-        allowedEmitPorts: request.outputContract.allowedEmitPorts,
-        limits: request.limits,
-        emitPath: ".hertaloy/emit.json",
-        artifactsDir: ".hertaloy/artifacts",
-      });
       /**
        * 物化在打基线**之前** —— 否则仓库内容会被算成 agent 的改动。
-       * 顺序：物化 → 基线 → 跑 → 观察，于是 diff 里只剩 agent 干的事。
+       * 顺序：物化 → 渲染 → 基线 → 跑 → 观察，于是 diff 里只剩 agent 干的事。
        */
       let workspace: ProvisionedWorkspace | undefined;
       try {
@@ -205,6 +191,54 @@ export class SandboxBackend implements ExecutionBackend {
           stdoutTail: "",
           stderrTail: `资源物化失败：${(error as Error).message}`,
         });
+      }
+
+      /**
+       * **路径一律相对 cwd（workspace）。**
+       *
+       * request.json 之前写的是 `.hertaloy/emit.json` —— 而 agent 的 cwd 是
+       * `workspace/`，照着写就落到 `workspace/.hertaloy/emit.json`，
+       * 而内核读的是 `box/.hertaloy/emit.json`。**照着契约做反而失败**：
+       * 告诉 agent 的话本身是错的，比没说更糟。
+       */
+      const emitPath = "../.hertaloy/emit.json";
+      const artifactsDir = "../.hertaloy/artifacts";
+
+      writeContext(paths, {
+        ...spec.context,
+        "vars.json": `${JSON.stringify(request.vars, null, 2)}\n`,
+      });
+      writeRequest(paths, {
+        executionId: request.executionId,
+        traceid: request.traceid,
+        nodeId: request.nodeId,
+        allowedEmitPorts: request.outputContract.allowedEmitPorts,
+        limits: request.limits,
+        emitPath,
+        artifactsDir,
+      });
+
+      /**
+       * **profile 渲染 —— 这是「适配」的全部内容**（§14.3）。
+       *
+       * 此前 `resolveProfile` 被 import 了却从没调用：`spec.profile` 声明了、
+       * 校验了、给了默认值，然后完全没有效果 —— claude-code 拿不到 CLAUDE.md、
+       * codex 拿不到 AGENTS.md。与 K5 / E1 / MessageContract 同类：实现在，路不通。
+       */
+      const rendered = resolveProfile(spec.profile).render({
+        vars: request.vars,
+        allowedEmitPorts: request.outputContract.allowedEmitPorts,
+        emitPath,
+        artifactsDir,
+        traceid: request.traceid,
+        nodeId: request.nodeId,
+        ...(workspace === undefined ? {} : { workspace }),
+        limits: request.limits,
+        resources: Object.keys(spec.resources ?? {}),
+        observed: canObserve,
+      });
+      for (const [rel, content] of Object.entries(rendered)) {
+        writeSandboxFile(paths, rel, content);
       }
 
       if (canObserve) initObserver(observer, exec);
