@@ -61,6 +61,11 @@ const ALLOWED = new Map([
   ["decodeSegment", "decodeObjectDir 在同文件里调"],
   ["permissionsPath", "loadPermissions 在同文件里调"],
   ["writeResources", "整表覆盖，给外部工具与测试用；CLI 走 add/remove"],
+  // —— agent 的纯函数：runAgent 在同文件里调，导出是为了单独可测 ——
+  ["buildPrompt", "runAgent 在同文件里调；单独导出是为了断言「告诉了模型什么」"],
+  ["validateResponse", "同上，本地自校验的判据要能单独测"],
+  ["checkAssetName", "同上，与内核 namespacedId 同一条规则"],
+  ["extractJson", "同上，模型总会把 JSON 包进代码块"],
 ]);
 
 function sources() {

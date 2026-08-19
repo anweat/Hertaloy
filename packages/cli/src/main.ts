@@ -17,6 +17,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run, validate } from "./commands.js";
+import { nodeIO, openAiClient, runAgent } from "./agent.js";
 import { diagnose, formatChecks } from "./doctor.js";
 import type { ExecutionBackend, Principal } from "@nodeflow/contracts";
 import { DockerRunner, LocalRunner, SandboxBackend, WslRunner } from "@nodeflow/sandbox";
@@ -42,6 +43,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy doctor                     环境自检（node / git / wsl / docker / profiles）
   hertaloy validate <template.json>   校验容器模板，不落库
   hertaloy run <scenario.json>        跑一个一次性场景并打印报告
+  hertaloy agent [--dry-run]          在沙箱里跑我们自己的 agent（读契约目录）
+       配置来自环境：HERTALOY_BASE_URL / HERTALOY_MODEL / HERTALOY_API_KEY
 
 作用在磁盘上的 run（<dir> 是状态目录）：
   hertaloy init    <dir> <scenario.json>        从场景文件建一个持久化的 run
@@ -216,6 +219,52 @@ function makeBackend(runner: string | undefined, dir: string): ExecutionBackend 
   }
 }
 
+/**
+ * `hertaloy agent` —— 在沙箱里跑我们自己的 agent。
+ *
+ * 配置全从**环境变量**来，一个都不从配置文件来：密钥绝不落盘（§17.7），
+ * 而 base URL 与 model 跟着密钥一起走最不容易配错。
+ * backend 通过 `AgentSpec.env` 把它们注入沙箱。
+ */
+async function runOwnAgent(argv: readonly string[]): Promise<number> {
+  const io = nodeIO(process.cwd());
+  const dry = argv.includes("--dry-run");
+
+  if (dry) {
+    /**
+     * 空跑：不调模型，按契约写一份最小合法输出。
+     *
+     * 给两种场合用 —— 验沙箱链路本身通不通，以及在没有密钥的机器上
+     * 让端到端测试能跑。它走的是**与真跑完全相同**的校验与落盘路径。
+     */
+    return await runAgent(io, {
+      complete: async () => {
+        const req = JSON.parse(io.read("../.hertaloy/request.json")) as {
+          allowedEmitPorts: string[];
+        };
+        return JSON.stringify({
+          emit: { [req.allowedEmitPorts[0] ?? "out"]: { dryRun: true } },
+          artifacts: [],
+          notes: "空跑：没有调用模型",
+        });
+      },
+    });
+  }
+
+  const baseUrl = process.env.HERTALOY_BASE_URL;
+  const model = process.env.HERTALOY_MODEL;
+  const apiKey = process.env.HERTALOY_API_KEY;
+  if (baseUrl === undefined || model === undefined || apiKey === undefined) {
+    process.stderr.write(
+      "缺少配置：需要 HERTALOY_BASE_URL / HERTALOY_MODEL / HERTALOY_API_KEY。" +
+        "它们由 AgentSpec.env 注入沙箱；密钥不进任何配置文件。" +
+"\n（只想验链路就加 --dry-run）\n",
+    );
+    return 2;
+  }
+  return await runAgent(io, openAiClient({ baseUrl, model, apiKey }));
+}
+
 async function main(rawArgv: readonly string[]): Promise<number> {
   let actor: Principal;
   let argv: readonly string[];
@@ -233,6 +282,7 @@ async function main(rawArgv: readonly string[]): Promise<number> {
     process.stdout.write(USAGE);
     return 0;
   }
+  if (command === "agent") return await runOwnAgent(argv.slice(1));
   if (command === "doctor") {
     const checks = diagnose();
     const blocked = checks.some((c) => !c.ok && c.blocking);

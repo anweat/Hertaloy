@@ -221,6 +221,20 @@ export class SandboxBackend implements ExecutionBackend {
         limits: request.limits,
         emitPath,
         artifactsDir,
+        /**
+         * **网络与隔离如实告诉 agent。**
+         *
+         * 原生 agent 要据此决定行为：出网被挡住时就别去装依赖、别去查文档，
+         * 直接说"这个我拿不到"比试半天超时好。外部 CLI 也一样受益 ——
+         * 它们至少能在提示里读到。
+         */
+        environment: {
+          networkEnforced: this.#runner.enforcesNetwork,
+          isolates: this.#runner.isolates,
+          runner: this.#runner.kind,
+        },
+        /** 别名 → 实际落点。原生 agent 直接照这个去读，不必猜。 */
+        resources: placed,
       });
 
       /**

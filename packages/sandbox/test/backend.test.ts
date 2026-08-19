@@ -6,6 +6,7 @@
 
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionRequest } from "@nodeflow/contracts";
@@ -217,4 +218,50 @@ describe("★ profile 渲染真的发生了", () => {
     expect(md).toContain("被沙箱外的 git 记录");
     expect(md).toContain("输出契约");
   }, 60_000);
+});
+
+describe("★ 平权自证：hertaloy agent 与外部 CLI 走同一条路", () => {
+  /**
+   * 用**真的 `hertaloy agent --dry-run`** 跑一次。
+   *
+   * 它不走任何特殊通道：同一个沙箱、同一份 request.json、同一条 argv。
+   * 这条测试的意义就是这个 —— 如果我们自己的 agent 需要特殊待遇，
+   * "agent 就是命令行"那条归约就是假的。
+   */
+  const CLI = join(process.cwd(), "..", "cli", "src", "main.ts");
+  /**
+   * 用 `node <tsx/cli.mjs>` 而不是 `npx tsx`。
+   *
+   * 运行器 `shell: false` 跑 argv，而 Windows 上 `npx` 是 `.cmd`，
+   * 不经 shell 解析不到 —— `spawn npx ENOENT`。这不是运行器的毛病：
+   * **不经 shell 正是我们要的**（argv 原样执行，不被 shell 二次解释）。
+   */
+  const TSX = createRequire(import.meta.url).resolve("tsx/cli");
+
+  it("跑得起来，且按契约写出 emit", async () => {
+    const result = await backend.run(
+      request([process.execPath, TSX, CLI, "agent", "--dry-run"], { profile: "hertaloy-agent" }),
+    );
+    expect(result.termination).toBe("DONE");
+    expect(result.emissions).toEqual({ out: { dryRun: true } });
+  }, 180_000);
+
+  it("★ 它读的是 request.json —— 换了端口白名单，输出跟着变", async () => {
+    const result = await backend.run(
+      request([process.execPath, TSX, CLI, "agent", "--dry-run"], { profile: "hertaloy-agent" }, {
+        outputContract: { allowedEmitPorts: ["报告"] },
+      }),
+    );
+    expect(result.termination).toBe("DONE");
+    expect(Object.keys(result.emissions)).toEqual(["报告"]);
+  }, 180_000);
+
+  it("没有密钥又没加 --dry-run → 退 2 并说清缺什么", async () => {
+    const result = await backend.run(
+      request([process.execPath, TSX, CLI, "agent"], { profile: "hertaloy-agent" }),
+    );
+    expect(result.termination).toBe("FAILED");
+    const d = result.diagnostics as never as SandboxDiagnostics;
+    expect(d.stderrTail).toContain("HERTALOY_BASE_URL");
+  }, 180_000);
 });

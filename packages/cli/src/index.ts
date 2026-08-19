@@ -21,5 +21,18 @@ export {
   truncate,
   why,
 } from "./state-commands.js";
+export {
+  AgentRequest,
+  AgentResponse,
+  buildPrompt,
+  checkAssetName,
+  extractJson,
+  nodeIO,
+  openAiClient,
+  runAgent,
+  validateResponse,
+  type AgentIO,
+  type ModelClient,
+} from "./agent.js";
 export { Scenario, SendSpec } from "./scenario.js";
 export { diagnose, formatChecks, type Check } from "./doctor.js";
