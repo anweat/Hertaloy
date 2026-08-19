@@ -99,7 +99,8 @@ describe("claim / execute / apply", () => {
 
     rt.drain();
     expect(collected).toEqual(["export"]);
-    expect(rt.records()[0]?.status).toBe("APPLIED");
+    expect(rt.records()[0]?.status).toBe("SETTLED");
+    expect(rt.records()[0]?.termination).toBe("DONE");
   });
 
   it("★ execute 在提交锁外：await 期间消息是 CLAIMED，实例可被观察", async () => {
@@ -167,7 +168,9 @@ describe("五种终止不混成一种", () => {
         expect(result.retrying).toBe(false);
       }
       expect(local.message(id).state).toBe("DISCARDED");
-      expect(local.records()[0]?.status).toBe(termination);
+      // 记录只说"结束了"，怎么结束的由 termination 说 —— 不再有第二套编码
+      expect(local.records()[0]?.status).toBe("SETTLED");
+      expect(local.records()[0]?.termination).toBe(termination);
     }
   });
 

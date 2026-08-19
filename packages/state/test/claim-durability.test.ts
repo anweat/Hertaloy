@@ -178,7 +178,7 @@ describe("★ 孤儿认领：恢复不是「看得见」，是「接着跑完」
     }
   }, 20_000);
 
-  it("认领不新增状态 —— 记录落在既有的 FAILED，不是新枚举值", async () => {
+  it("认领不新增状态 —— 落在既有的 SETTLED + FAILED，不是新枚举值", async () => {
     const backend = new SucceedsOnRetry();
     const first = RunState.open(dir, { backend });
     seed(first);
@@ -189,7 +189,8 @@ describe("★ 孤儿认领：恢复不是「看得见」，是「接着跑完」
 
     const second = RunState.open(dir, { backend });
     try {
-      expect(second.runtime.records().map((r) => r.status)).toEqual(["FAILED"]);
+      expect(second.runtime.records().map((r) => r.status)).toEqual(["SETTLED"]);
+      expect(second.runtime.records().map((r) => r.termination)).toEqual(["FAILED"]);
     } finally {
       second.close();
     }

@@ -108,7 +108,8 @@ describe("★ 落盘的 run 真跑 agent（E1）", () => {
     try {
       const records = s.runtime.records();
       expect(records).toHaveLength(1);
-      expect(records[0]?.status).toBe("APPLIED");
+      expect(records[0]?.status).toBe("SETTLED");
+      expect(records[0]?.termination).toBe("DONE");
     } finally {
       s.close();
     }

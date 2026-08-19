@@ -156,14 +156,21 @@ export interface StepFailure {
   readonly retrying?: boolean;
 }
 
-export type ExecutionStatus =
-  | "RUNNING"
-  | "APPLIED"
-  | "VOIDED"
-  | "CANCELLED"
-  | "BUDGET"
-  | "INVALID_OUTPUT"
-  | "FAILED";
+/**
+ * 执行进行到哪一步。**只有三个值，因为只有一件事需要分支**：还在跑吗。
+ *
+ * 原先有七个：`RUNNING / APPLIED / VOIDED / CANCELLED / BUDGET /
+ * INVALID_OUTPUT / FAILED`。后四个是 `Termination` 的**字面重复**，
+ * 靠一句 `termination as ExecutionStatus` 接起来 —— 于是 `Termination`
+ * 一旦增加取值，这个 cast 会**静默**造出一个非法的 ExecutionStatus。
+ *
+ * 而实测：七个值里只有 `RUNNING` 被代码分支读过，其余六个只写不读，
+ * 是**伪装成状态的展示数据**。所以拆成两个字段，各自只表达一件事：
+ *
+ *   status      还在跑吗（唯一被分支的）
+ *   termination 怎么结束的（`Termination` 是唯一权威，不再有第二套编码）
+ */
+export type ExecutionStatus = "RUNNING" | "SETTLED" | "VOIDED";
 
 /** claim/execute/apply 的持久事实 —— 取消与崩溃接管的唯一依据。 */
 export interface ExecutionRecord {
@@ -171,6 +178,11 @@ export interface ExecutionRecord {
   readonly traceid: TraceId;
   readonly nodeId: string;
   readonly status: ExecutionStatus;
+  /**
+   * 怎么结束的。`RUNNING` 时没有；`VOIDED` 时无意义 —— 结果被栅栏丢掉了，
+   * backend 说了什么都不作数。
+   */
+  readonly termination?: Termination;
   /** 被 claim 的消息集合 —— 冲突域的一半。 */
   readonly claimed: readonly string[];
   /** claim 时的实例 generation —— 冲突域的另一半，apply 时复核（L3）。 */
@@ -812,7 +824,8 @@ export class Runtime implements Snapshotable {
     this.#setState(input.id, "CONSUMED");
     this.#records.set(record.executionId, {
       ...record,
-      status: "APPLIED",
+      status: "SETTLED" as const,
+      termination: "DONE" as const,
       ...(result.usage === undefined ? {} : { usage: result.usage }),
     });
     this.#recordSnapshot(record.traceid, record.nodeId, [input.id], delivered, {
@@ -848,7 +861,8 @@ export class Runtime implements Snapshotable {
   ): StepFailure {
     this.#records.set(record.executionId, {
       ...record,
-      status: termination === "DONE" ? "FAILED" : (termination as ExecutionStatus),
+      status: "SETTLED" as const,
+      termination,
       ...(usage === undefined ? {} : { usage }),
     });
 
@@ -1022,7 +1036,11 @@ export class Runtime implements Snapshotable {
     let cancelledExecutions = 0;
     for (const rec of this.records()) {
       if (rec.traceid !== trace || rec.status !== "RUNNING") continue;
-      this.#records.set(rec.executionId, { ...rec, status: "CANCELLED" });
+      this.#records.set(rec.executionId, {
+        ...rec,
+        status: "SETTLED",
+        termination: "CANCELLED",
+      });
       void this.#backend?.cancel(rec.executionId).catch(() => undefined);
       cancelledExecutions += 1;
     }
