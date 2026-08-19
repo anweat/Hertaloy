@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState, writePermissions } from "@nodeflow/state";
-import { drain, history, send, show, status, truncate } from "../src/state-commands.js";
+import { drain, history, resources, send, show, status, truncate } from "../src/state-commands.js";
 
 /** 缺省权限表下的人类主体 —— 全权。 */
 const HUMAN = { kind: "human", id: "local" } as const;
@@ -200,5 +200,41 @@ describe("★ 权限层真的在起作用（K2）", () => {
       "utf8",
     );
     expect(() => status(dir, HUMAN)).toThrow(/第 1 条授权非法/);
+  });
+});
+
+describe("★ hertaloy resources：动态上载", () => {
+  it("空表时说清怎么登记", () => {
+    const r = resources(dir, "list", []);
+    expect(r.code).toBe(0);
+    expect(r.text).toContain("没有登记任何资源");
+    expect(r.text).toContain("add");
+  });
+
+  it("登记之后列得出来，并说明模板里怎么用", () => {
+    const added = resources(dir, "add", ["primary", "git", "/repos/app", "主仓库"]);
+    expect(added.code).toBe(0);
+    expect(added.text).toContain("路径不进模板");
+
+    const list = resources(dir, "list", []);
+    expect(list.text).toContain("primary");
+    expect(list.text).toContain("/repos/app");
+    expect(list.text).toContain("主仓库");
+  });
+
+  it("参数不全就给用法，不猜", () => {
+    expect(resources(dir, "add", ["onlyname"]).code).toBe(1);
+    expect(resources(dir, "add", ["onlyname"]).text).toContain("用法");
+  });
+
+  it("种类不认识 → 拒绝并说清有哪几种", () => {
+    const r = resources(dir, "add", ["x", "ftp", "/p"]);
+    expect(r.code).toBe(1);
+  });
+
+  it("删得掉", () => {
+    resources(dir, "add", ["a", "dir", "/x"]);
+    expect(resources(dir, "remove", ["a"]).code).toBe(0);
+    expect(resources(dir, "list", []).text).toContain("没有登记任何资源");
   });
 });

@@ -20,6 +20,7 @@ import { run, validate } from "./commands.js";
 import { diagnose, formatChecks } from "./doctor.js";
 import type { ExecutionBackend, Principal } from "@nodeflow/contracts";
 import { DockerRunner, LocalRunner, SandboxBackend, WslRunner } from "@nodeflow/sandbox";
+import { loadResources } from "@nodeflow/state";
 import {
   type CommandResult,
   drain,
@@ -27,6 +28,7 @@ import {
   init,
   permissions,
   reclaim,
+  resources,
   send,
   show,
   status,
@@ -52,6 +54,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy why     <dir> <message-id>           这条消息由哪些消息导致（因果反查）
   hertaloy reclaim <dir> [保留个数]             回收沙箱，默认保留最近 5 个
   hertaloy permissions <dir> [init]             看授权表；加 init 写出一份可改的
+  hertaloy resources <dir> [add|remove ...]     看/登记资源别名（动态上载）
+       add <别名> <git|dir|skill|mcp> <路径> [说明]
   hertaloy truncate <dir> <traceid> [原因]      强制截断实例及其子树
 
 主体：任何命令可加 --as <principal>（如 --as agent:coder-1），默认 human:local。
@@ -106,6 +110,12 @@ ${USAGE}`, code: 2 } : null;
         return { text: `reclaim 的保留个数要是非负整数，收到 ${String(a)}`, code: 2 };
       }
       return reclaim(dir as string, actor, keep);
+    }
+    case "resources": {
+      const short = need(1);
+      if (short !== null) return short;
+      const op = a === "add" ? "add" : a === "remove" ? "remove" : "list";
+      return resources(dir as string, op, args.slice(2));
     }
     case "permissions":
       return need(1) ?? permissions(dir as string, actor, a === "init");
@@ -192,13 +202,15 @@ function makeBackend(runner: string | undefined, dir: string): ExecutionBackend 
    * 所以它仍由 runner 自己定位置，状态目录只管另外两个。
    */
   const workRoot = join(dir, "sandboxes");
+  // 资源注册表从状态目录读 —— 登记过的别名才用得上（动态上载的另一半）
+  const opts = { resources: loadResources(dir).registry };
   switch (runner) {
     case "local":
-      return new SandboxBackend({ runner: new LocalRunner(workRoot) });
+      return new SandboxBackend({ ...opts, runner: new LocalRunner(workRoot) });
     case "wsl":
-      return new SandboxBackend({ runner: new WslRunner() });
+      return new SandboxBackend({ ...opts, runner: new WslRunner() });
     case "docker":
-      return new SandboxBackend({ runner: new DockerRunner({ workRoot }) });
+      return new SandboxBackend({ ...opts, runner: new DockerRunner({ workRoot }) });
     default:
       throw new Error(`未知运行器 ${runner}，可选 local / wsl / docker`);
   }

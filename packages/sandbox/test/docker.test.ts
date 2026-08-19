@@ -196,7 +196,11 @@ describe("路径反查", () => {
   });
 });
 
-describe("★ 观察边界与挂载边界分开", () => {
+/**
+ * 要真起容器的用例**必须门控**。忘了加就等于：任何没装 docker 的机器
+ * 跑这套测试都是红的 —— 而"红"应该只意味着代码坏了。
+ */
+describe.skipIf(!HAS_DOCKER)("★ 观察边界与挂载边界分开", () => {
   it("记录仓不在 agent 容器里 —— 观察对象改不了观察记录", async () => {
     const runner = new DockerRunner();
     const root = runner.allocate();

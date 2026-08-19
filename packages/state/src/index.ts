@@ -5,3 +5,4 @@ export * from "./head.js";
 export * from "./lock.js";
 export * from "./run-state.js";
 export * from "./permissions.js";
+export * from "./resources.js";

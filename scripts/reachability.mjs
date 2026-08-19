@@ -60,6 +60,7 @@ const ALLOWED = new Map([
   ["encodeSegment", "objectDir 在同文件里调"],
   ["decodeSegment", "decodeObjectDir 在同文件里调"],
   ["permissionsPath", "loadPermissions 在同文件里调"],
+  ["writeResources", "整表覆盖，给外部工具与测试用；CLI 走 add/remove"],
 ]);
 
 function sources() {

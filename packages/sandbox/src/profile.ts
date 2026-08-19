@@ -12,7 +12,7 @@
  * 而它写在**打基线之前**，所以不会被 git 当成"agent 改的"。
  */
 
-import type { Json } from "@nodeflow/contracts";
+import type { Json, ResourceKind } from "@nodeflow/contracts";
 
 export interface ProfileInput {
   readonly vars: Readonly<Record<string, Json>>;
@@ -37,8 +37,28 @@ export interface ProfileInput {
 
 export interface Profile {
   readonly name: string;
-  /** 相对**沙箱根**的路径 → 文件内容。 */
+  /** 相对 **box**（agent 可见的那一层）的路径 → 文件内容。 */
   render(input: ProfileInput): Readonly<Record<string, string>>;
+  /**
+   * 一个资源别名该落在哪 —— **这就是「别名当宏」**。
+   *
+   * 同一个 `skill:code-review`，在 claude-code 下展开成
+   * `workspace/.claude/skills/code-review/`，在我们自己的 agent 下展开成
+   * `.hertaloy/skills/code-review/`。模板里只写那个名字，
+   * **放哪由 profile 决定，不由模板决定** —— 于是同一份模板换个 agent 就能跑。
+   *
+   * 返回相对 box 的目录路径。
+   */
+  place(kind: ResourceKind, alias: string): string;
+}
+
+/**
+ * 缺省放置：一律进 `.hertaloy/resources/<别名>/`。
+ *
+ * 不落 `workspace/`：工作树是**被观察的**，参考资料混进去会被算成 agent 的改动。
+ */
+function defaultPlace(_kind: ResourceKind, alias: string): string {
+  return `.hertaloy/resources/${alias}`;
 }
 
 /** 变量渲染成人读的段落。长文本直接放，短值以 JSON 呈现。 */
@@ -143,6 +163,13 @@ export const hertaloyAgentProfile: Profile = {
     ".hertaloy/context/vars.json": varsJson(input),
     ".hertaloy/context/contract.md": emitInstruction(input),
   }),
+  // 我们自己的 agent 原生懂契约，技能与 MCP 都从 .hertaloy 下读
+  place: (kind, alias) =>
+    kind === "skill"
+      ? `.hertaloy/skills/${alias}`
+      : kind === "mcp"
+        ? `.hertaloy/mcp/${alias}`
+        : defaultPlace(kind, alias),
 };
 
 /** Claude Code：认 `CLAUDE.md`（必须在工作目录里）。 */
@@ -157,6 +184,16 @@ export const claudeCodeProfile: Profile = {
     ].join("\n"),
     ".hertaloy/context/vars.json": varsJson(input),
   }),
+  /**
+   * Claude Code 认 `workspace/.claude/` 下的技能与 `.mcp.json`。
+   * 技能必须在**工作目录内**才被发现 —— 这是它的约定，不是我们的选择。
+   */
+  place: (kind, alias) =>
+    kind === "skill"
+      ? `workspace/.claude/skills/${alias}`
+      : kind === "mcp"
+        ? `workspace/.claude/mcp/${alias}`
+        : defaultPlace(kind, alias),
 };
 
 /** Codex 一系：认 `AGENTS.md`。 */
@@ -171,6 +208,11 @@ export const codexProfile: Profile = {
     ].join("\n"),
     ".hertaloy/context/vars.json": varsJson(input),
   }),
+  /**
+   * Codex 没有标准的技能目录 —— **不编一个**。落回缺省位置，
+   * 并在环境交代里告诉 agent 去哪找。假装它有约定，只会让技能静默不生效。
+   */
+  place: defaultPlace,
 };
 
 export const PROFILES: Readonly<Record<string, Profile>> = {

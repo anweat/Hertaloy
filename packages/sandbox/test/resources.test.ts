@@ -11,6 +11,7 @@ import type { ExecutionRequest } from "@nodeflow/contracts";
 import { SandboxBackend } from "../src/backend.js";
 import { createSandbox } from "../src/layout.js";
 import { LocalRunner } from "../src/runner.js";
+import { resolveProfile } from "../src/profile.js";
 import {
   ResourceError,
   provisionResources,
@@ -100,13 +101,14 @@ describe("★ 工作区注入", () => {
 describe("★ 参考资料", () => {
   it("目录源按别名拷进去，agent 只看到别名不看到路径", () => {
     const dir = join(home, "res");
-    provisionResources(registry(), { manual: "handbook" }, dir);
+    const placed = provisionResources(registry(), { manual: "handbook" }, dir, (_k, a) => a);
+    expect(placed).toEqual({ manual: "manual" });
     expect(readFileSync(join(dir, "manual", "guide.md"), "utf8")).toBe("参考资料");
   });
 
   it("git 源当参考资料时**不带历史** —— 翻不出别的分支和别人的提交", () => {
     const dir = join(home, "res");
-    provisionResources(registry(), { code: "primary" }, dir);
+    provisionResources(registry(), { code: "primary" }, dir, (_k, a) => a);
     expect(readFileSync(join(dir, "code", "README.md"), "utf8")).toBe("第二版");
     expect(existsSync(join(dir, "code", ".git"))).toBe(false);
   });
@@ -174,4 +176,38 @@ describe("★ 端到端：agent 在真仓库里干活，观察只报它的改动
     expect(d.stderrTail).toContain("资源物化失败");
     expect(d.stderrTail).toContain("未知资源");
   }, 60_000);
+});
+
+
+describe("★ 别名当宏：同一个名字，profile 决定落在哪", () => {
+  it("skill 在 claude-code 下进 .claude/skills，在自家 agent 下进 .hertaloy/skills", () => {
+    const claude = resolveProfile("claude-code");
+    const own = resolveProfile("hertaloy-agent");
+    expect(claude.place("skill", "review")).toBe("workspace/.claude/skills/review");
+    expect(own.place("skill", "review")).toBe(".hertaloy/skills/review");
+  });
+
+  it("普通资料两边都落缺省位置 —— 不进工作树，免得被算成改动", () => {
+    for (const name of ["claude-code", "codex", "hertaloy-agent"]) {
+      expect(resolveProfile(name).place("dir", "docs")).toBe(".hertaloy/resources/docs");
+    }
+  });
+
+  it("★ codex 没有标准技能目录就落回缺省 —— 不编一个约定", () => {
+    expect(resolveProfile("codex").place("skill", "review")).toBe(".hertaloy/resources/review");
+  });
+
+  it("物化真的按 profile 说的位置放", () => {
+    const box = join(home, "box");
+    const placed = provisionResources(
+      { helper: { kind: "skill", path: docs } },
+      { review: "helper" },
+      box,
+      (k, a) => resolveProfile("claude-code").place(k, a),
+    );
+    expect(placed.review).toBe("workspace/.claude/skills/review");
+    expect(
+      readFileSync(join(box, "workspace", ".claude", "skills", "review", "guide.md"), "utf8"),
+    ).toBe("参考资料");
+  });
 });

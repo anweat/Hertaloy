@@ -19,26 +19,14 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import {
+  type ResourceKind,
+  type ResourceRegistry,
+  type ResourceSource,
+  canBeWorkspace,
+} from "@nodeflow/contracts";
 
-/** git 仓库。物化 = clone 到工作树，agent 在里面干活。 */
-export interface GitSource {
-  readonly kind: "git";
-  /** 宿主机路径。**agent 永远看不到这个值。** */
-  readonly path: string;
-  /** 不指定 base 时用哪个 ref。默认 `HEAD`。 */
-  readonly defaultBase?: string;
-}
-
-/** 普通目录。物化 = 拷进 `.hertaloy/resources/<别名>/`，参考资料用。 */
-export interface DirSource {
-  readonly kind: "dir";
-  readonly path: string;
-}
-
-export type ResourceSource = GitSource | DirSource;
-
-/** 别名注册表。由 backend 配置给出，不进模板、不进对象库。 */
-export type ResourceRegistry = Readonly<Record<string, ResourceSource>>;
+export type { ResourceRegistry, ResourceSource } from "@nodeflow/contracts";
 
 export class ResourceError extends Error {}
 
@@ -81,8 +69,10 @@ export function provisionWorkspace(
   targetDir: string,
 ): ProvisionedWorkspace {
   const source = resolve(registry, request.source);
-  if (source.kind !== "git") {
-    throw new ResourceError(`资源 \`${request.source}\` 是 ${source.kind}，工作区需要 git`);
+  if (!canBeWorkspace(source)) {
+    throw new ResourceError(
+      `资源 \`${request.source}\` 是 ${source.kind}，工作区需要 git —— 工作树要有历史，普通目录没有`,
+    );
   }
   const base = request.base ?? source.defaultBase ?? "HEAD";
   git(["clone", "--no-hardlinks", "--quiet", "--no-checkout", source.path, targetDir]);
@@ -96,25 +86,38 @@ export function provisionWorkspace(
  * 放在 `.hertaloy/` 下而不是 `workspace/` 里：工作树是**被观察**的，
  * 参考资料混进去会被算成 agent 的改动。
  */
+/**
+ * 把命名资源物化到 **profile 决定的位置**。
+ *
+ * 这就是"别名当宏"落地的地方：`skill:review` 在 claude-code 下进
+ * `workspace/.claude/skills/review/`，在我们自己的 agent 下进
+ * `.hertaloy/skills/review/`。**模板只写名字**，展开成什么形态由 profile 说。
+ *
+ * 返回每个别名实际落到哪，好写进环境交代 —— agent 得知道去哪找。
+ */
 export function provisionResources(
   registry: ResourceRegistry,
   aliases: Readonly<Record<string, string>>,
-  resourcesDir: string,
-): readonly string[] {
-  const done: string[] = [];
+  boxDir: string,
+  place: (kind: ResourceKind, alias: string) => string,
+): Readonly<Record<string, string>> {
+  const placed: Record<string, string> = {};
   for (const [alias, name] of Object.entries(aliases)) {
     const source = resolve(registry, name);
-    const target = join(resourcesDir, alias);
+    const rel = place(source.kind, alias);
+    const target = join(boxDir, rel);
     mkdirSync(target, { recursive: true });
-    if (source.kind === "dir") {
-      cpSync(source.path, target, { recursive: true, dereference: false });
-    } else {
+
+    if (source.kind === "git") {
       // git 源当参考资料：**只要内容不要历史**。浅克隆之后把 .git 删掉，
       // 免得 agent 从参考资料里翻出别的分支和别人的提交。
       git(["clone", "--no-hardlinks", "--quiet", "--depth", "1", source.path, target]);
       rmSync(join(target, ".git"), { recursive: true, force: true });
+    } else {
+      cpSync(source.path, target, { recursive: true, dereference: false });
     }
-    done.push(alias);
+    placed[alias] = rel;
   }
-  return done;
+  return placed;
 }
+

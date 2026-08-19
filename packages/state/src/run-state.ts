@@ -27,6 +27,7 @@ import {
 } from "@nodeflow/kernel";
 import type { ExecutionBackend } from "@nodeflow/contracts";
 import { type LoadedPermissions, loadPermissions } from "./permissions.js";
+import { type LoadedResources, loadResources } from "./resources.js";
 import { decodeHeadParts, readHead, writeHead } from "./head.js";
 import { StateLock } from "./lock.js";
 import { flushObjects, loadObjects } from "./objects.js";
@@ -59,6 +60,8 @@ export class RunState {
   readonly recovered: boolean;
   /** 根权限表 + 它是从配置文件来的还是缺省的（§17.9）。 */
   readonly permissions: LoadedPermissions;
+  /** 资源别名注册表 —— 动态上载的落点，见 resources.ts。 */
+  readonly resources: LoadedResources;
   /** 本次打开认领了哪些孤儿执行。空数组 = 上次是干净退出的。 */
   reconciled: readonly StepFailure[] = [];
 
@@ -74,6 +77,7 @@ export class RunState {
     lock: StateLock | null,
     cursor: number,
     permissions: LoadedPermissions,
+    resources: LoadedResources,
   ) {
     this.dir = dir;
     this.store = store;
@@ -81,6 +85,7 @@ export class RunState {
     this.runtime = runtime;
     this.recovered = recovered;
     this.permissions = permissions;
+    this.resources = resources;
     this.#lock = lock;
     this.#cursor = cursor;
   }
@@ -93,6 +98,7 @@ export class RunState {
 
     try {
       const permissions = loadPermissions(dir);
+      const resources = loadResources(dir);
       const store = new ObjectStore();
       const registry = new InstanceRegistry(store);
       /**
@@ -121,7 +127,7 @@ export class RunState {
       const head = readHead(dir);
 
       if (head === null) {
-        self = new RunState(dir, store, registry, runtime, false, lock, 0, permissions);
+        self = new RunState(dir, store, registry, runtime, false, lock, 0, permissions, resources);
         return self;
       }
 
@@ -139,7 +145,7 @@ export class RunState {
             "多半是崩在刷对象与写 head 之间，或者目录被手工动过。",
         );
       }
-      self = new RunState(dir, store, registry, runtime, true, lock, cursor, permissions);
+      self = new RunState(dir, store, registry, runtime, true, lock, cursor, permissions, resources);
 
       /**
        * 恢复即认领孤儿。

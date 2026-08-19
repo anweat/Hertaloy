@@ -172,13 +172,18 @@ export class SandboxBackend implements ExecutionBackend {
        * 物化在打基线**之前** —— 否则仓库内容会被算成 agent 的改动。
        * 顺序：物化 → 渲染 → 基线 → 跑 → 观察，于是 diff 里只剩 agent 干的事。
        */
+      const profile = resolveProfile(spec.profile);
       let workspace: ProvisionedWorkspace | undefined;
+      let placed: Readonly<Record<string, string>> = {};
       try {
         if (spec.workspace !== undefined) {
           workspace = provisionWorkspace(this.#resources, spec.workspace, paths.workspace);
         }
         if (spec.resources !== undefined) {
-          provisionResources(this.#resources, spec.resources, join(paths.meta, "resources"));
+          // 放哪由 profile 决定 —— 同一个别名在不同 agent 下展开成不同位置
+          placed = provisionResources(this.#resources, spec.resources, paths.box, (k, a) =>
+            profile.place(k, a),
+          );
         }
       } catch (error) {
         // 别名配错是**配置错误**，重试不会有不同结果 —— 但内核的终止分类里
@@ -225,7 +230,7 @@ export class SandboxBackend implements ExecutionBackend {
        * 校验了、给了默认值，然后完全没有效果 —— claude-code 拿不到 CLAUDE.md、
        * codex 拿不到 AGENTS.md。与 K5 / E1 / MessageContract 同类：实现在，路不通。
        */
-      const rendered = resolveProfile(spec.profile).render({
+      const rendered = profile.render({
         vars: request.vars,
         allowedEmitPorts: request.outputContract.allowedEmitPorts,
         emitPath,
@@ -234,7 +239,7 @@ export class SandboxBackend implements ExecutionBackend {
         nodeId: request.nodeId,
         ...(workspace === undefined ? {} : { workspace }),
         limits: request.limits,
-        resources: Object.keys(spec.resources ?? {}),
+        resources: Object.entries(placed).map(([alias, rel]) => `${alias} → ${rel}`),
         observed: canObserve,
       });
       for (const [rel, content] of Object.entries(rendered)) {

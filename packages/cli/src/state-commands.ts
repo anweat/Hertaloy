@@ -16,7 +16,15 @@
 
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { RunState, permissionsPath, writePermissions } from "@nodeflow/state";
+import {
+  RunState,
+  addResource,
+  loadResources,
+  permissionsPath,
+  removeResource,
+  resourcesPath,
+  writePermissions,
+} from "@nodeflow/state";
 import type { ExecutionBackend } from "@nodeflow/contracts";
 import { isOverlay, type Json, type Principal } from "@nodeflow/contracts";
 import { AuthorizationError } from "@nodeflow/kernel";
@@ -578,4 +586,67 @@ export function permissions(dir: string, actor: Principal, write: boolean): Comm
     }
     return ok(lines.join("\n"));
   });
+}
+
+/**
+ * 看 / 加 / 删资源别名 —— **动态上载**。
+ *
+ * 加完之后模板里写那个名字即可：模板本身不必改，也不知道路径变了。
+ * 这正是别名的意义 —— 模板可移植，而 agent 拿不到真实位置。
+ */
+export function resources(
+  dir: string,
+  op: "list" | "add" | "remove",
+  args: readonly string[],
+): CommandResult {
+  try {
+    if (op === "add") {
+      const [name, kind, path, ...rest] = args;
+      if (name === undefined || kind === undefined || path === undefined) {
+        return fail("用法：hertaloy resources <dir> add <别名> <git|dir|skill|mcp> <路径> [说明]");
+      }
+      const note = rest.join(" ");
+      const next = addResource(dir, name, {
+        kind: kind as never,
+        path,
+        ...(note === "" ? {} : { note }),
+      });
+      return ok(
+        [
+          `已登记 ${name}（${kind}）→ ${path}`,
+          `现有 ${Object.keys(next).length} 个别名。模板里写 ${name} 就能用上，路径不进模板。`,
+        ].join("\n"),
+      );
+    }
+
+    if (op === "remove") {
+      const [name] = args;
+      if (name === undefined) return fail("用法：hertaloy resources <dir> remove <别名>");
+      const next = removeResource(dir, name);
+      return ok(`已删除 ${name}，剩 ${Object.keys(next).length} 个。`);
+    }
+
+    const { registry, source } = loadResources(dir);
+    const names = Object.keys(registry);
+    if (names.length === 0) {
+      return ok(
+        [
+          "没有登记任何资源。",
+          `登记一个：hertaloy resources ${dir} add <别名> <git|dir|skill|mcp> <路径>`,
+        ].join("\n"),
+      );
+    }
+    return ok(
+      [
+        `来源：${source === "file" ? resourcesPath(dir) : "（无文件）"}`,
+        "",
+        ...names.map((n) => {
+          const r = registry[n] as { kind: string; path: string; note?: string };
+          return `  ${n.padEnd(16)} ${r.kind.padEnd(6)} ${r.path}${r.note === undefined ? "" : `　—— ${r.note}`}`;
+        }),
+      ].join("\n"),
+    );
+  } catch (error) {
+    return fail((error as Error).message);
+  }
 }
