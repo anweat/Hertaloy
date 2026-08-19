@@ -153,9 +153,16 @@ export class DockerRunner implements Runner {
   }
 
   async run(spec: RunSpec): Promise<RunOutcome> {
+    /**
+     * 挂的是 `spec.root` **本身**，不是它所属的分配根。
+     *
+     * 于是调用方可以只交出一个子目录（backend 交的是 `box/`），
+     * 而记录仓留在分配根下、不进容器。`exec`（git 观察）走另一个容器、
+     * 挂整个分配根，所以它读得到记录仓 —— **两个容器挂不同的东西**，
+     * 这正是"观察对象改不了观察记录"的落点。
+     */
     const host = slash(spec.root);
-    const inner = this.#mounts.get(host);
-    if (inner === undefined) throw new Error(`沙箱 ${spec.root} 不是本运行器分配的`);
+    const inner = this.toInner(spec.root);
 
     const name = `hertaloy-${basename(host)}`;
     const envArgs = Object.entries(spec.env ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]);

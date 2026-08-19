@@ -34,7 +34,7 @@ describe("跑一条命令行", () => {
     const agent = fakeAgent(
       `process.stdout.write("干完了"); process.stderr.write("提醒"); process.exit(0);`,
     );
-    const out = await runner.run({ argv: ["node", agent], root });
+    const out = await runner.run({ argv: ["node", agent], root: p.box });
     expect(out.code).toBe(0);
     expect(out.stdout).toBe("干完了");
     expect(out.stderr).toBe("提醒");
@@ -47,18 +47,18 @@ describe("跑一条命令行", () => {
     const agent = fakeAgent(
       `import {readFileSync} from "node:fs"; process.stdout.write(readFileSync("hello.txt","utf8"));`,
     );
-    const out = await runner.run({ argv: ["node", agent], root });
+    const out = await runner.run({ argv: ["node", agent], root: p.box });
     expect(out.stdout).toBe("在工作区里");
   });
 
   it("非零退出码如实上报 —— 运行器不做语义判断", async () => {
     const agent = fakeAgent(`process.exit(3);`);
-    const out = await runner.run({ argv: ["node", agent], root });
+    const out = await runner.run({ argv: ["node", agent], root: p.box });
     expect(out.code).toBe(3);
   });
 
   it("命令不存在不抛异常，记进 stderr", async () => {
-    const out = await runner.run({ argv: ["这个命令不存在-hertaloy"], root });
+    const out = await runner.run({ argv: ["这个命令不存在-hertaloy"], root: p.box });
     expect(out.code).toBeNull();
     expect(out.stderr).toMatch(/启动失败/);
   });
@@ -67,7 +67,7 @@ describe("跑一条命令行", () => {
 describe("超时与取消", () => {
   it("★ 超时杀掉 —— 这是 wallClockSeconds 的真落点", async () => {
     const agent = fakeAgent(`setTimeout(() => process.exit(0), 60_000);`);
-    const out = await runner.run({ argv: ["node", agent], root, timeoutSeconds: 0.4 });
+    const out = await runner.run({ argv: ["node", agent], root: p.box, timeoutSeconds: 0.4 });
     expect(out.timedOut).toBe(true);
     expect(out.wallClockSeconds).toBeLessThan(10);
   }, 20_000);
@@ -76,7 +76,7 @@ describe("超时与取消", () => {
     const agent = fakeAgent(`setTimeout(() => process.exit(0), 60_000);`);
     const ac = new AbortController();
     setTimeout(() => ac.abort(), 200);
-    const out = await runner.run({ argv: ["node", agent], root, signal: ac.signal });
+    const out = await runner.run({ argv: ["node", agent], root: p.box, signal: ac.signal });
     expect(out.cancelled).toBe(true);
   }, 20_000);
 
@@ -87,7 +87,7 @@ describe("超时与取消", () => {
       const child = spawn(process.execPath, ["-e", \`setTimeout(()=>require("fs").writeFileSync(${JSON.stringify(marker)},"孤儿还活着"),1200)\`], {stdio:"ignore"});
       setTimeout(() => process.exit(0), 60_000);
     `);
-    const out = await runner.run({ argv: ["node", agent], root, timeoutSeconds: 0.4 });
+    const out = await runner.run({ argv: ["node", agent], root: p.box, timeoutSeconds: 0.4 });
     expect(out.timedOut).toBe(true);
 
     await new Promise((r) => setTimeout(r, 2200));
@@ -104,7 +104,7 @@ describe("超时与取消", () => {
 describe("环境与隔离声明", () => {
   it("env 能注入（凭据靠它进沙箱）", async () => {
     const agent = fakeAgent(`process.stdout.write(process.env.HERTALOY_TEST ?? "无");`);
-    const out = await runner.run({ argv: ["node", agent], root, env: { HERTALOY_TEST: "注入的" } });
+    const out = await runner.run({ argv: ["node", agent], root: p.box, env: { HERTALOY_TEST: "注入的" } });
     expect(out.stdout).toBe("注入的");
   });
 

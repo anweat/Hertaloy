@@ -15,7 +15,14 @@ import { join } from "node:path";
 
 export interface RunSpec {
   readonly argv: readonly string[];
-  /** 沙箱根目录。命令的 cwd 落在 `<root>/workspace`。 */
+  /**
+   * **交给这条命令的目录**，cwd 落在 `<root>/workspace`。
+   *
+   * 不一定等于 `allocate()` 的返回值：调用方可以只交出一个子目录。
+   * backend 就是这么做的 —— 只交 `box/`，把记录仓留在分配根下不给 agent
+   * （见 layout.ts）。docker 按这个值决定挂什么，local 与 wsl 只能拿它当 cwd，
+   * 挡不住 `cd ..`，这与它们 `isolates` 的实际含义一致。
+   */
   readonly root: string;
   readonly env?: Readonly<Record<string, string>>;
   /** 超时即杀 —— 这是 `ExecutionLimits.wallClockSeconds` 的真落点。 */

@@ -6,7 +6,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DockerRunner, dockerAvailable } from "../src/docker.js";
@@ -97,7 +97,7 @@ describe.skipIf(!HAS_DOCKER)("真起容器", () => {
       const inner = runner.toInner(paths.workspace);
       expect(inner.startsWith("/sandbox/")).toBe(true);
 
-      const out = await runner.run({ argv: ["cat", "hello.txt"], root });
+      const out = await runner.run({ argv: ["cat", "hello.txt"], root: paths.box });
       expect(out.code).toBe(0);
       expect(out.stdout.trim()).toBe("from-host");
     } finally {
@@ -112,7 +112,7 @@ describe.skipIf(!HAS_DOCKER)("真起容器", () => {
       const paths = createSandbox(root);
       const out = await runner.run({
         argv: ["sh", "-c", "echo from-container > made.txt"],
-        root,
+        root: paths.box,
       });
       expect(out.code).toBe(0);
       const made = join(paths.workspace, "made.txt");
@@ -127,10 +127,10 @@ describe.skipIf(!HAS_DOCKER)("真起容器", () => {
     const runner = new DockerRunner({ network: "none" });
     const root = runner.allocate();
     try {
-      createSandbox(root);
+      const paths = createSandbox(root);
       const out = await runner.run({
         argv: ["sh", "-c", "wget -q -T 5 -O - http://example.com; echo rc=$?"],
-        root,
+        root: paths.box,
         timeoutSeconds: 60,
       });
       expect(out.stdout).toContain("rc=");
@@ -144,8 +144,8 @@ describe.skipIf(!HAS_DOCKER)("真起容器", () => {
     const runner = new DockerRunner();
     const root = runner.allocate();
     try {
-      createSandbox(root);
-      const out = await runner.run({ argv: ["sleep", "600"], root, timeoutSeconds: 3 });
+      const paths = createSandbox(root);
+      const out = await runner.run({ argv: ["sleep", "600"], root: paths.box, timeoutSeconds: 3 });
       expect(out.timedOut).toBe(true);
       expect(out.wallClockSeconds).toBeLessThan(30);
       // 容器真死了 —— 名字不该还在运行列表里。
@@ -188,8 +188,46 @@ describe("路径反查", () => {
 
   it("不是本运行器分配的沙箱，run 直接拒绝", async () => {
     const runner = new DockerRunner();
+    // run 现在走 toInner 的前缀解析（因为它挂的是 spec.root 本身，
+    // 可能是分配根的子目录），所以拒绝理由由那条路径给出
     await expect(runner.run({ argv: ["true"], root: "C:/elsewhere" })).rejects.toThrow(
-      /不是本运行器分配的/,
+      /不在任何已分配的沙箱里/,
     );
   });
+});
+
+describe("★ 观察边界与挂载边界分开", () => {
+  it("记录仓不在 agent 容器里 —— 观察对象改不了观察记录", async () => {
+    const runner = new DockerRunner();
+    const root = runner.allocate();
+    try {
+      const paths = createSandbox(root);
+      mkdirSync(paths.record, { recursive: true });
+      writeFileSync(join(paths.record, "HEAD"), "ref: refs/heads/main", "utf8");
+
+      // agent 从 workspace 往上翻，找不到 record.git —— 它根本没被挂进来
+      const out = await runner.run({
+        argv: ["sh", "-c", "ls -a .. ; echo '---' ; ls ../../ 2>&1 | head -3"],
+        root: paths.box,
+      });
+      expect(out.stdout).toContain("workspace");
+      expect(out.stdout).not.toContain("record.git");
+    } finally {
+      runner.release(root);
+    }
+  }, 120_000);
+
+  it("但观察容器读得到它 —— 两个容器挂不同的东西", () => {
+    const runner = new DockerRunner();
+    const root = runner.allocate();
+    try {
+      const paths = createSandbox(root);
+      mkdirSync(paths.record, { recursive: true });
+      writeFileSync(join(paths.record, "MARK"), "observer-only", "utf8");
+      const out = runner.exec(["cat", `${runner.toInner(paths.record)}/MARK`], runner.toInner(paths.box));
+      expect(out.trim()).toBe("observer-only");
+    } finally {
+      runner.release(root);
+    }
+  }, 120_000);
 });

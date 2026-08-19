@@ -31,6 +31,10 @@ import {
 import { join, relative, sep } from "node:path";
 
 export interface SandboxPaths {
+  /** 交给 agent 的那一层。运行器只挂这个。 */
+  readonly box: string;
+  /** 外置记录仓。在 `box` 之外，所以 agent 改不到。 */
+  readonly record: string;
   readonly root: string;
   /** git work-tree：唯一被观察的目录。 */
   readonly workspace: string;
@@ -41,11 +45,33 @@ export interface SandboxPaths {
   readonly artifacts: string;
 }
 
+/**
+ * 沙箱布局。**`box/` 是唯一交给 agent 的东西。**
+ *
+ * ```
+ * <root>/
+ *   box/              ← 挂给 agent；cwd 落在 box/workspace
+ *     workspace/
+ *     .hertaloy/
+ *   record.git/       ← **不挂**。观察面，agent 够不着
+ * ```
+ *
+ * 记录仓此前放在沙箱根下，注释还写着"agent 看不到" —— 那只相对 `workspace/`
+ * 成立，`cd ..` 就到了；docker 更是把整个根挂进容器，agent 能直接改自己的档案。
+ * 一个能被观察对象改写的观察记录，不是观察记录。
+ *
+ * 现在挂载边界与观察边界分开：agent 容器挂 `box/`，观察容器挂 `<root>/`。
+ * **注意这个保证只在 docker 上是真的** —— local 与 wsl 里 agent 能读整个宿主机，
+ * 那两个 runner 的 `isolates` 已经如实报告了这件事。
+ */
 export function sandboxPaths(root: string): SandboxPaths {
-  const meta = join(root, ".hertaloy");
+  const box = join(root, "box");
+  const meta = join(box, ".hertaloy");
   return {
     root,
-    workspace: join(root, "workspace"),
+    box,
+    record: join(root, "record.git"),
+    workspace: join(box, "workspace"),
     meta,
     context: join(meta, "context"),
     request: join(meta, "request.json"),

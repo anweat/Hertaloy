@@ -107,7 +107,7 @@ export class SandboxBackend implements ExecutionBackend {
     // ★ 传给 git 的路径必须是**运行环境内**的：git 在 WSL 里跑，
     //   收到宿主机 UNC 路径会直接失败（真跑 WSL 的测试第一次就撞到了）
     const observer = {
-      gitDir: this.#runner.toInner(`${root}/.record.git`),
+      gitDir: this.#runner.toInner(paths.record),
       workTree: this.#runner.toInner(paths.workspace),
     };
     const exec = (argv: readonly string[], cwd: string): string => this.#runner.exec(argv, cwd);
@@ -134,8 +134,9 @@ export class SandboxBackend implements ExecutionBackend {
       if (canObserve) initObserver(observer, exec);
 
       const outcome = await this.#runner.run({
+        // 只挂 box —— 记录仓在它外面，agent 够不着（见 layout.ts）
+        root: paths.box,
         argv: spec.argv,
-        root,
         env: spec.env,
         signal: abort.signal,
         ...(request.limits.wallClockSeconds === undefined
