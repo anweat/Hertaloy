@@ -9,7 +9,7 @@
  * 第三个进程读得到 agent 写出来的产物。
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -81,7 +81,8 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 function backend(): SandboxBackend {
-  return new SandboxBackend({ runner: new LocalRunner() });
+  // 沙箱落在状态目录下 —— 与 CLI 的 makeBackend 同一条路径规则
+  return new SandboxBackend({ runner: new LocalRunner(join(dir, "sandboxes")) });
 }
 
 describe("★ 落盘的 run 真跑 agent（E1）", () => {
@@ -167,4 +168,52 @@ describe("★ 因果反查有出口了", () => {
     s.close();
     expect(why(dir, HUMAN, first!.id).text).toContain("没有记录在案的前因");
   });
+});
+
+describe("★ 沙箱保留：多开 agent 时现场留得住", () => {
+  it("跑完沙箱还在，位置写进执行观测 —— 哪次执行对应哪个沙箱有据可查", async () => {
+    await drain(dir, HUMAN, backend());
+    const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
+    expect(v.body.diagnostics.sandbox.retained).toBe(true);
+    expect(existsSync(v.body.diagnostics.sandbox.path)).toBe(true);
+    // 工作树还在，产出取得回来
+    expect(existsSync(join(v.body.diagnostics.sandbox.path, "box", "workspace"))).toBe(true);
+  }, 120_000);
+
+  it("★ 沙箱名带 traceid —— 否则两个 run 的 exec-1 会撞名", async () => {
+    await drain(dir, HUMAN, backend());
+    const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
+    expect(v.body.diagnostics.sandbox.path).toContain("job-1");
+    expect(v.body.diagnostics.sandbox.path).toContain("exec-1");
+  }, 120_000);
+
+  it("多个 agent 各占一个沙箱，互不覆盖", async () => {
+    const s = RunState.open(dir);
+    try {
+      s.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { task: "second" });
+      s.persist();
+    } finally {
+      s.close();
+    }
+    await drain(dir, HUMAN, backend());
+
+    const versions = JSON.parse(show(dir, HUMAN, "job-1/$exec@1").text);
+    const second = JSON.parse(show(dir, HUMAN, "job-1/$exec@2").text);
+    expect(versions.body.diagnostics.sandbox.path).not.toBe(second.body.diagnostics.sandbox.path);
+    expect(existsSync(versions.body.diagnostics.sandbox.path)).toBe(true);
+    expect(existsSync(second.body.diagnostics.sandbox.path)).toBe(true);
+  }, 120_000);
+
+  it("status 报出攒了几个 —— 没有自动回收，至少让人看得见", async () => {
+    await drain(dir, HUMAN, backend());
+    expect(status(dir, HUMAN).text).toMatch(/保留中的沙箱 1 个/);
+  }, 120_000);
+
+  it("retain: never 才删 —— 默认是留着", async () => {
+    const s = new SandboxBackend({ runner: new LocalRunner(), retain: "never" });
+    await drain(dir, HUMAN, s);
+    const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
+    expect(v.body.diagnostics.sandbox.retained).toBe(false);
+    expect(existsSync(v.body.diagnostics.sandbox.path)).toBe(false);
+  }, 120_000);
 });

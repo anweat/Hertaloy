@@ -17,7 +17,16 @@ import { z } from "zod";
  * - `version` 是正整数，无前导零。
  * - 不接受 `latest` / `head` / `0` / 负数 —— 运行消息里永远是精确版本。
  */
-export const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*@[1-9][0-9]*$/;
+/**
+ * `$` 在字符集里，因为**内核保留对象用它做前缀**（`<traceid>/$run`、
+ * `<traceid>/$exec`）。选 `$` 是因为用户资产名是 `Ident`（ASCII 标识符，不含 `$`），
+ * 所以保留名不可能与用户名字相撞。
+ *
+ * 之前 `Ref` 的字符集比 `object_id` 窄 —— 于是这些对象**存得进去却引用不到**：
+ * `store.put` 只禁 `@`，而 `Ref` 连 `$` 都不认。`hertaloy show job-1/$exec@1`
+ * 因此报"非法引用"。契约两端对不上账，与之前几次是同一类。
+ */
+export const REF_PATTERN = /^[A-Za-z0-9$][A-Za-z0-9$._/-]*@[1-9][0-9]*$/;
 
 export const Ref = z
   .string()

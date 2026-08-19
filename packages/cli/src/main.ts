@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { run, validate } from "./commands.js";
 import { diagnose, formatChecks } from "./doctor.js";
 import type { ExecutionBackend, Principal } from "@nodeflow/contracts";
@@ -81,7 +82,7 @@ ${USAGE}`, code: 2 } : null;
     case "history":
       return need(2) ?? history(dir as string, actor, a as string);
     case "drain":
-      return need(1) ?? (await drain(dir as string, actor, makeBackend(runner)));
+      return need(1) ?? (await drain(dir as string, actor, makeBackend(runner, dir as string)));
     case "why":
       return need(2) ?? why(dir as string, actor, a as string);
     case "truncate":
@@ -153,15 +154,25 @@ function extractActor(argv: readonly string[]): {
  * 默认不给，是因为跑 agent 意味着起进程、可能出网、可能花钱。
  * 这种事不该是某个 flag 忘了写就悄悄发生的默认值。
  */
-function makeBackend(runner: string | undefined): ExecutionBackend | undefined {
+function makeBackend(runner: string | undefined, dir: string): ExecutionBackend | undefined {
   if (runner === undefined) return undefined;
+  /**
+   * 沙箱落在**状态目录下**，不是系统临时目录。
+   *
+   * 跑完就删的时候放 tmp 没问题；留着就不行 —— 一次重启、一次系统清理，
+   * 现场就没了，而"现场还在"正是留它的全部理由。
+   *
+   * wsl 是例外：沙箱必须住在 Linux 文件系统里才有真 Linux 语义（§14.1），
+   * 所以它仍由 runner 自己定位置，状态目录只管另外两个。
+   */
+  const workRoot = join(dir, "sandboxes");
   switch (runner) {
     case "local":
-      return new SandboxBackend({ runner: new LocalRunner() });
+      return new SandboxBackend({ runner: new LocalRunner(workRoot) });
     case "wsl":
       return new SandboxBackend({ runner: new WslRunner() });
     case "docker":
-      return new SandboxBackend({ runner: new DockerRunner() });
+      return new SandboxBackend({ runner: new DockerRunner({ workRoot }) });
     default:
       throw new Error(`未知运行器 ${runner}，可选 local / wsl / docker`);
   }

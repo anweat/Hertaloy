@@ -19,7 +19,7 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import { rmSync } from "node:fs";
-import type { RunOutcome, RunSpec, Runner } from "./runner.js";
+import { type RunOutcome, type RunSpec, type Runner, safeId } from "./runner.js";
 
 export interface WslOptions {
   /** 发行版名。默认 `Ubuntu`。 */
@@ -63,8 +63,11 @@ export class WslRunner implements Runner {
     return this.#distro;
   }
 
-  allocate(): string {
-    const inner = `${this.#innerRoot}/hertaloy-box-${Math.random().toString(36).slice(2, 10)}`;
+  allocate(id?: string): string {
+    const suffix = id === undefined ? Math.random().toString(36).slice(2, 10) : safeId(id);
+    const inner = `${this.#innerRoot}/hertaloy-box-${suffix}`;
+    // 与 local/docker 同一条规则：确定性路径先清空再用
+    this.#wsl(["rm", "-rf", inner]);
     this.#wsl(["mkdir", "-p", inner]);
     return toHostPath(inner, this.#distro);
   }

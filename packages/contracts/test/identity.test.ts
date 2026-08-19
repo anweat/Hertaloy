@@ -132,3 +132,20 @@ describe("Principal —— 可信边界注入（§11）", () => {
     expect(Principal.safeParse({ kind: "human", id: "alice" }).success).toBe(true);
   });
 });
+
+describe("★ 内核保留对象必须引用得到", () => {
+  it("`$` 前缀的保留名是合法 Ref —— 存得进去就得引用得到", () => {
+    expect(Ref.safeParse("job-1/$run@1").success).toBe(true);
+    expect(Ref.safeParse("job-1/coder-1/$exec@12").success).toBe(true);
+  });
+
+  it("用户资产名仍然引用得到", () => {
+    expect(Ref.safeParse("job-1/result@3").success).toBe(true);
+    expect(Ref.safeParse("rules/py-strict@1").success).toBe(true);
+  });
+
+  it("版本仍然必填且无前导零", () => {
+    expect(Ref.safeParse("job-1/$exec").success).toBe(false);
+    expect(Ref.safeParse("job-1/$exec@01").success).toBe(false);
+  });
+});

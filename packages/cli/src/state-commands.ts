@@ -127,14 +127,28 @@ export function status(dir: string, actor: Principal): CommandResult {
     const execs = subtree.flatMap((i) => s.store.history(`${i.traceid}/$exec`));
     if (execs.length > 0) {
       lines.push("", `执行观测 ${execs.length} 条（\`show <traceid>/$exec\` 看详情）：`);
+      let retained = 0;
+      for (const v of execs) {
+        const d = ((v.body as Record<string, unknown>).diagnostics ?? {}) as {
+          sandbox?: { retained?: boolean };
+        };
+        if (d.sandbox?.retained === true) retained += 1;
+      }
       for (const v of execs.slice(-5)) {
         const b = v.body as Record<string, unknown>;
         const d = (b.diagnostics ?? {}) as Record<string, unknown>;
-        const obs = (d.observation ?? {}) as { files?: unknown[] };
+        const obs = (d.observation ?? {}) as { changes?: unknown[] };
+        const box = (d.sandbox ?? {}) as { path?: string; retained?: boolean };
         lines.push(
           `  ${String(b.execution_id)}  ${String(b.node)}  ${String(b.termination)}` +
-            (obs.files === undefined ? "" : `  改动 ${obs.files.length} 个文件`),
+            (obs.changes === undefined ? "" : `  改动 ${obs.changes.length} 个文件`) +
+            (box.retained === true ? `
+      沙箱 ${String(box.path)}` : ""),
         );
+      }
+      if (retained > 0) {
+        // 留着的沙箱会一直涨，而回收目前没有设计路径 —— 与其悄悄堆，不如报出来
+        lines.push(`  ★ 保留中的沙箱 ${retained} 个，需要时手工删除（暂无自动回收）`);
       }
     }
 

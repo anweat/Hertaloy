@@ -9,7 +9,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,8 +61,12 @@ export interface Runner {
    * 沙箱住哪归 runner 管：`local` 放宿主机临时目录，`wsl` 放 **WSL 自己的
    * 文件系统**（宿主机通过 UNC 访问）。后者让 agent 拿到真 Linux 语义 ——
    * 大小写敏感、权限位、软链都对，不必绕 `/mnt/d` 那层 Windows 语义。
+   *
+   * 给了 `id` 就用**确定性路径**，沙箱因此可被再次找到 —— 这是"沙箱留着"
+   * 的前提（跑完即删的时候随机名无所谓，留着的时候必须能对上是谁的）。
+   * 不给就还是随机名。
    */
-  allocate(): string;
+  allocate(id?: string): string;
   release(hostRoot: string): void;
 
   /** 跑 agent：带超时与取消。 */
@@ -88,6 +92,35 @@ export interface Runner {
    * 与内部路径是这块最容易出的错，所以这里只认一种。
    */
   exec(argv: readonly string[], innerCwd: string): string;
+}
+
+/**
+ * 沙箱 id → 文件名安全的一段。
+ *
+ * id 由 `<traceid>/<executionId>` 拼成，含 `/`。**必须带上 traceid**：
+ * 每个 Runtime 的 executionId 都从 `exec-1` 起，沙箱跑完即删时这不要紧，
+ * 一旦留着就会在共享目录里真的撞名 —— 两个 run 的第一次执行抢同一个目录。
+ */
+export function safeId(id: string): string {
+  return id.replace(/[^A-Za-z0-9_.-]/g, "-");
+}
+
+/**
+ * 确定性路径必须**先清空再用**。
+ *
+ * 沙箱留着之后，同一个 id 第二次分配会撞上上次的残留 —— 而基线是在物化之后打的，
+ * 于是残留文件被算进基线，agent 这次真改的东西反而 diff 不出来。
+ * （现有的 profile 测试正是这么炸的：断言 `made.txt` 是改动，实际空。）
+ *
+ * 清空意味着**同 id 的旧沙箱会被顶掉**。这是可接受的：id 由
+ * `<traceid>/<executionId>` 拼成，同 id 就是同一次执行，后来者是重跑。
+ * 真正的隐患是 executionId 并非全局唯一（每个 Runtime 从 exec-1 起），
+ * 那条单独记着 —— 但"顶掉旧的"至少是**响的**失败，比错误的观测好。
+ */
+export function freshDir(dir: string): string {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 /**
@@ -174,8 +207,9 @@ export class LocalRunner implements Runner {
     this.#prefix = join(workRoot, "hertaloy-box-");
   }
 
-  allocate(): string {
-    return mkdtempSync(this.#prefix);
+  allocate(id?: string): string {
+    if (id === undefined) return mkdtempSync(this.#prefix);
+    return freshDir(`${this.#prefix}${safeId(id)}`);
   }
 
   release(hostRoot: string): void {

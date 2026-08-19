@@ -28,7 +28,7 @@ import {
   networkArgs,
   networkNameFor,
 } from "./network.js";
-import type { RunOutcome, RunSpec, Runner } from "./runner.js";
+import { freshDir, type RunOutcome, type RunSpec, type Runner, safeId } from "./runner.js";
 
 export interface DockerOptions {
   /** 镜像即环境。默认一个带 git 的小镜像。 */
@@ -100,8 +100,9 @@ export class DockerRunner implements Runner {
     this.#docker = options.docker ?? "docker";
   }
 
-  allocate(): string {
-    const host = mkdtempSync(this.#prefix);
+  allocate(id?: string): string {
+    const host =
+      id === undefined ? mkdtempSync(this.#prefix) : freshDir(`${this.#prefix}${safeId(id)}`);
     this.#mounts.set(slash(host), `${INNER_ROOT}/${basename(host)}`);
     if (this.network === "internal") {
       ensureInternalNetwork(this.#networkName, (argv) => this.#cli(argv));

@@ -59,7 +59,18 @@ export interface SandboxOptions {
   readonly runner?: Runner;
   /** 沙箱与记录仓的父目录。默认系统临时目录。 */
   readonly workRoot?: string;
-  /** 跑完是否删沙箱。调试时设 false。 */
+  /**
+   * 沙箱保留策略。默认 **always** —— 留着。
+   *
+   * 跑完就删的代价是：多开 agent 时谁也看不到现场，失败了没法查，
+   * 产出也取不回来（工作树没了，`git fetch` 无从谈起）。
+   *
+   * **代价要说清**：留着就会一直涨，而对象回收目前**没有设计路径**。
+   * 所以沙箱位置会写进执行观测对象，`hertaloy status` 报出保留了几个 ——
+   * 至少让人看得见自己在攒什么，而不是在磁盘里悄悄堆。
+   */
+  readonly retain?: RetainPolicy;
+  /** @deprecated 用 `retain` 。`cleanup: false` 等价于 `retain: "always"`。 */
   readonly cleanup?: boolean;
   /**
    * 资源别名注册表。模板只写名字，这里说名字指向哪。
@@ -70,6 +81,9 @@ export interface SandboxOptions {
    */
   readonly resources?: ResourceRegistry;
 }
+
+/** 什么时候留沙箱。 */
+export type RetainPolicy = "always" | "on-failure" | "never";
 
 export interface SandboxDiagnostics {
   readonly runner: string;
@@ -88,17 +102,26 @@ export interface SandboxDiagnostics {
   readonly observation?: Observation;
   /** 工作区从哪个具名源、哪个 commit 起的 —— 让"从哪开始的"可复查。 */
   readonly workspace?: ProvisionedWorkspace;
+  /**
+   * 沙箱在哪、留没留下。
+   *
+   * 放进 diagnostics 而不是新开一张"沙箱表"：diagnostics 已经会落成
+   * `<traceid>/$exec` 对象（§17.14），于是"哪次执行对应哪个沙箱"由**版本层**
+   * 回答，不需要第二处记账。
+   */
+  readonly sandbox?: { readonly path: string; readonly retained: boolean };
 }
 
 export class SandboxBackend implements ExecutionBackend {
   readonly #runner: Runner;
-  readonly #cleanup: boolean;
+  readonly #retain: RetainPolicy;
   readonly #resources: ResourceRegistry;
   readonly #inflight = new Map<string, AbortController>();
 
   constructor(options: SandboxOptions = {}) {
     this.#runner = options.runner ?? new LocalRunner(options.workRoot);
-    this.#cleanup = options.cleanup ?? true;
+    // cleanup 是旧名字：true 意为"跑完就删"，等价于 never
+    this.#retain = options.retain ?? (options.cleanup === true ? "never" : "always");
     this.#resources = options.resources ?? {};
   }
 
@@ -118,8 +141,13 @@ export class SandboxBackend implements ExecutionBackend {
     }
     const spec = parsed.data;
 
-    // 沙箱住哪归 runner 管：local 放宿主机临时目录，wsl 放 Linux 文件系统
-    const root = this.#runner.allocate();
+    /**
+     * 沙箱住哪归 runner 管；**叫什么由这里定**。
+     *
+     * id 带上 traceid，因为 executionId 每个 Runtime 都从 exec-1 起 ——
+     * 沙箱跑完即删时无所谓，留着就会在共享目录里真的撞名。
+     */
+    const root = this.#runner.allocate(`${request.traceid}/${request.executionId}`);
     const paths = createSandbox(root);
     // 记录仓放在沙箱**同级**的隐藏目录 —— 与工作树同一个文件系统，
     // 但不在 workspace 内，所以 agent 看不到（S1 布局的同一条理由）
@@ -134,6 +162,10 @@ export class SandboxBackend implements ExecutionBackend {
 
     const abort = new AbortController();
     this.#inflight.set(request.executionId, abort);
+
+    // finally 里要按结果决定留不留，所以结果得先记下来。
+    // 默认按失败算：走到异常路径时现场更值得留。
+    let termination: Termination = "FAILED";
 
     try {
       writeContext(paths, {
@@ -205,11 +237,12 @@ export class SandboxBackend implements ExecutionBackend {
         exitCode: outcome.code,
         stdoutTail: tail(outcome.stdout),
         stderrTail: tail(outcome.stderr),
+        sandbox: { path: root, retained: keeps(this.#retain, classify(outcome, emitted)) },
         ...(workspace === undefined ? {} : { workspace }),
         ...(observation === undefined ? {} : { observation }),
       };
 
-      const termination = classify(outcome, emitted);
+      termination = classify(outcome, emitted);
       if (termination !== "DONE") {
         return this.#fail(request, termination, diagnostics, outcome);
       }
@@ -231,7 +264,7 @@ export class SandboxBackend implements ExecutionBackend {
       };
     } finally {
       this.#inflight.delete(request.executionId);
-      if (this.#cleanup) this.#runner.release(root);
+      if (!keeps(this.#retain, termination)) this.#runner.release(root);
     }
   }
 
@@ -261,6 +294,13 @@ export class SandboxBackend implements ExecutionBackend {
       diagnostics: diagnostics as never,
     };
   }
+}
+
+/** 这次跑完之后留不留沙箱。 */
+function keeps(policy: RetainPolicy, termination: Termination): boolean {
+  if (policy === "never") return false;
+  if (policy === "always") return true;
+  return termination !== "DONE";
 }
 
 /**
