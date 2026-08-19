@@ -213,6 +213,14 @@ export interface RuntimeOptions {
   readonly backend?: ExecutionBackend;
   readonly maxAttempts?: number;
   readonly onCommit?: CommitHook;
+  /**
+   * 可变头里保留多少条**已消费**消息。默认 200，负数表示不清理。
+   *
+   * 这是头唯一无界增长的来源，而头**每次提交全量重写** —— 于是累计写入是
+   * 消息数的平方级。实测：2000 条已消费消息 → head.json 1.1 MB，
+   * 而其中在队列里的是 0 条。文档里"账很小，不随历史增长"那句话是错的。
+   */
+  readonly keepConsumedMessages?: number;
 }
 
 type ClaimOutcome =
@@ -239,6 +247,7 @@ export class Runtime implements Snapshotable {
   readonly #backend: ExecutionBackend | undefined;
   readonly #maxAttempts: number;
   readonly #onCommit: CommitHook | undefined;
+  readonly #keepConsumed: number;
   #seq = 0;
   #requestSeq = 0;
   #executionSeq = 0;
@@ -249,11 +258,44 @@ export class Runtime implements Snapshotable {
     this.#backend = options.backend;
     this.#maxAttempts = options.maxAttempts ?? 3;
     this.#onCommit = options.onCommit;
+    this.#keepConsumed = options.keepConsumedMessages ?? 200;
   }
 
   /** 事务内通知。钩子抛出 → `transact` 回滚 → 这次提交没发生过。 */
   #commit(event: CommitEvent): void {
+    this.#prune();
     this.#onCommit?.(event);
+  }
+
+  /**
+   * 丢掉过老的**已消费**消息 —— 头的唯一无界增长源。
+   *
+   * 只丢 `CONSUMED`：它已经完整 apply 过，不会再被任何路径读。
+   * **不丢 `DISCARDED`**，那是截断留下的，迟到的结果还要靠它走冲突域复核（L3）；
+   * 也不丢 `QUEUED` / `CLAIMED`，那些是活的。
+   *
+   * 因果查询不受影响：`causesOf` 读的是 RunSnapshot 对象里的 message **id 字符串**，
+   * 不需要 Message 本身。`checkInvariants` 也只交叉引用 RUNNING 记录的消息。
+   *
+   * 在 `#commit` 里调 ⇒ 天然在事务内，回滚一起回滚。
+   * 只在明显超量时才扫，免得把平方级的磁盘写入换成平方级的内存扫描。
+   */
+  #prune(): void {
+    if (this.#keepConsumed < 0 || this.#messages.size <= this.#keepConsumed * 2) return;
+
+    const consumed: string[] = [];
+    for (const id of this.#order) {
+      if (this.#messages.get(id)?.state === "CONSUMED") consumed.push(id);
+    }
+    const excess = consumed.length - this.#keepConsumed;
+    if (excess <= 0) return;
+
+    // #order 是投递顺序，所以前面的就是更老的
+    const doomed = new Set(consumed.slice(0, excess));
+    for (const id of doomed) this.#messages.delete(id);
+    const kept = this.#order.filter((id) => !doomed.has(id));
+    this.#order.length = 0;
+    this.#order.push(...kept);
   }
 
   get locks(): LockLedger {

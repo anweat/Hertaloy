@@ -299,3 +299,78 @@ describe("★ 产物地址由内核决定，不是 agent 报什么就写什么�
     expect(store.head("job-1/shared").body).toEqual({ from: "agent" });
   });
 });
+
+describe("★ 可变头封顶：已消费消息不无限累积（GC 第一条）", () => {
+  function rigPlain(keep: number) {
+    const s = new ObjectStore();
+    const ref = registerContainerTemplate(
+      s,
+      "flow",
+      {
+        nodes: {
+          n: {
+            kind: "handler",
+            handler: "noop",
+            ports: { in: { direction: "receive", servo: { vars: {} } } },
+          },
+        },
+        edges: {},
+        children: {},
+        subscriptions: {},
+      },
+      "root_config",
+    );
+    const r = new InstanceRegistry(s);
+    r.createRoot(ref, "job-1");
+    const rt = new Runtime(s, r, { keepConsumedMessages: keep });
+    rt.registerHandler("noop", () => ({}));
+    return rt;
+  }
+
+  it("投 500 条 → 头里留的远少于 500，且封在上限附近", () => {
+    const rt = rigPlain(50);
+    for (let i = 0; i < 500; i += 1) {
+      rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
+      rt.drain();
+    }
+    expect(rt.messages().length).toBeLessThan(200);
+    rt.checkInvariants();
+  });
+
+  it("★ 只丢 CONSUMED —— 在途的一条都不动", () => {
+    const rt = rigPlain(5);
+    for (let i = 0; i < 100; i += 1) {
+      rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
+      rt.drain();
+    }
+    // 再投几条不 drain，它们必须留着
+    for (let i = 0; i < 3; i += 1) rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
+    expect(rt.pending()).toHaveLength(3);
+    expect(rt.messages().filter((m) => m.state === "QUEUED")).toHaveLength(3);
+  });
+
+  it("负数 = 不清理 —— 需要完整历史时可关掉", () => {
+    const rt = rigPlain(-1);
+    for (let i = 0; i < 100; i += 1) {
+      rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
+      rt.drain();
+    }
+    expect(rt.messages()).toHaveLength(100);
+  });
+
+  it("因果查询不受影响 —— RunSnapshot 存的是 id 字符串，不是消息本身", () => {
+    const rt = rigPlain(5);
+    const ids: string[] = [];
+    for (let i = 0; i < 60; i += 1) {
+      ids.push(rt.send({ traceid: "job-1", node: "n", port: "in" }, { i }));
+      rt.drain();
+    }
+    // 早期消息已被清掉
+    expect(rt.messages().some((m) => m.id === ids[0])).toBe(false);
+    // 但快照仍记着它被消费过
+    const consumed = rt
+      .snapshots("job-1")
+      .flatMap((v) => (v.body.consumed as string[] | undefined) ?? []);
+    expect(consumed).toContain(ids[0]);
+  });
+});

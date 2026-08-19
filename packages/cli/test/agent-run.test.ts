@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { LocalRunner, SandboxBackend } from "@nodeflow/sandbox";
 import { RunState } from "@nodeflow/state";
-import { drain, history, show, status, why } from "../src/state-commands.js";
+import { drain, history, reclaim, show, status, why } from "../src/state-commands.js";
 
 const HUMAN = { kind: "human", id: "local" } as const;
 let dir: string;
@@ -216,4 +216,63 @@ describe("★ 沙箱保留：多开 agent 时现场留得住", () => {
     expect(v.body.diagnostics.sandbox.retained).toBe(false);
     expect(existsSync(v.body.diagnostics.sandbox.path)).toBe(false);
   }, 120_000);
+});
+
+describe("★ 沙箱回收（GC 第三条）", () => {
+  async function threeRuns(): Promise<void> {
+    const s = RunState.open(dir);
+    try {
+      for (const t of ["a", "b"]) {
+        s.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { task: t });
+      }
+      s.persist();
+    } finally {
+      s.close();
+    }
+    await drain(dir, HUMAN, backend());
+  }
+
+  it("保留最近 N 个，其余删掉，并报出释放了多少", async () => {
+    await threeRuns();
+    const before = JSON.parse(show(dir, HUMAN, "job-1/$exec@1").text).body.diagnostics.sandbox.path;
+    expect(existsSync(before)).toBe(true);
+
+    const r = reclaim(dir, HUMAN, 1);
+    expect(r.code).toBe(0);
+    expect(r.text).toMatch(/回收 \d+ 个沙箱/);
+    expect(existsSync(before)).toBe(false); // 最老的被回收
+  }, 120_000);
+
+  it("最新的那个留着 —— 现场还在", async () => {
+    await threeRuns();
+    reclaim(dir, HUMAN, 1);
+    const versions = history(dir, HUMAN, "job-1/$exec").text.match(/@\d+/g) ?? [];
+    const newest = JSON.parse(
+      show(dir, HUMAN, `job-1/$exec${versions[versions.length - 1] as string}`).text,
+    );
+    expect(existsSync(newest.body.diagnostics.sandbox.path)).toBe(true);
+  }, 120_000);
+
+  it("没超上限就什么都不做", async () => {
+    await drain(dir, HUMAN, backend());
+    expect(reclaim(dir, HUMAN, 10).text).toContain("没有要回收的");
+  }, 120_000);
+
+  it("$exec 里记的路径不改写 —— 那是历史事实", async () => {
+    await threeRuns();
+    const before = JSON.parse(show(dir, HUMAN, "job-1/$exec@1").text).body.diagnostics.sandbox.path;
+    reclaim(dir, HUMAN, 1);
+    const after = JSON.parse(show(dir, HUMAN, "job-1/$exec@1").text).body.diagnostics.sandbox.path;
+    expect(after).toBe(before);
+    expect(existsSync(after)).toBe(false);
+  }, 120_000);
+
+  it("空状态不炸", () => {
+    const empty = mkdtempSync(join(tmpdir(), "hertaloy-empty-gc-"));
+    try {
+      expect(reclaim(empty, HUMAN, 5).code).toBe(0);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
 });

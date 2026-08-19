@@ -24,6 +24,7 @@ import {
   type CommandResult,
   drain,
   history,
+  reclaim,
   send,
   show,
   status,
@@ -46,6 +47,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy drain   <dir> [--runner local|wsl|docker]  推进到静止
        不给 --runner 就没有执行面：agent 节点不会被推进
   hertaloy why     <dir> <message-id>           这条消息由哪些消息导致（因果反查）
+  hertaloy reclaim <dir> [保留个数]             回收沙箱，默认保留最近 5 个
   hertaloy truncate <dir> <traceid> [原因]      强制截断实例及其子树
 
 主体：任何命令可加 --as <principal>（如 --as agent:coder-1），默认 human:local。
@@ -83,6 +85,15 @@ ${USAGE}`, code: 2 } : null;
       return need(2) ?? history(dir as string, actor, a as string);
     case "drain":
       return need(1) ?? (await drain(dir as string, actor, makeBackend(runner, dir as string)));
+    case "reclaim": {
+      const short = need(1);
+      if (short !== null) return short;
+      const keep = a === undefined ? 5 : Number(a);
+      if (!Number.isInteger(keep) || keep < 0) {
+        return { text: `reclaim 的保留个数要是非负整数，收到 ${String(a)}`, code: 2 };
+      }
+      return reclaim(dir as string, actor, keep);
+    }
     case "why":
       return need(2) ?? why(dir as string, actor, a as string);
     case "truncate":

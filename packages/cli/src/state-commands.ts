@@ -14,6 +14,8 @@
  * `actor` 由 `--as` 注入，默认 `human:local`；绝不从载荷里取（§11.3）。
  */
 
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { RunState } from "@nodeflow/state";
 import type { ExecutionBackend } from "@nodeflow/contracts";
 import type { Json, Principal } from "@nodeflow/contracts";
@@ -395,4 +397,82 @@ export function why(dir: string, actor: Principal, messageId: string): CommandRe
     }
     return ok([`${messageId} 的前因：`, ...causes.map((c) => `  ← ${c}`)].join("\n"));
   });
+}
+
+/**
+ * 回收沙箱 —— 保留最近 `keep` 个，其余删掉。
+ *
+ * 排序用**版本号**不用墙钟：`<traceid>/$exec` 的版本序是内核给的、确定性的，
+ * 而墙钟会让同一份状态在不同机器上回收出不同结果（L0 的同一条理由 ——
+ * 时间可以给人看，不能进裁决）。
+ *
+ * 只回收沙箱，不动对象库：一个状态目录只有一个根（C1），
+ * 所以"回收终态 run 的对象"等于删掉整个目录，那用 `rm` 就够，不必做成命令。
+ * 隐藏 ref 快照住在沙箱的记录仓里，删沙箱一并带走。
+ *
+ * `$exec` 里记的路径是**不可变的**，回收之后仍然指向已删除的目录 ——
+ * 那是历史事实，不该改写。
+ */
+export function reclaim(dir: string, actor: Principal, keep: number): CommandResult {
+  return readOnly(dir, (s) => {
+    const root = s.registry.rootTrace;
+    if (root === null) return ok("空状态：没有可回收的沙箱。");
+
+    const boxes: { path: string; exec: string }[] = [];
+    for (const inst of s.control.subtree(actor, root)) {
+      for (const v of s.store.history(`${inst.traceid}/$exec`)) {
+        const d = ((v.body as Record<string, unknown>).diagnostics ?? {}) as {
+          sandbox?: { path?: string; retained?: boolean };
+        };
+        if (d.sandbox?.retained === true && typeof d.sandbox.path === "string") {
+          boxes.push({ path: d.sandbox.path, exec: String((v.body as Record<string, unknown>).execution_id) });
+        }
+      }
+    }
+
+    const alive = boxes.filter((b) => existsSync(b.path));
+    const doomed = alive.slice(0, Math.max(0, alive.length - keep));
+    if (doomed.length === 0) {
+      return ok(`沙箱 ${alive.length} 个，保留上限 ${keep} —— 没有要回收的。`);
+    }
+
+    let freed = 0;
+    for (const b of doomed) {
+      freed += dirSize(b.path);
+      rmSync(b.path, { recursive: true, force: true });
+    }
+    return ok(
+      [
+        `回收 ${doomed.length} 个沙箱，释放约 ${(freed / 1024 / 1024).toFixed(1)} MB，保留 ${alive.length - doomed.length} 个。`,
+        ...doomed.map((b) => `  ${b.exec}  ${b.path}`),
+        "（$exec 里记的路径不改写 —— 那是历史事实）",
+      ].join("\n"),
+    );
+  });
+}
+
+function dirSize(dir: string): number {
+  let total = 0;
+  const stack = [dir];
+  while (stack.length > 0) {
+    const cur = stack.pop() as string;
+    let entries;
+    try {
+      entries = readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = join(cur, e.name);
+      if (e.isDirectory()) stack.push(full);
+      else if (e.isFile()) {
+        try {
+          total += statSync(full).size;
+        } catch {
+          /* 读不到就算了，这只是个估数 */
+        }
+      }
+    }
+  }
+  return total;
 }
