@@ -41,3 +41,4 @@ export {
 } from "./agent.js";
 export { Scenario, SendSpec } from "./scenario.js";
 export { diagnose, formatChecks, type Check } from "./doctor.js";
+export * from "./build.js";

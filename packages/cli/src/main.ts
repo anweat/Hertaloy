@@ -63,6 +63,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
        add <别名> <git|dir|skill|mcp> <路径> [说明]
   hertaloy truncate <dir> <traceid> [原因]      强制截断实例及其子树
 
+输出：任何有状态命令可加 --json，打印机器可读的结果（流程驱动流程时读它）。
+
 主体：任何命令可加 --as <principal>（如 --as agent:coder-1），默认 human:local。
 授权来自状态目录下的 permissions.json；没有该文件时缺省为「人类全权，agent 无权」。
 
@@ -152,6 +154,37 @@ ${USAGE}`, code: 2 } : null;
  * 默认 `human:local`：本机开发工具，人是操作者。**agent 必须显式指定** ——
  * 它的每一份权限都得是给出来的，不是默认带的（第一不变量）。
  */
+/** 摘出一个开关（没有值），返回它在不在与剩余参数。 */
+function extractSwitch(
+  argv: readonly string[],
+  flag: string,
+): { readonly present: boolean; readonly rest: readonly string[] } {
+  const i = argv.indexOf(flag);
+  if (i === -1) return { present: false, rest: argv };
+  return { present: true, rest: [...argv.slice(0, i), ...argv.slice(i + 1)] };
+}
+
+/**
+ * 输出。`--json` 时打印机器可读的那一份。
+ *
+ * **没有 `data` 的命令在 `--json` 下退出码 2 并说清楚**，不悄悄打印空对象 ——
+ * 一条流程照着空对象往下走，比当场报错难查得多。
+ */
+function emit(result: CommandResult, json: boolean): number {
+  if (!json) {
+    (result.code === 0 ? process.stdout : process.stderr).write(`${result.text}\n`);
+    return result.code;
+  }
+  if (result.data === undefined) {
+    process.stderr.write(
+      JSON.stringify({ error: "这条命令还没有 JSON 形态", text: result.text }) + "\n",
+    );
+    return 2;
+  }
+  process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+  return result.code;
+}
+
 /** 摘出 `--flag value`，返回值与剩余参数。 */
 function extractFlag(
   argv: readonly string[],
@@ -279,9 +312,11 @@ async function main(rawArgv: readonly string[]): Promise<number> {
   let actor: Principal;
   let argv: readonly string[];
   let runner: string | undefined;
+  let json = false;
   try {
     ({ actor, rest: argv } = extractActor(rawArgv));
     ({ value: runner, rest: argv } = extractFlag(argv, "--runner"));
+    ({ rest: argv, present: json } = extractSwitch(argv, "--json"));
   } catch (error) {
     process.stderr.write(`${(error as Error).message}
 `);
@@ -302,11 +337,7 @@ async function main(rawArgv: readonly string[]): Promise<number> {
   }
   const rest = argv.slice(1);
   const stateful = await statefulCommand(command, rest, actor, runner);
-  if (stateful !== null) {
-    (stateful.code === 0 ? process.stdout : process.stderr).write(`${stateful.text}
-`);
-    return stateful.code;
-  }
+  if (stateful !== null) return emit(stateful, json);
 
   if (file === undefined) {
     process.stderr.write(`缺少文件参数。\n\n${USAGE}`);

@@ -34,13 +34,25 @@ import { Scenario } from "./scenario.js";
 export interface CommandResult {
   readonly text: string;
   readonly code: number;
+  /**
+   * 机器可读的那一份。**加 `--json` 时打印它而不是 `text`。**
+   *
+   * 为什么两份都要：`text` 是给人看的（对齐、缩进、中文说明），
+   * `data` 是给流程看的 —— 一条 hertaloy 流程要能驱动另一个 run 时，
+   * 它读的是这个。把 `text` 拿去 parse 是最脆的接口，任何措辞调整都会打断它。
+   *
+   * 不给 `data` 的命令在 `--json` 下退出码 2 并说清楚，不悄悄打印空对象。
+   */
+  readonly data?: Json;
 }
 
 /** drain 的交替轮次上限。到顶不代表完成 —— 见 drain 里的 converged。 */
 const MAX_ROUNDS = 100;
 
-const ok = (text: string): CommandResult => ({ text, code: 0 });
-const fail = (text: string): CommandResult => ({ text, code: 1 });
+const ok = (text: string, data?: Json): CommandResult =>
+  data === undefined ? { text, code: 0 } : { text, code: 0, data };
+const fail = (text: string, data?: Json): CommandResult =>
+  data === undefined ? { text, code: 1 } : { text, code: 1, data };
 
 /** 只读打开：不拿目录锁，所以能在写进程跑着的时候查（§17.8）。 */
 function readOnly(dir: string, fn: (s: RunState) => CommandResult): CommandResult {
@@ -87,7 +99,19 @@ function writable(dir: string, fn: (s: RunState) => CommandResult): CommandResul
 export function status(dir: string, actor: Principal): CommandResult {
   return readOnly(dir, (s) => {
     const root = s.registry.rootTrace;
-    if (root === null) return ok("空状态：还没有根容器。");
+    if (root === null) {
+      return ok("空状态：还没有根容器。", {
+        root: null,
+        permissions: s.permissions.source,
+        instances: [],
+        locks: [],
+        queued: [],
+        claimed: [],
+        running: [],
+        deadlocks: [],
+        retainedSandboxes: 0,
+      } as never);
+    }
 
     const control = s.control;
     const lines: string[] = [
@@ -136,9 +160,9 @@ export function status(dir: string, actor: Principal): CommandResult {
       );
     }
     const execs = subtree.flatMap((i) => s.store.history(`${i.traceid}/$exec`));
+    let retained = 0;
     if (execs.length > 0) {
       lines.push("", `执行观测 ${execs.length} 条（\`show <traceid>/$exec\` 看详情）：`);
-      let retained = 0;
       for (const v of execs) {
         const d = ((v.body as Record<string, unknown>).diagnostics ?? {}) as {
           sandbox?: { retained?: boolean };
@@ -176,7 +200,32 @@ export function status(dir: string, actor: Principal): CommandResult {
       lines.push("", "★ 死锁环：");
       for (const cycle of deadlocks) lines.push(`  ${cycle.join(" → ")}`);
     }
-    return ok(lines.join("\n"));
+    return ok(lines.join("\n"), {
+      root,
+      permissions: s.permissions.source,
+      instances: subtree.map((i) => ({
+        traceid: i.traceid,
+        status: i.status,
+        seq: i.seq,
+        generation: i.generation,
+        blockers: [...control.blockers(actor, i.traceid)],
+      })),
+      locks: locks.map((l) => ({
+        kind: l.kind,
+        holder: l.holder,
+        key: l.key,
+        ...(l.waitingOn === undefined ? {} : { waitingOn: l.waitingOn }),
+      })),
+      queued: pending.map((m) => ({ id: m.id, ...m.target })),
+      claimed: claimed.map((m) => ({ id: m.id, ...m.target })),
+      running: running.map((r) => ({
+        executionId: r.executionId,
+        traceid: r.traceid,
+        node: r.nodeId,
+      })),
+      deadlocks: deadlocks.map((c) => [...c]),
+      retainedSandboxes: retained,
+    } as never);
   });
 }
 
@@ -186,7 +235,7 @@ export function show(dir: string, actor: Principal, ref: string): CommandResult 
     const at = ref.lastIndexOf("@");
     try {
       const version = at === -1 ? s.control.head(actor, ref) : s.control.read(actor, ref);
-      return ok(JSON.stringify(version, null, 2));
+      return ok(JSON.stringify(version, null, 2), version as never);
     } catch (error) {
       return fail((error as Error).message);
     }
@@ -201,7 +250,15 @@ export function history(dir: string, actor: Principal, objectId: string): Comman
     const lines = versions.map(
       (v) => `@${v.version}  ${v.kind}  ${v.content_hash.slice(0, 12)}  ${JSON.stringify(v.body)}`,
     );
-    return ok([`${objectId}（${versions.length} 版）：`, ...lines].join("\n"));
+    return ok([`${objectId}（${versions.length} 版）：`, ...lines].join("\n"), {
+      objectId,
+      versions: versions.map((v) => ({
+        version: v.version,
+        kind: v.kind,
+        contentHash: v.content_hash,
+        body: v.body,
+      })),
+    } as never);
   });
 }
 
@@ -224,8 +281,11 @@ export function send(
       return fail(`没有实例 ${traceid}。先跑 \`hertaloy status\` 看有哪些。`);
     }
     try {
-      s.control.send(actor, { traceid, node, port }, payload);
-      return ok(`已投递 → ${traceid}/${node}.${port}`);
+      const id = s.control.send(actor, { traceid, node, port }, payload);
+      return ok(`已投递 ${id} → ${traceid}/${node}.${port}`, {
+        messageId: id,
+        target: { traceid, node, port },
+      } as never);
     } catch (error) {
       return fail((error as Error).message);
     }
@@ -354,13 +414,24 @@ export async function drain(
     (backend === undefined ? "\n（未配置执行面：agent 节点不会被推进，见 --runner）" : "") +
     `\n可用内置 handler：${BUILTIN_NAMES.join(", ")}`;
 
-  if (!converged) return fail(text); // 谎报"推进到静止"比慢一点糟得多
+  const data = {
+    converged,
+    committed: results.length,
+    failed: failures.length,
+    retried,
+    settled: [...settled],
+    failures: failures.map((f) => ({ traceid: f.traceid, node: f.nodeId, reason: String(f.reason) })),
+    executionFace: backend === undefined ? null : "configured",
+  } as never;
+
+  if (!converged) return fail(text, data); // 谎报"推进到静止"比慢一点糟得多
   return failures.length > 0
     ? fail(
         `${text}\n失败：\n` +
           failures.map((f) => `  ${f.traceid}/${f.nodeId}：${String(f.reason)}`).join("\n"),
+        data,
       )
-    : ok(text);
+    : ok(text, data);
 }
 
 /**
@@ -386,6 +457,15 @@ export function truncate(
         `  取消执行 ${r.cancelledExecutions} 个`,
         `  级联子实例 ${r.cascaded.length} 个${r.cascaded.length > 0 ? `：${r.cascaded.join("、")}` : ""}`,
       ].join("\n"),
+      {
+        traceid: r.traceid,
+        generation: r.generation,
+        reason: r.reason,
+        truncatedMessages: r.truncatedMessages,
+        releasedLocks: r.releasedLocks,
+        cancelledExecutions: r.cancelledExecutions,
+        cascaded: [...r.cascaded],
+      } as never,
     );
   });
 }
@@ -401,10 +481,11 @@ export function why(dir: string, actor: Principal, messageId: string): CommandRe
     const root = s.registry.rootTrace;
     if (root === null) return fail("空状态：没有根容器。");
     const causes = s.control.causesOf(actor, root, messageId);
+    const data = { messageId, causes: [...causes] } as never;
     if (causes.length === 0) {
-      return ok(`${messageId} 没有记录在案的前因（可能是外部投递的起点）。`);
+      return ok(`${messageId} 没有记录在案的前因（可能是外部投递的起点）。`, data);
     }
-    return ok([`${messageId} 的前因：`, ...causes.map((c) => `  ← ${c}`)].join("\n"));
+    return ok([`${messageId} 的前因：`, ...causes.map((c) => `  ← ${c}`)].join("\n"), data);
   });
 }
 
@@ -634,6 +715,7 @@ export function resources(
           "没有登记任何资源。",
           `登记一个：hertaloy resources ${dir} add <别名> <git|dir|skill|mcp> <路径>`,
         ].join("\n"),
+              { source, resources: {} } as never,
       );
     }
     return ok(
@@ -645,6 +727,7 @@ export function resources(
           return `  ${n.padEnd(16)} ${r.kind.padEnd(6)} ${r.path}${r.note === undefined ? "" : `　—— ${r.note}`}`;
         }),
       ].join("\n"),
+      { source, resources: registry } as never,
     );
   } catch (error) {
     return fail((error as Error).message);

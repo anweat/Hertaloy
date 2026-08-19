@@ -67,6 +67,11 @@ const ALLOWED = new Map([
   ["checkAssetName", "同上，与内核 namespacedId 同一条规则"],
   ["extractJson", "同上，模型总会把 JSON 包进代码块"],
   ["pickExecPort", "runExec 在同文件里调；退出码→端口的判据要能单独测"],
+  // —— 模板构造器：本来就是给外部（人与 AI）写模板用的库 ——
+  ["handlerNode", "构造器，给调用方拼模板用"],
+  ["agentNode", "同上"],
+  ["execNode", "同上"],
+  ["forwardNode", "同上；而且它明确是示例，不是机制"],
 ]);
 
 function sources() {
