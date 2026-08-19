@@ -140,18 +140,54 @@ export interface CollectedArtifact {
 /** 收 `artifacts/` 下的全部文件（递归），路径即资产名。 */
 export function collectArtifacts(p: SandboxPaths): readonly CollectedArtifact[] {
   const out: CollectedArtifact[] = [];
-  walk(p.artifacts, (file) => {
-    out.push({
-      name: relative(p.artifacts, file).split(sep).join("/"),
-      content: readFileSync(file, "utf8"),
-    });
+  const skipped: string[] = [];
+  let total = 0;
+
+  walk(p.artifacts, (file, size) => {
+    const name = relative(p.artifacts, file).split(sep).join("/");
+    if (size > MAX_ARTIFACT_BYTES) {
+      skipped.push(`${name}（${fmt(size)} > 单文件上限 ${fmt(MAX_ARTIFACT_BYTES)}）`);
+      return;
+    }
+    if (total + size > MAX_ARTIFACT_TOTAL_BYTES) {
+      skipped.push(`${name}（总量已达上限 ${fmt(MAX_ARTIFACT_TOTAL_BYTES)}）`);
+      return;
+    }
+    total += size;
+    out.push({ name, content: readFileSync(file, "utf8") });
   });
+
+  if (skipped.length > 0) {
+    // 超限不静默 —— 少了哪几份、为什么少，要能在产物里看到
+    out.push({
+      name: "$skipped",
+      content: `以下产物超出上界，未收入对象库：\n${skipped.map((s) => `  ${s}`).join("\n")}\n`,
+    });
+  }
   return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+function fmt(bytes: number): string {
+  return bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 /** 产物收集的上界。沙箱里的东西不可信，无界递归 / 无界读取本身就是攻击面。 */
 const MAX_ARTIFACT_DEPTH = 16;
 const MAX_ARTIFACT_FILES = 1000;
+/**
+ * 单个产物与总量的字节上界。
+ *
+ * 此前只有文件数上界，**没有字节上界** —— 一个 agent 写一个 10 GB 的文件，
+ * 它就会被 `readFileSync` 整个读进内存、再原样进不可变的对象库，撤不回来。
+ * 文件数管不住这个：一个文件就够。
+ *
+ * 超限的文件**跳过并留一条记录**，不是静默丢：产物是 agent 的输出，
+ * 悄悄少一份比报错更难查。
+ */
+const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
+const MAX_ARTIFACT_TOTAL_BYTES = 32 * 1024 * 1024;
 
 /**
  * 遍历 `artifacts/`。**不跟随符号链接。**
@@ -165,7 +201,12 @@ const MAX_ARTIFACT_FILES = 1000;
  * 放行需要证明"解析后仍在 artifacts 内"，而那个证明在有并发的文件系统上
  * 有 TOCTOU 窗口（判完到读之间链接可以被换掉）。**跳过是唯一没有窗口的做法。**
  */
-function walk(dir: string, visit: (file: string) => void, depth = 0, budget = { n: 0 }): void {
+function walk(
+  dir: string,
+  visit: (file: string, size: number) => void,
+  depth = 0,
+  budget = { n: 0 },
+): void {
   if (depth > MAX_ARTIFACT_DEPTH) return;
   let entries: string[];
   try {
@@ -186,7 +227,7 @@ function walk(dir: string, visit: (file: string) => void, depth = 0, budget = { 
     if (info.isDirectory()) walk(full, visit, depth + 1, budget);
     else if (info.isFile()) {
       budget.n += 1;
-      visit(full);
+      visit(full, info.size);
     }
   }
 }

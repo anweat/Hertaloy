@@ -157,3 +157,37 @@ describe("★ 产物收集不跟随符号链接（外部审核 P0）", () => {
     rmSync(root, { recursive: true, force: true });
   });
 });
+
+describe("★ 产物字节上限（GC 第一课：文件数管不住一个大文件）", () => {
+  it("超大文件被跳过，不会整个读进内存再进不可变对象库", () => {
+    const root = mkdtempSync(join(tmpdir(), "hertaloy-cap-"));
+    const p = createSandbox(root);
+    writeFileSync(join(p.artifacts, "small.txt"), "ok", "utf8");
+    writeFileSync(join(p.artifacts, "huge.bin"), "x".repeat(5 * 1024 * 1024), "utf8");
+
+    const got = collectArtifacts(p);
+    const names = got.map((a) => a.name);
+    expect(names).toContain("small.txt");
+    expect(names).not.toContain("huge.bin");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("★ 超限不静默 —— 少了哪几份、为什么少，写在 $skipped 里", () => {
+    const root = mkdtempSync(join(tmpdir(), "hertaloy-cap2-"));
+    const p = createSandbox(root);
+    writeFileSync(join(p.artifacts, "huge.bin"), "x".repeat(5 * 1024 * 1024), "utf8");
+
+    const note = collectArtifacts(p).find((a) => a.name === "$skipped");
+    expect(note?.content).toContain("huge.bin");
+    expect(note?.content).toContain("单文件上限");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("没有超限就没有 $skipped —— 正常路径不多出东西", () => {
+    const root = mkdtempSync(join(tmpdir(), "hertaloy-cap3-"));
+    const p = createSandbox(root);
+    writeFileSync(join(p.artifacts, "a.txt"), "ok", "utf8");
+    expect(collectArtifacts(p).map((a) => a.name)).toEqual(["a.txt"]);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
