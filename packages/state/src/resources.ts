@@ -8,7 +8,7 @@
  * 加完之后模板里写那个名字即可 —— 模板本身不必改、也不知道路径变了。
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   RESOURCES_FORMAT,
@@ -51,6 +51,11 @@ export function loadResources(dir: string): LoadedResources {
 }
 
 export function writeResources(dir: string, registry: ResourceRegistry): void {
+  /**
+   * 目录可能还不存在 —— **"先登记资源再 init" 是最自然的顺序**。
+   * `RunState.open` 会 mkdir，但这条路径不经过它。
+   */
+  mkdirSync(dir, { recursive: true });
   writeFileSync(
     resourcesPath(dir),
     `${JSON.stringify({ format: RESOURCES_FORMAT, resources: registry }, null, 2)}\n`,

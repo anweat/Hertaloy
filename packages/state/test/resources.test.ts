@@ -102,3 +102,11 @@ describe("说明字段会传给 agent", () => {
     expect(Object.keys(loadResources(dir).registry)).toEqual(["x"]);
   });
 });
+
+describe("★ 目录还不存在时也能登记", () => {
+  it("先 resources add 再 init —— 这是最自然的顺序，不该 ENOENT", () => {
+    const fresh = join(dir, "还没建的目录");
+    addResource(fresh, "primary", { kind: "git", path: "/repos/app" });
+    expect(loadResources(fresh).registry.primary?.path).toBe("/repos/app");
+  });
+});
