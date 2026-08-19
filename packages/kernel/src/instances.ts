@@ -15,6 +15,7 @@
  */
 
 import {
+  MessageContract,
   ContainerTemplate,
   TemplateOverlay,
   type TemplateIssue,
@@ -247,6 +248,28 @@ export function registerContainerTemplate(
   spec: unknown,
   kind = "container_template",
 ): Ref {
+  /**
+   * **按 kind 分派校验。**
+   *
+   * 这个函数是"注册一份定义"的唯一入口，而定义不止容器模板一种：
+   * 端口的 `contract` 指向的是 `message_contract` 对象。此前无论 kind 是什么
+   * 都按 `ContainerTemplate` 校验 —— 于是**契约对象根本注册不进去**，
+   * 端口的入站/出站校验虽然实现了，却没有任何入口能给它一份 schema。
+   * 与 K5（AgentSpec）、E1（backend 没接线）是同一类：实现在，路不通。
+   */
+  if (kind === "message_contract") {
+    const parsed = MessageContract.safeParse(spec);
+    if (!parsed.success) {
+      throw new InvariantError(
+        `契约 ${templateId} 结构非法：${parsed.error.issues
+          .map((i) => `${i.path.join(".") || "(根)"} ${i.message}`)
+          .join("；")}`,
+      );
+    }
+    const v = store.put(templateId, kind, parsed.data as unknown as JsonObject);
+    return `${v.object_id}@${v.version}`;
+  }
+
   // 覆盖层：解析继承链 → 施加 → 校验合并结果 → 存成物化定义（§5.1）
   if (isOverlay(spec)) return materializeOverlay(store, templateId, spec);
 

@@ -24,6 +24,7 @@ import {
   type CommandResult,
   drain,
   history,
+  init,
   reclaim,
   send,
   show,
@@ -40,6 +41,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy run <scenario.json>        跑一个一次性场景并打印报告
 
 作用在磁盘上的 run（<dir> 是状态目录）：
+  hertaloy init    <dir> <scenario.json>        从场景文件建一个持久化的 run
   hertaloy status  <dir>                        实例树 / 阻塞原因 / 在途消息 / 死锁
   hertaloy show    <dir> <object-id[@n]>        读一个对象版本
   hertaloy history <dir> <object-id>            某对象的版本历史
@@ -85,6 +87,15 @@ ${USAGE}`, code: 2 } : null;
       return need(2) ?? history(dir as string, actor, a as string);
     case "drain":
       return need(1) ?? (await drain(dir as string, actor, makeBackend(runner, dir as string)));
+    case "init": {
+      const short = need(2);
+      if (short !== null) return short;
+      try {
+        return init(dir as string, actor, readJson(a as string));
+      } catch (error) {
+        return { text: `读不了 ${String(a)}：${(error as Error).message}`, code: 2 };
+      }
+    }
     case "reclaim": {
       const short = need(1);
       if (short !== null) return short;

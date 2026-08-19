@@ -18,9 +18,10 @@ import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { RunState } from "@nodeflow/state";
 import type { ExecutionBackend } from "@nodeflow/contracts";
-import type { Json, Principal } from "@nodeflow/contracts";
+import { isOverlay, type Json, type Principal } from "@nodeflow/contracts";
 import { AuthorizationError } from "@nodeflow/kernel";
 import { BUILTIN_HANDLERS, BUILTIN_NAMES } from "./builtins.js";
+import { Scenario } from "./scenario.js";
 
 export interface CommandResult {
   readonly text: string;
@@ -475,4 +476,66 @@ function dirSize(dir: string): number {
     }
   }
   return total;
+}
+
+/**
+ * 从场景文件建一个**持久化**的 run。
+ *
+ * 此前 CLI 根本创建不了持久 run —— `run` 是一次性进程内的，
+ * 而 `status` / `drain` 只能作用在已有的状态目录上。
+ * 于是唯一能建根的方式是写代码，命令行是残缺的。
+ *
+ * 与 `run` 共用同一份 `Scenario`：定义 + 根 + 入站消息。区别只是落不落盘。
+ */
+export function init(dir: string, actor: Principal, raw: unknown): CommandResult {
+  const parsed = Scenario.safeParse(raw);
+  if (!parsed.success) {
+    return fail(
+      ["场景文件非法：", ...parsed.error.issues.map((i) => `${i.path.join(".")}：${i.message}`)].join(
+        "\n  ",
+      ),
+    );
+  }
+  const scenario = parsed.data;
+
+  return writable(dir, (s) => {
+    if (s.registry.rootTrace !== null) {
+      return fail(`状态目录已有根容器 ${s.registry.rootTrace}（C1：一个状态目录一个根）。`);
+    }
+    const refs = new Map<string, string>();
+    try {
+      for (const t of scenario.templates) {
+        // 覆盖层的 extends 可以写成前面模板的 id，这里解析成精确 ref
+        const spec =
+          isOverlay(t.spec) && typeof (t.spec as { extends: string }).extends === "string"
+            ? {
+                ...(t.spec as object),
+                extends:
+                  refs.get((t.spec as { extends: string }).extends) ??
+                  (t.spec as { extends: string }).extends,
+              }
+            : t.spec;
+        refs.set(t.id, s.control.define(actor, t.id, spec, t.kind));
+      }
+    } catch (error) {
+      return fail(`注册失败：${(error as Error).message}`);
+    }
+
+    const rootRef = refs.get(scenario.root.template);
+    if (rootRef === undefined) {
+      return fail(
+        `根容器引用了未定义的模板 \`${scenario.root.template}\`。已定义：${[...refs.keys()].join("、")}`,
+      );
+    }
+    s.registry.createRoot(rootRef, scenario.root.id);
+    for (const m of scenario.send) {
+      s.control.send(actor, { traceid: m.traceid, node: m.node, port: m.port }, m.payload);
+    }
+    return ok(
+      [
+        `已建 run ${scenario.root.id}（${scenario.templates.length} 个模板，${scenario.send.length} 条入站消息）。`,
+        `下一步：hertaloy status ${dir}　或　hertaloy drain ${dir}`,
+      ].join("\n"),
+    );
+  });
 }

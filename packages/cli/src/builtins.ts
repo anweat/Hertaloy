@@ -38,6 +38,36 @@ export const BUILTIN_HANDLERS: Readonly<Record<string, BuiltinHandler>> = {
   /**
    * 循环计数：版本号就是 epoch，走满 `rounds` 轮从 `out` 出，否则从 `again` 出。
    */
+  /**
+   * 条件分发：按 `cond` 的真假走 `then` 或 `else`。
+   *
+   * **这就是"条件边"的全部**。边本身永远是纯前向的（M1：边是唯一的地址权威），
+   * 条件不在边上，在**节点选哪个端口**上。于是：
+   *
+   *   条件边 = 一个多出端口的 handler + 每个端口一条普通边
+   *
+   * 这样拆的好处不是美学：`allowedEmitPorts` 由拓扑推导，所以 agent 与 handler
+   * 都只能在**声明过的**分支里选，选不出第三条路。条件写在边上的话，
+   * 表达式就成了新的地址来源，第一不变量就破了。
+   */
+  branch: (vars) => {
+    const cond = vars.cond;
+    const truthy =
+      cond !== undefined && cond !== null && cond !== false && cond !== 0 && cond !== "";
+    return truthy ? { then: { ...vars } } : { else: { ...vars } };
+  },
+
+  /**
+   * 多路分发：按 `key` 的值选同名端口，选不中走 `default`。
+   *
+   * 与 `branch` 的关系跟 switch 之于 if 一样。**仍然选不出没声明的端口** ——
+   * 拓扑推导出的白名单在 apply 时校验，编不出来的分支会被判 INVALID_OUTPUT。
+   */
+  route: (vars) => {
+    const key = typeof vars.key === "string" ? vars.key : "";
+    return { [key === "" ? "default" : key]: { ...vars } };
+  },
+
   loop: (vars, ctx) => {
     const rounds = typeof vars.rounds === "number" ? vars.rounds : 1;
     const epoch = ctx.history("epoch").length + 1;
