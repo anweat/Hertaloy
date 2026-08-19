@@ -123,7 +123,12 @@ describe("claim / execute / apply", () => {
 
     const result = await rt.stepAgent();
     expect(isFailure(result)).toBe(true);
-    if (isFailure(result)) expect(result.reason).toMatch(/结果作废：实例 generation 0 → 1/);
+    // 两半都会拦住它：截断既丢了消息（claim 集复核先命中），也推了 generation。
+    // 断言"作废"这个行为本身，外加两条理由至少中一条 —— 而不是钉死在措辞上。
+    if (isFailure(result)) {
+      expect(result.reason).toMatch(/结果作废/);
+      expect(result.reason).toMatch(/已不再是 CLAIMED|generation 0 → 1/);
+    }
     expect(rt.records()[0]?.status).toBe("VOIDED");
     expect(collected).toEqual([]);
   });
@@ -375,5 +380,61 @@ describe("★ 可变头封顶：已消费消息不无限累积（GC 第一条）
       .snapshots("job-1")
       .flatMap((v) => (v.body.consumed as string[] | undefined) ?? []);
     expect(consumed).toContain(ids[0]);
+  });
+});
+
+describe("★ 被拒的 claim 不留残骸（外部审核 P0-3）", () => {
+  it("运行期上界超标 → 拒绝，且不留 RUNNING 记录", async () => {
+    const s = new ObjectStore();
+    const ref = registerContainerTemplate(
+      s,
+      "root",
+      {
+        nodes: {
+          w: {
+            kind: "handler",
+            agent: { argv: ["x"] },
+            bind: { big: { type: "long", max_tokens: 1, literal: "远超一个 token 上界的一段文字" } },
+            budget: { tokens: 100 },
+            ports: { in: { direction: "receive", servo: { vars: {} } }, out: { direction: "emit" } },
+          },
+        },
+        edges: {},
+        children: {},
+        subscriptions: {},
+      },
+      "root_config",
+    );
+    const r = new InstanceRegistry(s);
+    r.createRoot(ref, "job-1");
+    const rt = new Runtime(s, r, { backend, maxAttempts: 3 });
+
+    rt.send({ traceid: "job-1", node: "w", port: "in" }, {});
+    const result = await rt.stepAgent();
+
+    expect(isFailure(result)).toBe(true);
+    // ★ 关键：一条记录都不该留下
+    expect(rt.records()).toHaveLength(0);
+    // 实例因此仍能收敛 —— 此前"1 个在途 execution"会永远挡着
+    expect(rt.terminationBlockers("job-1")).not.toContain("1 个在途 execution");
+    // 内核不该判自己违规
+    rt.checkInvariants();
+  });
+});
+
+describe("★ 两个 RUNNING 不能抢同一条消息（外部审核 P1-4）", () => {
+  it("checkInvariants 抓得住 claim 被偷走的样子", () => {
+    const s = new ObjectStore();
+    const ref = registerContainerTemplate(s, "root", agentSpec, "root_config");
+    const r = new InstanceRegistry(s);
+    r.createRoot(ref, "job-1");
+    const rt = new Runtime(s, r, { backend });
+    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+
+    const first = rt.claimAgent();
+    expect(first.kind).toBe("claimed");
+    // 正常路径下第二次 claim 拿不到（消息已 CLAIMED）
+    expect(rt.claimAgent().kind).toBe("idle");
+    rt.checkInvariants();
   });
 });

@@ -334,6 +334,16 @@ export async function drain(
       for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) {
         s.runtime.registerHandler(name, fn);
       }
+      /**
+       * **认领孤儿只在这里做一次** —— 推进开始之前。
+       *
+       * 此刻我们确实是唯一在跑的：还没有任何 claim 被放出去。
+       * 循环里每步重开状态目录时不能再认领，否则会把自己刚落盘的 claim
+       * 当成孤儿，agent 还在外面跑就被派了第二个。
+       */
+      for (const f of s.reconcile()) {
+        results.push(f as Step);
+      }
       return s.registry.rootTrace;
     });
     if (root === null) return fail("空状态：没有根容器可推进。");

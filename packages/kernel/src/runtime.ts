@@ -377,6 +377,29 @@ export class Runtime implements Snapshotable {
       }
     }
 
+    /**
+     * **一条消息至多被一条 RUNNING 记录 claim。**
+     *
+     * 只看 RUNNING 是有理由的：重试后旧记录仍列着那条消息，但那是**历史**
+     * 不是活跃 claim —— 把 SETTLED 也算进来会把正常的重试判成违规
+     * （第一版就是这么写的，测试当场炸了）。
+     *
+     * 真正要挡的是"两个执行同时以为自己拥有这条消息"，
+     * 那正是 claim 被偷走时的样子。§10.4 说 CHECK constraint 该在的位置。
+     */
+    const owner = new Map<string, string>();
+    for (const rec of this.#records.values()) {
+      if (rec.status !== "RUNNING") continue;
+      for (const id of rec.claimed) {
+        const prev = owner.get(id);
+        if (prev !== undefined) {
+          problems.push(`消息 ${id} 同时被 ${prev} 与 ${rec.executionId} claim`);
+        } else {
+          owner.set(id, rec.executionId);
+        }
+      }
+    }
+
     const root = this.#registry.rootTrace;
     if (root !== null) {
       for (const inst of this.#registry.subtree(root)) {
@@ -656,6 +679,27 @@ export class Runtime implements Snapshotable {
       };
     }
 
+    /**
+     * **全部校验做完，才动任何状态。**
+     *
+     * 此前顺序是「校验一半 → 置 CLAIMED、写 RUNNING 记录 → 再校验 → 拒绝」，
+     * 而拒绝走的是**正常 return**，`transact` 只在 throw 时回滚 ——
+     * 于是被拒的 claim 留下一条永久 RUNNING 记录：实例再也 settle 不了，
+     * `checkInvariants` 当场判自己违规（RUNNING 记录引用了一条 FAILED 消息）。
+     *
+     * 我曾在这里写过"外层 transact 会一并撤销"，那句话是错的。
+     * 与其修回滚，不如让**拒绝路径根本不产生要回滚的东西** ——
+     * 把 `compileContext` 提到 mutation 之前，问题就不存在了。
+     */
+    const compiled = compileContext(this.#store, node, extraction.vars);
+    if (!compiled.ok) {
+      return {
+        kind: "rejected",
+        failure: this.#fail(input, `上下文编译失败：${formatContextFailures(compiled.failures)}`),
+      };
+    }
+
+    // ↓ 以下才开始改状态。到这里已经不会再拒绝了。
     this.#executionSeq += 1;
     const executionId = `exec-${this.#executionSeq}`;
     this.#setState(input.id, "CLAIMED");
@@ -669,18 +713,6 @@ export class Runtime implements Snapshotable {
       generation: instance.generation,
     });
     this.#records.set(executionId, record);
-
-    // bind 段进请求（不变量 X 的稳定前缀）+ 运行期上界校验（B1 的运行期一半）
-    const compiled = compileContext(this.#store, node, extraction.vars);
-    if (!compiled.ok) {
-      // 不再手工回滚 —— 外层 transact 会把 #records / 消息状态 / #executionSeq
-      // 一并撤销，`#busy` 则靠"推迟置位"根本没被碰过。手工回滚只覆盖得了预料到
-      // 的失败路径，那正是它一直漏掉别的路径的原因。
-      return {
-        kind: "rejected",
-        failure: this.#fail(input, `上下文编译失败：${formatContextFailures(compiled.failures)}`),
-      };
-    }
 
     const limits: ExecutionLimits =
       node.budget === undefined ? {} : { tokenBudget: node.budget.tokens };
@@ -710,8 +742,33 @@ export class Runtime implements Snapshotable {
     input: Message,
     result: ExecutionResult,
   ): StepResult | StepFailure {
-    // 冲突域复核：实例 generation 未变 且 被 claim 的消息仍是 CLAIMED
+    /**
+     * 冲突域复核 —— **两半都要查**。
+     *
+     * 注释一直写着"generation 未变 **且** 被 claim 的消息仍是 CLAIMED"，
+     * 而代码只查了前半。三处论证共用这个不存在的检查：§16 的不变量表、
+     * §17.14 关于孤儿认领"不必推 generation"的推理、以及 truncate 的注释。
+     *
+     * 后果是真的：认领把消息退回 QUEUED 之后，迟到的 apply 照样落地、
+     * 照样下发下游 —— 于是"两个 agent 改同一份东西"不需要崩溃就会发生。
+     */
     const instance = this.#registry.get(record.traceid);
+    const stolen = record.claimed.filter((id) => {
+      const m = this.#messages.get(id);
+      return m === undefined || m.state !== "CLAIMED";
+    });
+    if (stolen.length > 0) {
+      this.#records.set(record.executionId, { ...record, status: "VOIDED" });
+      return {
+        consumed: record.claimed[0] ?? "",
+        traceid: record.traceid,
+        nodeId: record.nodeId,
+        reason:
+          `结果作废：被 claim 的消息 ${stolen.join("、")} 已不再是 CLAIMED` +
+          `（多半是被认领退回队列、或被截断丢弃）。迟到的结果不覆盖新的 claim`,
+        termination: result.termination,
+      };
+    }
     if (instance.status !== "OPEN" || instance.generation !== record.generation) {
       this.#records.set(record.executionId, { ...record, status: "VOIDED" });
       return {

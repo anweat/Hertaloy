@@ -148,19 +148,21 @@ export class RunState {
       self = new RunState(dir, store, registry, runtime, true, lock, cursor, permissions, resources);
 
       /**
-       * 恢复即认领孤儿。
+       * **认领不再在 open 时自动发生。**
        *
-       * 拿到目录锁说明没有别的写进程，所以此刻的 RUNNING 记录必然是
-       * 上个进程没跑完的（`Runtime.reconcile` 的注释讲了为什么不需要状态机）。
-       * 不做的话，那条 `CLAIMED` 消息永远等不到人 —— 调度器只挑 QUEUED，
-       * 于是"claim 不丢"变成"claim 卡死"。
+       * 原来的推理是"拿到目录锁 ⇒ 没有别的写进程 ⇒ RUNNING 必然是孤儿"。
+       * 那句话本身没错，错在**前提被我们自己破坏了**：为了让 agent 挂死时
+       * `truncate` 进得来，`drain` 改成了"每步开关状态目录、跑 agent 时不持锁"。
+       * 于是 agent 在外面跑的那段时间里，任何一条写命令拿到锁一看 ——
+       * RUNNING！认领！消息退回队列 → 第二个 agent 被派出去。
        *
-       * 只读打开不认领：没有锁就没有"我是唯一写者"这个前提。
+       * **不需要崩溃，正常路径上就会发生。**单进程 drain 里更是每步都会
+       * 认领自己刚落盘的 claim，attempts 白涨。
+       *
+       * 所以改成**显式调用**：由驱动方在开始推进**之前**认领一次
+       * （那时它确实是唯一在跑的）。真正的修法是给执行加租约标识，
+       * 让"孤儿"与"别人正持有的在途执行"分得开 —— 那是下一批。
        */
-      if (lock !== null) {
-        self.reconciled = runtime.reconcile();
-        if (self.reconciled.length > 0) self.persist();
-      }
       return self;
     } catch (error) {
       lock?.release();
@@ -196,6 +198,20 @@ export class RunState {
    */
   get control(): ControlPlane {
     return new ControlPlane(this.runtime, this.registry, this.store, this.permissions.table);
+  }
+
+  /**
+   * 认领孤儿执行并落盘。**由驱动方在开始推进之前调一次。**
+   *
+   * 不在 `open` 里自动做 —— 见构造处的说明：跑 agent 时不持锁，
+   * 于是"拿到锁就是唯一写者"这个前提在正常路径上就不成立。
+   */
+  reconcile(): readonly StepFailure[] {
+    if (this.#lock === null) return []; // 只读打开没有"我是唯一写者"的前提
+    const out = this.runtime.reconcile();
+    if (out.length > 0) this.persist();
+    this.reconciled = out;
+    return out;
   }
 
   close(): void {

@@ -129,10 +129,10 @@ describe("★ 孤儿认领：恢复不是「看得见」，是「接着跑完」
     await Promise.resolve();
     first.close();
 
-    // 新进程：open 即认领
+    // 新进程：**显式**认领一次（不再在 open 里自动做 —— 见 run-state.ts 的说明）
     const second = RunState.open(dir, { backend });
     try {
-      expect(second.reconciled).toHaveLength(1);
+      expect(second.reconcile()).toHaveLength(1);
       expect(second.reconciled[0]?.reason).toMatch(/上一个进程没有跑完/);
       expect(second.reconciled[0]?.retrying).toBe(true);
       // 关键：消息退回队列，不是卡在 CLAIMED
@@ -154,7 +154,7 @@ describe("★ 孤儿认领：恢复不是「看得见」，是「接着跑完」
 
     const again = RunState.open(dir);
     try {
-      expect(again.reconciled).toEqual([]);
+      expect(again.reconcile()).toEqual([]);
     } finally {
       again.close();
     }
@@ -171,7 +171,7 @@ describe("★ 孤儿认领：恢复不是「看得见」，是「接着跑完」
 
     const reader = RunState.open(dir, { readOnly: true });
     try {
-      expect(reader.reconciled).toEqual([]);
+      expect(reader.reconcile()).toEqual([]); // 只读没有"我是唯一写者"的前提
       expect(reader.runtime.records()[0]?.status).toBe("RUNNING");
     } finally {
       reader.close();
@@ -189,10 +189,73 @@ describe("★ 孤儿认领：恢复不是「看得见」，是「接着跑完」
 
     const second = RunState.open(dir, { backend });
     try {
+      second.reconcile();
       expect(second.runtime.records().map((r) => r.status)).toEqual(["SETTLED"]);
       expect(second.runtime.records().map((r) => r.termination)).toEqual(["FAILED"]);
     } finally {
       second.close();
     }
+  }, 20_000);
+});
+
+
+describe("★ 认领不再在 open 时自动发生（外部审核 P0-2）", () => {
+  /**
+   * 原来的推理是"拿到目录锁 ⇒ 没有别的写进程 ⇒ RUNNING 必然是孤儿"。
+   * 那前提被我们自己破坏了：为了让 agent 挂死时 truncate 进得来，
+   * drain 改成了跑 agent 时不持锁。于是 agent 在外面跑的那段时间里，
+   * **任何一条写命令**拿到锁一看 RUNNING 就认领 → 第二个 agent 被派出去。
+   * 不需要崩溃，正常路径上就会发生。
+   */
+  it("agent 在外面跑时，别的写命令 open 不会偷走它的 claim", async () => {
+    const backend = new NeverReturns();
+    const a = RunState.open(dir, { backend });
+    seed(a);
+    a.persist();
+    void a.runtime.stepAgent(); // claim 落盘，agent 出去了
+    await Promise.resolve();
+    a.close();
+
+    // 另一条写命令进来（比如 hertaloy send / truncate）
+    const b = RunState.open(dir);
+    try {
+      // open 本身不动它
+      expect(b.runtime.records()[0]?.status).toBe("RUNNING");
+      expect(b.runtime.pending()).toHaveLength(0); // 消息仍是 CLAIMED，没被退回
+    } finally {
+      b.close();
+    }
+  }, 20_000);
+
+  it("★ 迟到的 apply 撞上被退回的消息 → 作废，不覆盖新 claim（P0-1）", async () => {
+    const backend = new NeverReturns();
+    const a = RunState.open(dir, { backend });
+    seed(a);
+    a.persist();
+    void a.runtime.stepAgent();
+    await Promise.resolve();
+
+    /**
+     * 认领要**在另一个进程里**发生 —— 同进程的 `#busy` 还记着自己在跑，
+     * `orphanedExecutions` 不会把它当孤儿（这本身是对的）。
+     * 所以这里换个 RunState 来认领，模拟"另一条命令进来了"。
+     */
+    a.close();
+    const b = RunState.open(dir);
+    b.runtime.reconcile();
+    b.persist();
+    b.close();
+
+    // 旧执行的结果迟到 —— 此时消息已被退回队列
+    const c = RunState.open(dir, { backend });
+    const late = c.runtime.applyAgentResult("exec-1", {
+      executionId: "exec-1",
+      emissions: {},
+      termination: "DONE",
+    });
+    expect("reason" in late).toBe(true);
+    expect((late as { reason: string }).reason).toMatch(/已不再是 CLAIMED/);
+    c.runtime.checkInvariants();
+    c.close();
   }, 20_000);
 });
