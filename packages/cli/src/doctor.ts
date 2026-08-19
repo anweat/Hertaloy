@@ -58,20 +58,6 @@ export function diagnose(): readonly Check[] {
     blocking: false,
   });
 
-  /**
-   * docker 单列一条，而且**要说清它独有的能力**：三个运行器里只有它
-   * 能强制出网策略。少了它，"沙箱"这个词只覆盖文件系统那一半。
-   */
-  const hasDocker = dockerAvailable();
-  checks.push({
-    name: "runner: docker",
-    ok: hasDocker,
-    detail: hasDocker
-      ? "可用 —— 唯一能强制出网策略的运行器（--network none/internal/open）"
-      : "不可用 —— 没有它就控不住 agent 出网，local 与 wsl 都只隔离文件系统",
-    blocking: false,
-  });
-
   const hasWsl = wslAvailable("Ubuntu");
   checks.push({
     name: "runner: wsl（Ubuntu）",
@@ -94,11 +80,21 @@ export function diagnose(): readonly Check[] {
     });
   }
 
-  const docker = probe(["docker", "info", "--format", "{{.ServerVersion}}"]);
+  /**
+   * docker 这条要说清它**独有的能力**：三个运行器里只有它能强制出网策略。
+   * 少了它，"沙箱"这个词只覆盖文件系统那一半。
+   *
+   * 用 `dockerAvailable()` 而不是自己 probe —— 与 `DockerRunner` 同一条判据，
+   * 免得 doctor 说"可用"而运行器说"连不上"。
+   */
+  const hasDocker = dockerAvailable();
+  const version = hasDocker ? probe(["docker", "info", "--format", "{{.ServerVersion}}"]) : null;
   checks.push({
     name: "runner: docker",
-    ok: docker !== null,
-    detail: docker !== null ? `daemon 在跑（${docker}）` : "daemon 未运行 —— 启动 Docker Desktop",
+    ok: hasDocker,
+    detail: hasDocker
+      ? `daemon 在跑（${version ?? "版本未知"}）—— 唯一能强制出网策略的运行器`
+      : "daemon 未运行 —— 没有它就控不住 agent 出网，local 与 wsl 都只隔离文件系统",
     blocking: false,
   });
 

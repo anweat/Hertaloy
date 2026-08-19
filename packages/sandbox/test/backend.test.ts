@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionRequest } from "@nodeflow/contracts";
-import { SandboxBackend, type SandboxDiagnostics } from "../src/backend.js";
+import { SandboxBackend, redact, type SandboxDiagnostics } from "../src/backend.js";
 
 let workRoot: string;
 let agentDir: string;
@@ -264,4 +264,37 @@ describe("★ 平权自证：hertaloy agent 与外部 CLI 走同一条路", () =
     const d = result.diagnostics as never as SandboxDiagnostics;
     expect(d.stderrTail).toContain("HERTALOY_BASE_URL");
   }, 180_000);
+});
+
+describe("★ 脱敏：密钥不进不可变的对象库", () => {
+  it("注入的凭据即使被 agent 打印出来，也不会留在 diagnostics 里", async () => {
+    const agent = fakeAgent(
+      [
+        'import { writeFileSync } from "node:fs";',
+        "console.log(`拿到 key：${process.env.FAKE_KEY}`);",
+        'writeFileSync("../.hertaloy/emit.json", "{}");',
+      ].join("\n"),
+    );
+    const r = await backend.run(
+      request(["node", agent], { env: { FAKE_KEY: "sk-super-secret-value-1234" } }),
+    );
+    const d = r.diagnostics as never as SandboxDiagnostics;
+    expect(d.stdoutTail).not.toContain("sk-super-secret-value-1234");
+    expect(d.stdoutTail).toContain("已遮蔽");
+  }, 60_000);
+
+  it("纯函数：精确遮蔽已注入的值", () => {
+    expect(redact("前 abcdefghij 后", { K: "abcdefghij" })).toBe("前 «已遮蔽» 后");
+  });
+
+  it("太短的值不遮 —— 遮了反而毁可读性，而且多半不是凭据", () => {
+    expect(redact("端口 8080", { PORT: "8080" })).toBe("端口 8080");
+  });
+
+  it("常见格式的模式匹配是**尽力而为**，不是保证", () => {
+    expect(redact("Authorization: Bearer abcdefghijklmnopqrst", {})).toContain("已遮蔽");
+    expect(redact("token=sk-abcdefghijklmnopqrst", {})).toContain("已遮蔽");
+    // 说清它挡不住什么：命名千奇百怪的密钥漏得掉
+    expect(redact("MY_PASS=hunter2-plain-text", {})).toContain("hunter2");
+  });
 });

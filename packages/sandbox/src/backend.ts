@@ -318,8 +318,9 @@ export class SandboxBackend implements ExecutionBackend {
         isolates: this.#runner.isolates,
         networkEnforced: this.#runner.enforcesNetwork,
         exitCode: outcome.code,
-        stdoutTail: tail(outcome.stdout),
-        stderrTail: tail(outcome.stderr),
+        // 脱敏在**进对象库之前** —— 对象不可变，写进去就撤不回来
+        stdoutTail: redact(tail(outcome.stdout), spec.env),
+        stderrTail: redact(tail(outcome.stderr), spec.env),
         sandbox: { path: root, retained: keeps(this.#retain, classify(outcome, emitted)) },
         ...(workspace === undefined ? {} : { workspace }),
         ...(observation === undefined ? {} : { observation }),
@@ -377,6 +378,39 @@ export class SandboxBackend implements ExecutionBackend {
       diagnostics: diagnostics as never,
     };
   }
+}
+
+/**
+ * 脱敏 —— **进不可变对象库之前的最后一道**。
+ *
+ * `stdoutTail` / `stderrTail` 会随 diagnostics 落成 `<traceid>/$exec` 对象，
+ * 而对象是不可变、内容寻址、按前缀可读的：**一旦写进去就撤不回来**。
+ * agent 打印一次 `echo $API_KEY`，那份密钥就永久留在审计记录里了。
+ *
+ * 主手段是**精确遮蔽已注入的凭据**：我们清楚知道往沙箱里塞了哪些 env 值，
+ * 所以能一个不漏地遮掉。这是允许清单式的确定性，不是猜。
+ *
+ * 附带几条常见格式的模式匹配（`sk-…`、`Bearer …`），但要说清它是
+ * **尽力而为**：黑名单永远漏得掉，密钥命名千奇百怪。真正的保证来自
+ * 第一条 —— 以及"密钥只经 env 注入、不落任何配置文件"（§17.7）。
+ */
+const SECRET_PATTERNS: readonly RegExp[] = [
+  /\bsk-[A-Za-z0-9_-]{16,}/g,
+  /\bBearer\s+[A-Za-z0-9._-]{16,}/gi,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+];
+
+const MASK = "«已遮蔽»";
+
+export function redact(text: string, injected: Readonly<Record<string, string>>): string {
+  let out = text;
+  // 精确遮蔽：我们注入了什么，就一定遮得掉什么
+  for (const value of Object.values(injected)) {
+    if (value.length < 8) continue; // 太短的多半不是凭据，遮了反而毁可读性
+    out = out.split(value).join(MASK);
+  }
+  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, MASK);
+  return out;
 }
 
 /** 这次跑完之后留不留沙箱。 */

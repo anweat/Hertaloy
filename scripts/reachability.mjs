@@ -72,6 +72,7 @@ const ALLOWED = new Map([
   ["agentNode", "同上"],
   ["execNode", "同上"],
   ["forwardNode", "同上；而且它明确是示例，不是机制"],
+  ["redact", "backend 在同文件里调；脱敏规则要能单独测"],
 ]);
 
 function sources() {
