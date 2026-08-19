@@ -16,7 +16,7 @@
 
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { RunState } from "@nodeflow/state";
+import { RunState, permissionsPath, writePermissions } from "@nodeflow/state";
 import type { ExecutionBackend } from "@nodeflow/contracts";
 import { isOverlay, type Json, type Principal } from "@nodeflow/contracts";
 import { AuthorizationError } from "@nodeflow/kernel";
@@ -537,5 +537,45 @@ export function init(dir: string, actor: Principal, raw: unknown): CommandResult
         `下一步：hertaloy status ${dir}　或　hertaloy drain ${dir}`,
       ].join("\n"),
     );
+  });
+}
+
+/**
+ * 看/建 `permissions.json`。
+ *
+ * 此前根权限表只能手写：`writePermissions` 实现了却没有任何命令调用它。
+ * 而"缺省是人类全权、agent 无权"这件事，人得先看得见才改得动。
+ */
+export function permissions(dir: string, actor: Principal, write: boolean): CommandResult {
+  if (write) {
+    const state = RunState.open(dir);
+    try {
+      if (state.permissions.source === "file") {
+        return fail(`${permissionsPath(dir)} 已存在 —— 不覆盖已有的授权表。`);
+      }
+      writePermissions(dir);
+      return ok(
+        [
+          `已写出 ${permissionsPath(dir)}（缺省授权：人类全权，agent 无权）。`,
+          "改它就改文件；根权限表是启动配置，不进对象库（§17.9）。",
+        ].join("\n"),
+      );
+    } finally {
+      state.close();
+    }
+  }
+
+  return readOnly(dir, (s) => {
+    void actor;
+    const lines = [
+      `来源：${s.permissions.source === "file" ? permissionsPath(dir) : "缺省（无配置文件）"}`,
+      "",
+      "授权：",
+      ...s.permissions.grants.map((g) => `  ${g.principal}  域=${g.scope}  ${g.ops.join("/")}`),
+    ];
+    if (s.permissions.source === "default") {
+      lines.push("", `写出一份可改的：hertaloy permissions ${dir} init`);
+    }
+    return ok(lines.join("\n"));
   });
 }

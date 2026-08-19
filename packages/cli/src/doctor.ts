@@ -7,7 +7,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { LocalRunner, PROFILE_NAMES, WslRunner, wslAvailable } from "@nodeflow/sandbox";
+import {
+  LocalRunner,
+  PROFILE_NAMES,
+  WslRunner,
+  dockerAvailable,
+  wslAvailable,
+} from "@nodeflow/sandbox";
 
 export interface Check {
   readonly name: string;
@@ -49,6 +55,20 @@ export function diagnose(): readonly Check[] {
     name: "runner: local",
     ok: true,
     detail: `可用，但 isolates=${String(new LocalRunner().isolates)} —— **不是安全边界**，只适合本机开发`,
+    blocking: false,
+  });
+
+  /**
+   * docker 单列一条，而且**要说清它独有的能力**：三个运行器里只有它
+   * 能强制出网策略。少了它，"沙箱"这个词只覆盖文件系统那一半。
+   */
+  const hasDocker = dockerAvailable();
+  checks.push({
+    name: "runner: docker",
+    ok: hasDocker,
+    detail: hasDocker
+      ? "可用 —— 唯一能强制出网策略的运行器（--network none/internal/open）"
+      : "不可用 —— 没有它就控不住 agent 出网，local 与 wsl 都只隔离文件系统",
     blocking: false,
   });
 

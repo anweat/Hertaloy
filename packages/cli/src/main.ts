@@ -25,6 +25,7 @@ import {
   drain,
   history,
   init,
+  permissions,
   reclaim,
   send,
   show,
@@ -50,6 +51,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
        不给 --runner 就没有执行面：agent 节点不会被推进
   hertaloy why     <dir> <message-id>           这条消息由哪些消息导致（因果反查）
   hertaloy reclaim <dir> [保留个数]             回收沙箱，默认保留最近 5 个
+  hertaloy permissions <dir> [init]             看授权表；加 init 写出一份可改的
   hertaloy truncate <dir> <traceid> [原因]      强制截断实例及其子树
 
 主体：任何命令可加 --as <principal>（如 --as agent:coder-1），默认 human:local。
@@ -105,6 +107,8 @@ ${USAGE}`, code: 2 } : null;
       }
       return reclaim(dir as string, actor, keep);
     }
+    case "permissions":
+      return need(1) ?? permissions(dir as string, actor, a === "init");
     case "why":
       return need(2) ?? why(dir as string, actor, a as string);
     case "truncate":

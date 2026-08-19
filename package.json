@@ -9,7 +9,8 @@
   "scripts": {
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "hertaloy": "tsx packages/cli/src/main.ts"
+    "hertaloy": "tsx packages/cli/src/main.ts",
+    "reachability": "node scripts/reachability.mjs --check"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

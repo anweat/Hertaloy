@@ -26,3 +26,17 @@ describe("hertaloy doctor", () => {
     for (const c of checks) expect(text).toContain(c.name);
   });
 });
+
+describe("★ 三个运行器都要如实报告能力", () => {
+  it("docker 单列一条，并说清它是唯一能强制出网的", () => {
+    const names = diagnose().map((c) => c.name);
+    expect(names).toContain("runner: docker");
+    const docker = diagnose().find((c) => c.name === "runner: docker");
+    expect(docker?.detail).toContain("出网");
+  });
+
+  it("local 明说自己不是安全边界", () => {
+    const local = diagnose().find((c) => c.name.includes("local"));
+    expect(local?.detail).toContain("不是安全边界");
+  });
+});
