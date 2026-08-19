@@ -37,6 +37,10 @@ export interface FileChange {
 }
 
 export interface Observation {
+  /** 快照 commit 的 sha。只有传了 snapshotId 才有。 */
+  readonly snapshot?: string;
+  /** 快照落在哪条隐藏 ref 上。 */
+  readonly ref?: string;
   readonly changes: readonly FileChange[];
   /** 变更行数合计，供画布与预算观测用。 */
   readonly insertions: number;
@@ -80,7 +84,40 @@ export function baseline(paths: ObserverPaths, exec: GitExec, message: string): 
 }
 
 /** 相对上一次基线，agent 改了什么。 */
-export function observe(paths: ObserverPaths, exec: GitExec): Observation {
+/**
+ * 快照落在**隐藏 ref 命名空间**下，不是分支。
+ *
+ * git 自己就是这么藏东西的：`refs/notes/`、`refs/stash`、`refs/replace/`、
+ * gerrit 的 `refs/changes/`。**"不可见"要说准是哪一种不可见**（实测过）：
+ *
+ * | | 看得到吗 |
+ * |---|---|
+ * | `git branch` | ❌ 不列 |
+ * | `git log`（默认，走 HEAD） | ❌ 不遍历 |
+ * | `git clone` / 默认 `git fetch` | ❌ 不带过去（默认 refspec 只有 heads + tags） |
+ * | `git log --all` | ✅ **会遍历** —— `--all` 是"`refs/` 下全部"，不是只有分支 |
+ * | `git for-each-ref refs/hertaloy` | ✅ 显式问就有 |
+ *
+ * 所以它挡的是**误入**，不是审计：人主动去看就看得到，这正是我们要的 ——
+ * 快照是证据，不是秘密。真正的"agent 看不见"由另一级保证：
+ * 记录仓是**另一个仓库**且不挂进 agent 容器（见 layout.ts）。
+ *
+ * 快照仍然可达，所以不会被 gc 清掉；要取走用显式 refspec
+ * `git fetch <src> 'refs/hertaloy/*:refs/hertaloy/*'`。
+ *
+ * 这是**第二级**不可见。第一级是记录仓本身就是另一个仓库、还不挂进 agent 容器
+ * （见 layout.ts）。两级各管一件事：
+ *
+ *   隔离仓 —— agent **看不见也改不了**观察记录
+ *   隐藏 ref —— 快照 fetch 进真仓库之后，**不污染分支列表、不被默认 clone 带走**
+ */
+export const SNAPSHOT_NAMESPACE = "refs/hertaloy/snapshots";
+
+export function snapshotRef(id: string): string {
+  return `${SNAPSHOT_NAMESPACE}/${id}`;
+}
+
+export function observe(paths: ObserverPaths, exec: GitExec, snapshotId?: string): Observation {
   git(paths, exec, ["add", "-A"]);
   const nameStatus = git(paths, exec, ["diff", "--cached", "--name-status"]).trim();
   const changes: FileChange[] = nameStatus === ""
@@ -98,7 +135,27 @@ export function observe(paths: ObserverPaths, exec: GitExec): Observation {
     insertions += Number(add) || 0;
     deletions += Number(del) || 0;
   }
-  return { changes, insertions, deletions };
+  const base = { changes, insertions, deletions };
+  if (snapshotId === undefined) return base;
+
+  /**
+   * 用 `commit-tree` 而不是 `commit`：后者会推进 HEAD 所在的分支，
+   * 于是快照又变成了一条**可见**的分支线。`commit-tree` 只造对象、不动任何 ref，
+   * 然后由 `update-ref` 把唯一的指针放进隐藏命名空间 ——
+   * 这样指向这个快照的东西**有且只有**那条隐藏 ref。
+   */
+  const tree = git(paths, exec, ["write-tree"]).trim();
+  const parent = git(paths, exec, ["rev-parse", "HEAD"]).trim();
+  const commit = git(paths, exec, [
+    "commit-tree",
+    tree,
+    "-p",
+    parent,
+    "-m",
+    `snapshot ${snapshotId}`,
+  ]).trim();
+  git(paths, exec, ["update-ref", snapshotRef(snapshotId), commit]);
+  return { ...base, snapshot: commit, ref: snapshotRef(snapshotId) };
 }
 
 /** 目标环境里 git 在不在。不在就退化成"不观察"，而不是让整条执行链挂掉。 */

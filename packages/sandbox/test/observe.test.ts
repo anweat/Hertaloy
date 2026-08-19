@@ -101,3 +101,78 @@ describe("观察改动", () => {
     expect(observe(obs, exec).changes).toEqual([]);
   });
 });
+
+describe("★ 隐藏 ref 快照：存得下，但看不见", () => {
+  it("快照落在 refs/hertaloy 下 —— git branch 里没有它", () => {
+    initObserver(obs, exec);
+    writeFileSync(join(obs.workTree, "a.txt"), "改了", "utf8");
+    const snap = observe(obs, exec, "exec-1");
+
+    expect(snap.ref).toBe("refs/hertaloy/snapshots/exec-1");
+    expect(snap.snapshot).toMatch(/^[0-9a-f]{40}$/);
+
+    // 分支列表里干干净净
+    const branches = exec(["git", `--git-dir=${obs.gitDir}`, "branch", "--list"], obs.workTree);
+    expect(branches).not.toContain("exec-1");
+    expect(branches).not.toContain("hertaloy");
+  });
+
+  it("默认 git log 走不到 —— 但 `--all` 走得到（实测，别写反）", () => {
+    initObserver(obs, exec);
+    writeFileSync(join(obs.workTree, "a.txt"), "改了", "utf8");
+    const snap = observe(obs, exec, "exec-1");
+    const log = (...extra: string[]): string =>
+      exec(["git", `--git-dir=${obs.gitDir}`, "log", ...extra, "--format=%H"], obs.workTree);
+
+    // 默认走 HEAD，快照不在那条线上
+    expect(log()).not.toContain(snap.snapshot);
+    // `--all` 是"refs/ 下全部"，不是只有分支 —— 主动去看就看得到，
+    // 这正是我们要的：快照是证据，不是秘密
+    expect(log("--all")).toContain(snap.snapshot);
+  });
+
+  it("但内容确实存下来了 —— 按 ref 取得到，且是改动后的树", () => {
+    initObserver(obs, exec);
+    writeFileSync(join(obs.workTree, "a.txt"), "改动后的内容", "utf8");
+    const snap = observe(obs, exec, "exec-1");
+
+    const shown = exec(
+      ["git", `--git-dir=${obs.gitDir}`, "show", `${snap.ref as string}:a.txt`],
+      obs.workTree,
+    );
+    expect(shown.trim()).toBe("改动后的内容");
+  });
+
+  it("HEAD 没有被推进 —— commit-tree 只造对象，不动任何分支", () => {
+    initObserver(obs, exec);
+    const before = exec(["git", `--git-dir=${obs.gitDir}`, "rev-parse", "HEAD"], obs.workTree);
+    writeFileSync(join(obs.workTree, "a.txt"), "改了", "utf8");
+    observe(obs, exec, "exec-1");
+    const after = exec(["git", `--git-dir=${obs.gitDir}`, "rev-parse", "HEAD"], obs.workTree);
+    expect(after).toBe(before);
+  });
+
+  it("多次执行各占一条 ref，互不覆盖", () => {
+    initObserver(obs, exec);
+    writeFileSync(join(obs.workTree, "a.txt"), "第一次", "utf8");
+    const first = observe(obs, exec, "exec-1");
+    writeFileSync(join(obs.workTree, "a.txt"), "第二次", "utf8");
+    const second = observe(obs, exec, "exec-2");
+
+    expect(first.snapshot).not.toBe(second.snapshot);
+    const refs = exec(
+      ["git", `--git-dir=${obs.gitDir}`, "for-each-ref", "--format=%(refname)", "refs/hertaloy"],
+      obs.workTree,
+    );
+    expect(refs).toContain("refs/hertaloy/snapshots/exec-1");
+    expect(refs).toContain("refs/hertaloy/snapshots/exec-2");
+  });
+
+  it("不传 snapshotId 就只算 diff，不留快照（旧行为不变）", () => {
+    initObserver(obs, exec);
+    writeFileSync(join(obs.workTree, "a.txt"), "改了", "utf8");
+    const snap = observe(obs, exec);
+    expect(snap.snapshot).toBeUndefined();
+    expect(snap.changes).toHaveLength(1);
+  });
+});

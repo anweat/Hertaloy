@@ -144,7 +144,8 @@ export class SandboxBackend implements ExecutionBackend {
           : { timeoutSeconds: request.limits.wallClockSeconds }),
       });
 
-      const observation = canObserve ? observe(observer, exec) : undefined;
+      // 快照按 executionId 命名 —— 与 ExecutionRecord、<traceid>/$exec 对得上
+      const observation = canObserve ? observe(observer, exec, request.executionId) : undefined;
       const emitted = readEmit(paths);
       const artifacts = collectArtifacts(paths).map((a) => ({
         object_id: a.name.replace(/\.[^./]+$/, ""),
