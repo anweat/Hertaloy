@@ -44,6 +44,23 @@ export const AgentSpec = z
     context: z.record(z.string()).optional(),
     /** 环境变量。**不得写入密钥值** —— 见上。 */
     env: z.record(z.string()).optional(),
+    /**
+     * 工作区：把一个**具名**仓库物化成工作树。
+     *
+     * `source` 是别名，不是路径或 URL —— 具体指向哪个仓库由 backend 配置决定。
+     * 模板因此可移植：同一份模板在不同机器上跑不同的仓库，而 agent 始终
+     * 拿不到真实位置。
+     */
+    workspace: z
+      .object({ source: Ident, base: z.string().min(1).optional() })
+      .strict()
+      .optional(),
+    /**
+     * 参考资料：别名 → 具名资源。落在 `.hertaloy/resources/<别名>/`。
+     *
+     * 不落 `workspace/`：工作树是被观察的，参考资料混进去会被算成 agent 的改动。
+     */
+    resources: z.record(Ident, Ident).optional(),
   })
   .strict();
 

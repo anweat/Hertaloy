@@ -7,6 +7,7 @@
  * 一次执行 = 建沙箱 → 注入 → 打基线 → **跑一条命令行** → 读 emit → 观察 → 收产物 → 拆沙箱。
  */
 
+import { join } from "node:path";
 import { z } from "zod";
 import { AgentSpec } from "@nodeflow/contracts";
 import type {
@@ -27,6 +28,12 @@ import {
 import { resolveProfile } from "./profile.js";
 import { gitAvailable, initObserver, observe, type Observation } from "./observe.js";
 import { LocalRunner, type RunOutcome, type Runner } from "./runner.js";
+import {
+  type ProvisionedWorkspace,
+  type ResourceRegistry,
+  provisionResources,
+  provisionWorkspace,
+} from "./resources.js";
 
 /**
  * `agentSpec` 的沙箱形态：**一条命令行**。
@@ -54,6 +61,14 @@ export interface SandboxOptions {
   readonly workRoot?: string;
   /** 跑完是否删沙箱。调试时设 false。 */
   readonly cleanup?: boolean;
+  /**
+   * 资源别名注册表。模板只写名字，这里说名字指向哪。
+   *
+   * 不给就等于没有任何资源可用 —— 声明了 `workspace` 的模板会失败并说清
+   * 已配置哪些名字。默认空表而不是"随便什么路径都行"，是第一不变量的
+   * 同一条纪律：**能用的东西必须是显式给出来的**。
+   */
+  readonly resources?: ResourceRegistry;
 }
 
 export interface SandboxDiagnostics {
@@ -71,16 +86,20 @@ export interface SandboxDiagnostics {
   readonly stdoutTail: string;
   readonly stderrTail: string;
   readonly observation?: Observation;
+  /** 工作区从哪个具名源、哪个 commit 起的 —— 让"从哪开始的"可复查。 */
+  readonly workspace?: ProvisionedWorkspace;
 }
 
 export class SandboxBackend implements ExecutionBackend {
   readonly #runner: Runner;
   readonly #cleanup: boolean;
+  readonly #resources: ResourceRegistry;
   readonly #inflight = new Map<string, AbortController>();
 
   constructor(options: SandboxOptions = {}) {
     this.#runner = options.runner ?? new LocalRunner(options.workRoot);
     this.#cleanup = options.cleanup ?? true;
+    this.#resources = options.resources ?? {};
   }
 
   async run(request: ExecutionRequest): Promise<ExecutionResult> {
@@ -131,6 +150,31 @@ export class SandboxBackend implements ExecutionBackend {
         emitPath: ".hertaloy/emit.json",
         artifactsDir: ".hertaloy/artifacts",
       });
+      /**
+       * 物化在打基线**之前** —— 否则仓库内容会被算成 agent 的改动。
+       * 顺序：物化 → 基线 → 跑 → 观察，于是 diff 里只剩 agent 干的事。
+       */
+      let workspace: ProvisionedWorkspace | undefined;
+      try {
+        if (spec.workspace !== undefined) {
+          workspace = provisionWorkspace(this.#resources, spec.workspace, paths.workspace);
+        }
+        if (spec.resources !== undefined) {
+          provisionResources(this.#resources, spec.resources, join(paths.meta, "resources"));
+        }
+      } catch (error) {
+        // 别名配错是**配置错误**，重试不会有不同结果 —— 但内核的终止分类里
+        // 没有"配置错误"这一档，所以落 FAILED，理由说清是配置问题。
+        return this.#fail(request, "FAILED", {
+          runner: this.#runner.kind,
+          isolates: this.#runner.isolates,
+          networkEnforced: this.#runner.enforcesNetwork,
+          exitCode: null,
+          stdoutTail: "",
+          stderrTail: `资源物化失败：${(error as Error).message}`,
+        });
+      }
+
       if (canObserve) initObserver(observer, exec);
 
       const outcome = await this.#runner.run({
@@ -161,6 +205,7 @@ export class SandboxBackend implements ExecutionBackend {
         exitCode: outcome.code,
         stdoutTail: tail(outcome.stdout),
         stderrTail: tail(outcome.stderr),
+        ...(workspace === undefined ? {} : { workspace }),
         ...(observation === undefined ? {} : { observation }),
       };
 
