@@ -743,6 +743,19 @@ export class Runtime implements Snapshotable {
     result: ExecutionResult,
   ): StepResult | StepFailure {
     /**
+     * **执行观测第一件事就落。**
+     *
+     * 我把它放在"#apply 开头"，注释也写着"失败时的观测比成功时更值钱" ——
+     * 但 `termination !== "DONE"` 的提前 return 排在它**前面**，
+     * 于是恰恰在最需要现场的时候没有记录：失败 agent 的沙箱留着，
+     * 却没有 `$exec` 指向它 —— `status` 看不到、`reclaim` 找不到、
+     * 退出码与 stderr 全丢，而 DEVELOPING 还教人"失败先看 show $exec"。
+     *
+     * 现在真的是第一件事。同一个事务，回滚时一起回滚。
+     */
+    this.#recordExecution(record, result);
+
+    /**
      * 冲突域复核 —— **两半都要查**。
      *
      * 注释一直写着"generation 未变 **且** 被 claim 的消息仍是 CLAIMED"，
@@ -792,8 +805,6 @@ export class Runtime implements Snapshotable {
       );
     }
 
-    // 执行观测先落，成败都留痕 —— 见 #recordExecution
-    this.#recordExecution(record, result);
 
     const template = this.#registry.template(record.traceid);
     const node = template.nodes[record.nodeId];
@@ -1171,10 +1182,29 @@ export class Runtime implements Snapshotable {
       return this.#fail(input, `变量提取失败：${formatExtractionFailures(extraction.failures)}`);
     }
 
+    /**
+     * **同步路径也要编上下文。**
+     *
+     * 此前它只做 `extractPortVars` 就直接调 handler，于是两件事同时是假的：
+     *
+     *   1. B1 的运行期上界**对同步节点根本没查** —— 一个声明
+     *      `max_tokens: 1` 的 `long` 变量收到几千 token 照样消费成功。
+     *      §16 表里"B1 ✅ 代码 + 测试"只钉住了 agent 路径。
+     *   2. §7.1 说"普通 handler 也能通过 bind 引入长变量"，
+     *      而 handler 拿到的变量袋里**根本没有 bind 段** —— literal / card
+     *      完全不可达。实测 handler 只拿到端口变量。
+     *
+     * 走同一个 `compileContext`，两件事一起真。ref 解引用也随之对同步节点生效。
+     */
+    const compiled = compileContext(this.#store, node, extraction.vars);
+    if (!compiled.ok) {
+      return this.#fail(input, `上下文编译失败：${formatContextFailures(compiled.failures)}`);
+    }
+
     invariant(node.handler !== undefined, `节点 ${nodeId} 声明了 agent 段，走三段式而非同步路径`);
     const fn = this.#handlers.get(node.handler);
     invariant(fn !== undefined, `未注册的内置 handler：${node.handler}`);
-    const outputs = fn(extraction.vars, this.#handlerContext(traceid, nodeId, input));
+    const outputs = fn(compiled.vars, this.#handlerContext(traceid, nodeId, input));
 
     assertDeclaredPorts(node, nodeId, outputs);
     for (const [portName, value] of Object.entries(outputs)) {

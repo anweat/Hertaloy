@@ -9,7 +9,7 @@
 
 import { join } from "node:path";
 import { z } from "zod";
-import { AgentSpec } from "@nodeflow/contracts";
+import { AgentSpec, MASK, SECRET_PATTERNS, resolveEnv } from "@nodeflow/contracts";
 import type {
   ExecutionBackend,
   ExecutionRequest,
@@ -292,11 +292,17 @@ export class SandboxBackend implements ExecutionBackend {
 
       if (canObserve) initObserver(observer, exec);
 
+      /**
+       * `$NAME` 在**这里**解析成真值 —— 一处解析，三个 runner 都拿到结果。
+       * 放在 runner 里就得写三遍，而这正是"两端各自都绿、中间没人走"的温床。
+       */
+      const env = resolveEnv(spec.env, process.env);
+
       const outcome = await this.#runner.run({
         // 只挂 box —— 记录仓在它外面，agent 够不着（见 layout.ts）
         root: paths.box,
         argv: spec.argv,
-        env: spec.env,
+        env,
         signal: abort.signal,
         ...(request.limits.wallClockSeconds === undefined
           ? {}
@@ -319,8 +325,9 @@ export class SandboxBackend implements ExecutionBackend {
         networkEnforced: this.#runner.enforcesNetwork,
         exitCode: outcome.code,
         // 脱敏在**进对象库之前** —— 对象不可变，写进去就撤不回来
-        stdoutTail: redact(tail(outcome.stdout), spec.env),
-        stderrTail: redact(tail(outcome.stderr), spec.env),
+        // 遮的是**解析后的真值** —— 遮 `$NAME` 那串字面量毫无意义
+        stdoutTail: redact(tail(outcome.stdout), env),
+        stderrTail: redact(tail(outcome.stderr), env),
         sandbox: { path: root, retained: keeps(this.#retain, classify(outcome, emitted)) },
         ...(workspace === undefined ? {} : { workspace }),
         ...(observation === undefined ? {} : { observation }),
@@ -394,13 +401,6 @@ export class SandboxBackend implements ExecutionBackend {
  * **尽力而为**：黑名单永远漏得掉，密钥命名千奇百怪。真正的保证来自
  * 第一条 —— 以及"密钥只经 env 注入、不落任何配置文件"（§17.7）。
  */
-const SECRET_PATTERNS: readonly RegExp[] = [
-  /\bsk-[A-Za-z0-9_-]{16,}/g,
-  /\bBearer\s+[A-Za-z0-9._-]{16,}/gi,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
-];
-
-const MASK = "«已遮蔽»";
 
 export function redact(text: string, injected: Readonly<Record<string, string>>): string {
   let out = text;

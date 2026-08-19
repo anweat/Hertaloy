@@ -16,6 +16,7 @@ import { z } from "zod";
 import { Json } from "./json.js";
 import { Ref, TraceId, Tunnel, isDescendantOf } from "./identity.js";
 import { BindBlock, declaredBudget } from "./variable.js";
+import { looksLikeSecret } from "./secret.js";
 import { PortMap, allowedEmitPorts } from "./port.js";
 import { NodeId } from "./message.js";
 
@@ -23,6 +24,18 @@ export const IDENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 export const Ident = z.string().regex(IDENT_PATTERN, "标识符必须以字母或下划线起头");
 
 /** 有 `agent` 段 = 走执行面 backend；没有 = 走内核内置 handler。 */
+/**
+ * env 的值：`$NAME` 引用，或**不像凭据的**字面量。
+ *
+ * 拒绝理由要给出正确路径 —— 只说"不行"的校验会被绕过（换个变量名塞进去），
+ * 说清"改写成 `$NAME`"才真的解决问题。
+ */
+const SECRET_FREE_ENV = z.string().refine((v) => !looksLikeSecret(v), {
+  message:
+    "env 的值看起来是一份凭据。模板是不可变对象，写进去就撤不回来（§17.7）——" +
+    "改写成 `$NAME` 引用，值由跑它的那台机器从环境里提供",
+});
+
 /**
  * agent 节点的声明 —— **一条命令行**（第五次归约，§14）。
  *
@@ -42,8 +55,15 @@ export const AgentSpec = z
     profile: z.string().optional(),
     /** 注入到 `.hertaloy/context/` 的文件：相对路径 → 内容。 */
     context: z.record(z.string()).optional(),
-    /** 环境变量。**不得写入密钥值** —— 见上。 */
-    env: z.record(z.string()).optional(),
+    /**
+     * 环境变量。**只放取值方式，不放值本身。**
+     *
+     * `$NAME` 从跑它那台机器的环境里取；字面量只允许非凭据的配置值
+     * （`NODE_ENV=production` 这类）。像凭据的字面量在**注册期**就被拒 ——
+     * 此前这条只是注释，没有任何强制点，而模板是不可变对象：
+     * 写进去就撤不回来，只能换密钥。
+     */
+    env: z.record(SECRET_FREE_ENV).optional(),
     /**
      * 工作区：把一个**具名**仓库物化成工作树。
      *

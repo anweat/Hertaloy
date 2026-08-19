@@ -73,6 +73,9 @@ const ALLOWED = new Map([
   ["execNode", "同上"],
   ["forwardNode", "同上；而且它明确是示例，不是机制"],
   ["redact", "backend 在同文件里调；脱敏规则要能单独测"],
+  ["envRefName", "resolveEnv 在同文件里调；`$NAME` 的识别判据要能单独测"],
+  ["looksLikeSecret", "template.ts 的 refine 在用；导出是为了单独测那组模式"],
+  ["resolveEnv", "backend 在派发前调，把 `$NAME` 解析成真值"],
 ]);
 
 function sources() {

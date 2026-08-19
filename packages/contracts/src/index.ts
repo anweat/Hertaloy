@@ -11,3 +11,4 @@ export * from "./execution.js";
 export * from "./tokens.js";
 export * from "./permission.js";
 export * from "./resource.js";
+export * from "./secret.js";

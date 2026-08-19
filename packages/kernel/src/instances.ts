@@ -284,6 +284,7 @@ export function registerContainerTemplate(
   const issues = [
     ...validateContainerTemplate(parsed.data),
     ...validateChildEntries(store, parsed.data),
+    ...validateContractRefs(store, parsed.data),
   ];
   if (issues.length > 0) {
     throw new InvariantError(
@@ -369,8 +370,20 @@ function materializeOverlay(store: ObjectStore, templateId: string, spec: unknow
     );
   }
 
-  // 合并结果必须过与基定义**同一套**连接期校验 —— 覆盖不是逃生舱
-  const issues = validateContainerTemplate(outcome.merged);
+  /**
+   * 合并结果必须过与基定义**同一套**连接期校验 —— 覆盖不是逃生舱。
+   *
+   * 而它此前恰恰**不是同一套**：普通路径跑 `validateContainerTemplate` 加
+   * `validateChildEntries`，覆盖路径只跑前者。于是绕一层覆盖就能塞进一个
+   * `entry` 指向子模板不存在节点的子槽 —— 注册成功、spawn 成功，运行期才炸。
+   * **"同一套"少了一半就不是同一套**；注释宣称的与代码强制的对不上，
+   * 是这个项目被咬过最多次的那一种。
+   */
+  const issues = [
+    ...validateContainerTemplate(outcome.merged),
+    ...validateChildEntries(store, outcome.merged),
+    ...validateContractRefs(store, outcome.merged),
+  ];
   if (issues.length > 0) {
     throw new InvariantError(
       [`覆盖层 ${templateId} 的合并结果连接期校验失败：`, ...issues.map((i) => `${i.where}：${i.message}`)].join("\n  "),
@@ -384,6 +397,49 @@ function materializeOverlay(store: ObjectStore, templateId: string, spec: unknow
     { at_seq: 0, derived_from: [overlay.extends] },
   );
   return `${version.object_id}@${version.version}`;
+}
+
+/**
+ * 跨模板校验：端口的 `contract` 引用必须存在，且**正文得真是一份契约**。
+ *
+ * 此前完全不查，两种错法都很难发现：
+ *   - 指向不存在的引用 → 注册成功，运行期解析失败，消息永久卡在 QUEUED
+ *   - 指向一个**容器模板** → 端口校验拿它当 schema，于是**静默放行所有载荷**，
+ *     形同虚设而没有任何迹象
+ *
+ * 查的是**正文能否解析成 MessageContract**，不是 kind 对不对。一开始写的是
+ * 后者，当场撞红了一条老测试：它用 kind `contract` 存契约、一直工作良好 ——
+ * 因为决定行为的从来就是正文。kind 是给人和工具看的标签，
+ * **按标签判断能力**会既冤枉对的、又放过错的（kind 对而正文是垃圾的照样过）。
+ * `MessageContract` 是 `.strict()` 的，容器模板正文一解析就炸，正好挡住那条。
+ */
+function validateContractRefs(
+  store: ObjectStore,
+  tpl: ContainerTemplate,
+): readonly TemplateIssue[] {
+  const issues: TemplateIssue[] = [];
+  for (const [nodeId, node] of Object.entries(tpl.nodes)) {
+    for (const [portName, port] of Object.entries(node.ports)) {
+      if (port.direction !== "receive" || port.contract === undefined) continue;
+      const where = `nodes.${nodeId}.ports.${portName}.contract`;
+      let body;
+      try {
+        body = store.resolve(port.contract).body;
+      } catch {
+        issues.push({ where, message: `契约引用 ${port.contract} 不存在` });
+        continue;
+      }
+      if (!MessageContract.safeParse(body).success) {
+        issues.push({
+          where,
+          message:
+            `契约引用 ${port.contract} 的正文不是一份合法 MessageContract。` +
+            "指错对象不会报错，只会让端口校验静默放行所有载荷",
+        });
+      }
+    }
+  }
+  return issues;
 }
 
 /**
