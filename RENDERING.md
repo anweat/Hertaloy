@@ -213,23 +213,35 @@ export interface Tether {
 
 ---
 
-## 5. 需要内核补一个字段：`Message.source`
+## 5. 内核补的那一个字段：`Message.source`（已完成）
 
-`Message` 现在有 `target` 和 `tunnel`（`routing.ts:158/190` 真的在填），但**没有来源**。
-影响：
+`Message` 原本有 `target` 和 `tunnel`（`routing.ts` 真的在填），但**没有来源**：
 
-| 想画的 | 现在算不算得出 |
+| 想画的 | 补之前 |
 |---|---|
 | 某条隧道的某个订阅端点被命中了几次 | ✅ `tunnel` + `target` 够了 |
 | **命中是从哪个实例来的** | ❌ 完全算不出 |
 | 扇入边（多条边汇到同一端口）这次是哪条送的 | ❌ 有歧义 |
 
 第二行正是"让浮动节点的命中被看见"这件事本身 —— 没有它，
-染色只能染在落点上，染不出那根来路。
+染色只能染在落点上，**染不出那根来路**。
 
-补法：`Message` 加 `readonly source?: Endpoint`，在 `routing.ts` 建消息时填
-（那里本来就知道 `ctx.traceid` / `ctx.nodeId` / `portName`）。
-代价是 head 每条消息大一点，而 head 已经有 `#prune` 兜底。
+已补 `MessageSource`，三种情形靠**字段有无**区分，不需要标签：
+
+```
+{traceid, node, port}   某节点的 emit 端口发出
+{traceid}               实例自身的生命周期通知（子终止 → 父的 exit 端口）
+省略                    外部注入（人 / CLI / MCP），图外来的
+```
+
+⚠️ **它不进 `MessageEnvelope`。** 信封是 agent 看得到的那份，而"信封里没有任何
+路由字段"是 M1（编排权威属于边）的结构性保证。source 一旦进信封，agent 就能
+"看谁发来的再决定怎么办"，M1 就从结构性降级成口头约定。它只在内核内部的消息
+记录上，随 head 落盘，渲染层从那儿读。
+
+落盘往返有专门用例钉着（`packages/state/test/claim-durability.test.ts`）——
+判据不是"内核里有这个字段"，是**换个进程读出来还在**。head 要是白名单序列化把它
+丢了，前端就永远拿不到，而两端各自都绿。
 
 **这是渲染需要的唯一一处内核改动。** 其余全部从现有数据推得出来。
 
@@ -248,6 +260,17 @@ export interface Tether {
 | `contains` | 枝干 | 包膜 / 弹簧 |
 
 同一份场景，两套投影。切换渲染器不需要重新取数。
+
+**外观基调是气球，不是卡片。** 整体随性、浮动，而不是钉死的网格。
+这条定下来之后有个顺手的结果：**`certainty` 直接就是刚度**。
+
+- 边（certainty = 1）把两个 Cell 稳定地拴在一个距离上
+- 隧道（certainty 低）让两端飘，命中越多拴得越紧 —— 这就是"逐渐固定显现"
+- `pinned` = 完全不飘
+
+于是"染色固化成边"在物理上是**连续**的，不需要在某个阈值上切换渲染方式。
+两个渲染器因此比原先设想的更近：静态生长树可以理解成同一套映射的**低温版**，
+它们共用 `channel → 物理量` 这张表，只是温度和约束不同。
 
 **⚠️ 同步节点不会"亮"。** 三段式（claim / execute / apply）只对 agent 节点成立，
 同步 handler 在一次事务里就提交完了 —— 它没有可观测的 RUNNING 窗口，只会闪一下。
@@ -276,29 +299,69 @@ export interface Tether {
 - `position` 存在节点里 —— 见 §1.4
 - 前端 type 注册表 —— 对象库就是
 - `Graph.version` 迁移入口 —— 对象已经带版本，别开第二条版本轴
-- 卡片式节点外观 —— 球链图要 `extent → 半径`，卡片没有半径这个概念。
-  两个渲染器共用词汇，但**外观流派要选能同时表达两者的那种**（这条留到动效轮）
+- 卡片式节点外观 —— 球链图要 `extent → 半径`，卡片没有半径这个概念；
+  而基调已定为气球式浮动（§6），卡片流整个不适用
 
 ---
 
-## 8. 分层与包边界
+## 8. 分层与解耦：前端不许 import 后端
 
 ```mermaid
 flowchart TD
-  K["内核 / head + 对象库<br/>唯一真相源"] --> A
-  A["适配器 packages/scene<br/>scene = f(head, objects)"] --> S
-  S["Scene<br/>2 实体 + 2 连接 + 通道"] --> R1
-  S --> R2
-  R1["渲染器 A：静态生长树"]
-  R2["渲染器 B：球链 / 物理"]
-  A2["未来：MCP 适配器"] -.-> S
+  subgraph BE["后端（node 专属：fs / 子进程 / docker）"]
+    K["kernel · state · sandbox · cli · mcp"]
+  end
+  subgraph SHARED["共享（浏览器安全）"]
+    C["contracts —— 纯类型，只依赖 zod"]
+    SC["scene —— snapshot → Scene 的纯函数"]
+  end
+  subgraph FE["前端"]
+    R1["渲染器 A：静态生长树"]
+    R2["渲染器 B：球链 / 物理"]
+  end
+  K -->|"产出 snapshot（纯 JSON）"| SC
+  C --> SC
+  C --> K
+  SC --> R1
+  SC --> R2
 ```
 
-适配器**不在渲染器里**，它是独立包，两个渲染器共享。
-这样"补 MCP"就是加一个适配器，两个渲染器都白得。
-如果哪天补一个后端需要往 Scene 里加第五种元素，那说明 §2 的词汇错了 —— 那是设计信号，不是加字段的理由。
+### 规矩（只有三条，但要真守住）
 
----
+1. **前端只能 import `@nodeflow/contracts` 和 `@nodeflow/scene`。**
+   `kernel` / `state` / `sandbox` / `cli` / `mcp` 一个都不许出现在前端依赖里 ——
+   它们碰 `node:fs`、起子进程、调 docker，进不了浏览器，也不该进。
+2. **`@nodeflow/scene` 是纯函数，不碰 IO。** 输入是一份普通 JSON 快照，
+   输出是 `Scene`。它不知道快照从文件来、从 HTTP 来还是从 WebSocket 来。
+   于是它在 node 和浏览器里都能跑，测试也不需要造文件系统。
+3. **传输方式不进这两层。** 快照怎么送到前端（轮询 / SSE / WebSocket）
+   是后端和前端各自的事，`scene` 不参与。
+
+这三条已经是可行的 —— `@nodeflow/contracts` 现在**零 node 内置、只依赖 zod**，
+浏览器安全。这不是巧合：它本来就是"能独立给画布和 LLM 用的纯契约层"
+（`instances.ts` 里守 contracts 不依赖 store 的那条边界，理由相同）。
+
+### 建 `packages/scene` 时的第一步
+
+快照里含消息、执行记录、实例，而这几个类型现在住在 `kernel/src/runtime.ts`。
+`scene` 若为了拿类型去 import kernel，第 1 条当场就破了。
+
+所以第一步是**把这几个纯类型搬进 contracts**：
+
+| 类型 | 现在在 | 备注 |
+|---|---|---|
+| `Message` / `MessageState` | `kernel/src/runtime.ts` | 纯数据，无行为 |
+| `ExecutionRecord` | `kernel/src/runtime.ts` | 同上 |
+| `ContainerInstance` | `kernel/src/instances.ts` | 同上 |
+| `RunSnapshot` | 尚不存在 | 上面三样 + 相关对象的信封 |
+
+它们全是没有行为的数据形状，搬过去不动语义。**注意不要顺手做成两份** ——
+kernel 里保留一份"给内核用的"、contracts 里再定义一份"给前端用的"，
+那正是这个项目被咬过六次的形状。搬，不是抄。
+
+`RunSnapshot` 也别新发明格式：`head.json` 已经是纯 JSON 且已经是落盘契约，
+快照就是它加上按前缀取的那批对象。ComfyUI 那套"UI 格式 / API 格式"双格式
+（调研 §5.1）我们**不学** —— 一份就够，多一份就多一处会漂的账。
 
 ## 9. 待定
 

@@ -28,6 +28,30 @@ export const Endpoint = z
 
 export type Endpoint = z.infer<typeof Endpoint>;
 
+/**
+ * 消息来源 —— **观测用，不是路由用**。
+ *
+ * 三种情形，靠字段有无区分，不需要标签：
+ *
+ *   `{traceid, node, port}`  某节点的 emit 端口发出
+ *   `{traceid}`              实例自身的生命周期通知（子终止 → 父的 exit 端口）
+ *   省略                     外部注入（人 / CLI / MCP），图外来的
+ *
+ * ⚠️ **绝不进 `MessageEnvelope`。** 信封是 agent 看得到的那份，而信封里没有
+ * 任何路由字段是结构性保证（M1：编排权威属于边）。source 一旦进信封，
+ * agent 就能"看谁发来的再决定怎么办" —— M1 就从结构性变成了口头约定。
+ * 它只属于内核内部的消息记录（会随 head 落盘，渲染层从那儿读）。
+ */
+export const MessageSource = z
+  .object({
+    traceid: TraceId,
+    node: NodeId.optional(),
+    port: PortName.optional(),
+  })
+  .strict();
+
+export type MessageSource = z.infer<typeof MessageSource>;
+
 export const MESSAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export const MessageEnvelope = z

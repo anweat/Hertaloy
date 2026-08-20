@@ -15,6 +15,7 @@ import {
   type ContainerTemplate,
   type Endpoint,
   type Json,
+  type MessageSource,
   type NodeDefinition,
   type Port,
   type TraceId,
@@ -26,6 +27,8 @@ import type { AcquireInput } from "./locks.js";
 export interface StagedMessage {
   readonly target: Endpoint;
   readonly payload: Json;
+  /** 谁发的 —— 观测用。见 contracts 里 MessageSource 的说明。 */
+  readonly source?: MessageSource;
   readonly tunnel?: string;
   readonly requestId?: string;
   readonly inReplyTo?: string;
@@ -124,6 +127,14 @@ export function stageOutputs(
       return { ok: false, reason: `端口 \`${portName}\` 不是 emit 端口` };
     }
 
+    /**
+     * 这一轮排出去的消息全都出自同一个 emit 端口，所以来源算一次就够。
+     *
+     * 每条 push 都显式带上而不是在 #enqueue 里统一补：排期是纯函数，
+     * 把"谁发的"留到提交期再猜，就又造出一处"两端各自都绿、中间没人走"。
+     */
+    const source: MessageSource = { traceid: ctx.traceid, node: ctx.nodeId, port: portName };
+
     // 网关回复
     if (port.reply === true) {
       if (ctx.inboundRequestId === undefined) {
@@ -140,6 +151,7 @@ export function stageOutputs(
       messages.push({
         target: { traceid: req.requester, node: req.node, port: req.callbackPort },
         payload: structuredClone(value) as Json,
+        source,
         inReplyTo: ctx.inboundMessageId,
       });
       continue;
@@ -155,6 +167,7 @@ export function stageOutputs(
           messages.push({
             target,
             payload: structuredClone(value) as Json,
+            source,
             tunnel: port.tunnel,
           });
         }
@@ -187,6 +200,7 @@ export function stageOutputs(
       messages.push({
         target: targets[0] as Endpoint,
         payload: structuredClone(value) as Json,
+        source,
         tunnel: port.tunnel,
         requestId,
       });
@@ -206,6 +220,7 @@ export function stageOutputs(
       messages.push({
         target: { traceid: ctx.traceid, node: edge.to.node, port: edge.to.port },
         payload: structuredClone(value) as Json,
+        source,
       });
     }
   }

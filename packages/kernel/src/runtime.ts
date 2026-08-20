@@ -21,6 +21,7 @@ import {
   type ExecutionRequest,
   type ExecutionResult,
   type Json,
+  type MessageSource,
   type MessageContract,
   type NodeDefinition,
   type ObjectVersion,
@@ -68,6 +69,17 @@ export interface Message {
   readonly state: MessageState;
   readonly failure?: string;
   readonly tunnel?: Tunnel;
+  /**
+   * 谁发的 —— **观测用，不是路由用**（详见 contracts 的 MessageSource）。
+   *
+   * 补它是因为渲染层要的一件事从现有数据完全推不出来：隧道消息带 `tunnel`
+   * 和 `target`，却不带来源，于是"这次命中是从哪个实例来的"算不出 ——
+   * 而那正是"让浮动节点的命中被看见"这件事本身。扇入边（多条边汇到同一端口）
+   * 也有同样的歧义。
+   *
+   * 省略 = 外部注入（人 / CLI / MCP）。图外来的消息本来就没有图内的来源。
+   */
+  readonly source?: MessageSource;
   /** 协议级关联，**绝不进 payload**。 */
   readonly requestId?: string;
   readonly inReplyTo?: string;
@@ -1044,6 +1056,8 @@ export class Runtime implements Snapshotable {
     this.#enqueue({
       target: { traceid: parentTrace, node: exit.node, port: exit.port },
       payload: { slot: child.slot, traceid: child.traceid, status: "TERMINAL" },
+      // 来源是子**实例**，不是某个节点的 emit —— 所以只有 traceid
+      source: { traceid: child.traceid },
     });
   }
 

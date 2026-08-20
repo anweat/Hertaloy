@@ -259,3 +259,55 @@ describe("★ 认领不再在 open 时自动发生（外部审核 P0-2）", () =
     c.close();
   }, 20_000);
 });
+
+
+/**
+ * ★ `Message.source` 活得过落盘吗（RENDERING.md §5）
+ *
+ * 判据不是"内核里有这个字段"，是**换个进程读出来还在**。渲染层读的是 head，
+ * head 要是白名单序列化把它丢了，前端就永远拿不到 —— 而两端各自都绿。
+ * 这个项目被这种形状咬过六次，所以宁可多写一条往返用例。
+ */
+describe("★ source 活得过落盘", () => {
+  const FLOW = {
+    nodes: {
+      a: {
+        kind: "handler",
+        handler: "emit",
+        ports: {
+          in: { direction: "receive", servo: { vars: {} } },
+          out: { direction: "emit" },
+        },
+      },
+      b: {
+        kind: "handler",
+        handler: "noop",
+        ports: { got: { direction: "receive", servo: { vars: {} } } },
+      },
+    },
+    edges: { e: { from: { node: "a", port: "out" }, to: { node: "b", port: "got" } } },
+    children: {},
+    subscriptions: {},
+  };
+
+  it("写进去、换个进程读出来，来源还在", () => {
+    const first = RunState.open(dir);
+    const ref = registerContainerTemplate(first.store, "root", FLOW, "root_config");
+    first.registry.createRoot(ref, "job-1");
+    first.runtime.registerHandler("emit", () => ({ out: { v: 1 } }));
+    first.runtime.registerHandler("noop", () => ({}));
+    first.runtime.send({ traceid: "job-1", node: "a", port: "in" }, {});
+    first.runtime.drain();
+    first.persist();
+    first.close();
+
+    const second = RunState.open(dir, { readOnly: true });
+    try {
+      const downstream = second.runtime.messages().find((m) => m.target.node === "b");
+      expect(downstream).toBeDefined();
+      expect(downstream?.source).toEqual({ traceid: "job-1", node: "a", port: "out" });
+    } finally {
+      second.close();
+    }
+  });
+});
