@@ -1,0 +1,414 @@
+<title>Hertaloy 画布</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --ground:   oklch(0.975 0.004 258);
+    --surface:  oklch(1 0 0);
+    --ink:      oklch(0.32 0.02 258);
+    --muted:    oklch(0.55 0.018 258);
+    --faint:    oklch(0.68 0.014 258);
+    --hairline: oklch(0.915 0.006 258);
+    --shadow:   oklch(0.55 0.02 258 / 0.10);
+    --stage:    oklch(0.995 0.002 258);
+
+    --display: "Archivo", ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --body: "Source Serif 4", Georgia, "Songti SC", "SimSun", serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --ground:   oklch(0.185 0.014 258);
+      --surface:  oklch(0.235 0.016 258);
+      --ink:      oklch(0.93 0.008 258);
+      --muted:    oklch(0.70 0.014 258);
+      --faint:    oklch(0.55 0.014 258);
+      --hairline: oklch(0.315 0.014 258);
+      --shadow:   oklch(0.05 0.01 258 / 0.45);
+      --stage:    oklch(0.215 0.015 258);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:   oklch(0.185 0.014 258);
+    --surface:  oklch(0.235 0.016 258);
+    --ink:      oklch(0.93 0.008 258);
+    --muted:    oklch(0.70 0.014 258);
+    --faint:    oklch(0.55 0.014 258);
+    --hairline: oklch(0.315 0.014 258);
+    --shadow:   oklch(0.05 0.01 258 / 0.45);
+    --stage:    oklch(0.215 0.015 258);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: clamp(28px, 5vw, 64px) clamp(20px, 5vw, 56px) 72px;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 30px; }
+
+  header { display: flex; flex-direction: column; gap: 8px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(28px, 4.6vw, 40px);
+    letter-spacing: -0.022em;
+    line-height: 1.1;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .lede { margin: 4px 0 0; max-width: 62ch; color: var(--muted); }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .stage {
+    background: var(--stage);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 12px;
+    box-shadow: 0 1px 2px var(--shadow), 0 12px 32px -18px var(--shadow);
+    overflow-x: auto;
+  }
+  .stage svg { display: block; width: 100%; height: auto; min-width: 520px; }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 2px;
+  }
+
+  .legend { display: grid; gap: 1px; background: var(--hairline);
+            border: 1px solid var(--hairline); border-radius: 12px; overflow: hidden;
+            grid-template-columns: repeat(auto-fit, minmax(228px, 1fr)); }
+
+  .item { background: var(--surface); padding: 18px 20px 20px; display: flex;
+          flex-direction: column; gap: 10px; }
+
+  .item svg { display: block; height: 62px; width: 100%; }
+
+  .item h3 {
+    font-family: var(--display); font-weight: 500; font-size: 14px;
+    letter-spacing: -0.006em; margin: 0; color: var(--ink);
+  }
+  .item p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+  .item code {
+    font-family: var(--mono); font-size: 0.86em;
+    color: var(--ink); background: var(--ground);
+    padding: 0.1em 0.34em; border-radius: 3px;
+  }
+
+  .note {
+    border-left: 2px solid var(--hairline);
+    padding: 2px 0 2px 18px;
+    color: var(--muted);
+    max-width: 66ch;
+    font-size: 14px;
+  }
+  .note strong { color: var(--ink); font-weight: 600; }
+
+  footer {
+    font-family: var(--mono); font-size: 11.5px; color: var(--faint);
+    border-top: 1px solid var(--hairline); padding-top: 16px;
+    display: flex; flex-wrap: wrap; gap: 6px 22px;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .stage svg, .item svg { animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">渲染核心 · 第一版</div>
+    <h1>Hertaloy 画布</h1>
+    <p class="lede">
+      一份真跑出来的容器运行时,渲染成气球。<strong>容器是半透明的,子实例浮在里面</strong> ——
+      归属关系因此一根线都不用画。色相由身份哈希得到,明度锁死。
+    </p>
+  </header>
+
+  <div class="stage" id="stage"></div>
+
+  <section style="display:flex;flex-direction:column;gap:12px">
+    <h2>四种视觉编码</h2>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <p class="note">
+    图里那两条从子实例伸向 <code>watch</code> 的虚线是<strong>同一条隧道的两个来源</strong>。
+    它们此前画不出来 —— 消息带着落点和隧道名,却不带来源,于是"这次命中是从哪个实例来的"
+    根本算不出。补上 <code>Message.source</code> 之后,每根来路才能各自染色。
+  </p>
+
+  <footer>
+    <span>2 实体 + 2 连接</span>
+    <span>scene = f(head, objects)</span>
+    <span>OKLCH · 色相=身份 明度=锁死</span>
+  </footer>
+</div>
+
+<script type="module">
+const SVG = "http://www.w3.org/2000/svg";
+
+/* ── 配色:色相=身份,明度锁死,饱和度由状态调制 ────────────────── */
+const CHROMA = { idle: 0.35, running: 1.15, done: 0.85, failed: 0.5, voided: 0.2 };
+const C_BASE = 0.13, L_LIGHT = 0.94, L_BASE = 0.8, L_SHADE = 0.62;
+
+function hash32(t) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < t.length; i += 1) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h >>> 0;
+}
+const hueOf = (id) => (hash32(id) % 3600) / 10;
+const oklch = (l, c, h, a = 1) =>
+  `oklch(${l.toFixed(3)} ${c.toFixed(3)} ${h.toFixed(1)}${a === 1 ? "" : ` / ${a}`})`;
+
+function swatch(identity, phase, activity = 0) {
+  const h = hueOf(identity), c = C_BASE * (CHROMA[phase] ?? 1);
+  const lift = Math.min(Math.max(activity, 0), 1) * 0.05;
+  return {
+    base: oklch(L_BASE + lift, c, h),
+    light: oklch(L_LIGHT, c * 0.6, h),
+    shade: oklch(L_SHADE, c, h),
+    rim: oklch(0.98, c * 0.4, h, 0.9),
+  };
+}
+function flowColor(contract, certainty) {
+  const a = 0.18 + Math.min(Math.max(certainty, 0), 1) * 0.68;
+  return contract === undefined
+    ? oklch(0.62, 0.012, 258, a)
+    : oklch(0.6, 0.11, hueOf(contract), a);
+}
+
+const el = (n, attrs, ...kids) => {
+  const node = document.createElementNS(SVG, n);
+  for (const [k, v] of Object.entries(attrs ?? {}))
+    if (v !== undefined && v !== null) node.setAttribute(k, String(v));
+  for (const kid of kids) if (kid) node.append(kid);
+  return node;
+};
+
+let gradSeq = 0;
+
+/* ── 布局:环形嵌套。场景里没有 position,位置是渲染器的事 ──────── */
+function layout(scene) {
+  const byId = new Map(scene.cells.map((c) => [c.id, c]));
+  const kidsOf = new Map();
+  for (const cell of scene.cells) {
+    if (cell.parent === null || !byId.has(cell.parent)) continue;
+    if (!kidsOf.has(cell.parent)) kidsOf.set(cell.parent, []);
+    kidsOf.get(cell.parent).push(cell);
+  }
+  const placed = new Map();
+
+  const radiusOf = (cell) => {
+    const kids = kidsOf.get(cell.id) ?? [];
+    if (kids.length === 0) return cell.kind === "instance" ? 34 : 25;
+    const inner = kids.map(radiusOf);
+    const big = Math.max(...inner);
+    const ring = kids.length === 1 ? 0 : (big * 1.28) / Math.sin(Math.PI / kids.length);
+    return ring + big + 24;
+  };
+
+  const place = (cell, cx, cy) => {
+    placed.set(cell.id, { cell, cx, cy, r: radiusOf(cell) });
+    const kids = kidsOf.get(cell.id) ?? [];
+    if (kids.length === 0) return;
+    const big = Math.max(...kids.map(radiusOf));
+    const ring = kids.length === 1 ? 0 : (big * 1.28) / Math.sin(Math.PI / kids.length);
+    kids.forEach((kid, i) => {
+      const a = (i / kids.length) * Math.PI * 2 - Math.PI / 2;
+      place(kid, cx + Math.cos(a) * ring, cy + Math.sin(a) * ring);
+    });
+  };
+
+  let x = 0;
+  for (const root of scene.cells.filter((c) => c.parent === null || !byId.has(c.parent))) {
+    const r = radiusOf(root);
+    place(root, x + r, r);
+    x += r * 2 + 56;
+  }
+  return placed;
+}
+
+function render(scene, host, opts = {}) {
+  const placed = layout(scene);
+  const all = [...placed.values()];
+  if (all.length === 0) return;
+  const pad = opts.pad ?? 22;
+  const minX = Math.min(...all.map((p) => p.cx - p.r)) - pad;
+  const minY = Math.min(...all.map((p) => p.cy - p.r)) - pad;
+  const w = Math.max(...all.map((p) => p.cx + p.r)) + pad - minX;
+  const h = Math.max(...all.map((p) => p.cy + p.r)) + pad * 1.4 - minY;
+
+  const defs = el("defs");
+  const svg = el("svg", { viewBox: `${minX} ${minY} ${w} ${h}`, role: "img" });
+  svg.append(defs);
+  const gShadow = el("g"), gFlow = el("g"), gCell = el("g"), gLabel = el("g");
+  svg.append(gShadow, gFlow, gCell, gLabel);
+
+  /* 球:由外向内画(深度浅的先),嵌套天然叠对 */
+  for (const { cell, cx, cy, r } of all.sort((a, b) => a.cell.depth - b.cell.depth)) {
+    const sw = swatch(cell.identity, cell.phase, cell.activity);
+    const gid = `g${(gradSeq += 1)}`;
+    /* 光源固定左上,全场一致 —— 不一致会立刻穿帮 */
+    defs.append(
+      el("radialGradient", { id: gid, cx: "0.35", cy: "0.3", r: "0.78" },
+        el("stop", { offset: "0%", "stop-color": sw.light }),
+        el("stop", { offset: "55%", "stop-color": sw.base }),
+        el("stop", { offset: "100%", "stop-color": sw.shade })));
+
+    const isBox = cell.kind === "instance";
+    /* 景深:越深越淡。容器还要更透 —— 看得见里面就是 contains 关系本身 */
+    const fade = Math.max(0.4, 1 - cell.depth * 0.11);
+    gShadow.append(el("ellipse", {
+      cx, cy: cy + r * 0.94, rx: r * 0.7, ry: r * 0.14,
+      fill: "var(--ink)", opacity: (0.09 * fade).toFixed(3) }));
+    gCell.append(el("circle", {
+      cx, cy, r, fill: `url(#${gid})`,
+      opacity: (isBox ? fade * 0.4 : fade).toFixed(3),
+      stroke: isBox ? sw.rim : "none", "stroke-width": isBox ? 1.4 : 0 }));
+    /* 高光斑 —— 一个圆读成球,最便宜的那一下 */
+    gCell.append(el("ellipse", {
+      cx: cx - r * 0.3, cy: cy - r * 0.36, rx: r * 0.25, ry: r * 0.16,
+      fill: "white", opacity: ((isBox ? 0.3 : 0.55) * fade).toFixed(3),
+      transform: `rotate(-25 ${cx - r * 0.3} ${cy - r * 0.36})` }));
+
+    if (opts.labels === false) continue;
+    const t = el("text", {
+      x: cx, y: isBox ? cy - r + 17 : cy + 4, "text-anchor": "middle",
+      "font-family": "var(--mono)", "font-size": isBox ? 11 : 10,
+      fill: "var(--ink)", opacity: (isBox ? 0.75 : 0.9) * fade });
+    t.textContent = cell.label;
+    gLabel.append(t);
+  }
+
+  /* 流:certainty 决定虚实与浓淡。边恒 1,隧道靠命中累积 */
+  for (const f of scene.flows) {
+    const to = placed.get(f.to.cell);
+    if (!to) continue;
+    const color = flowColor(f.contract, f.certainty);
+    if (f.from === null) {
+      /* 从没命中过的订阅:一根须。"声明了但没人发"是很值钱的观察 */
+      gFlow.append(el("path", {
+        d: `M ${to.cx} ${to.cy} q -30 -22 -50 -6`, stroke: color,
+        "stroke-width": 1.4, "stroke-dasharray": "2 5", fill: "none",
+        "stroke-linecap": "round" }));
+      continue;
+    }
+    const from = placed.get(f.from.cell);
+    if (!from) continue;
+    const mx = (from.cx + to.cx) / 2;
+    const my = (from.cy + to.cy) / 2 - Math.abs(to.cx - from.cx) * 0.14;
+    const d = `M ${from.cx} ${from.cy} Q ${mx} ${my} ${to.cx} ${to.cy}`;
+    /* 隐形加宽命中路径 —— 低 certainty 的线很淡,不加宽点不中 */
+    gFlow.append(el("path", { d, stroke: "transparent", "stroke-width": 20, fill: "none" }));
+    gFlow.append(el("path", {
+      d, stroke: color, "stroke-width": (1 + f.certainty * 2.1).toFixed(2),
+      "stroke-dasharray": f.certainty >= 1 ? null
+        : `${(3 + f.certainty * 8).toFixed(1)} ${(6 - f.certainty * 4).toFixed(1)}`,
+      fill: "none", "stroke-linecap": "round" }));
+  }
+
+  /* 卡:无端口、不可寻址,所以不连线,贴在主人身边 */
+  for (const card of scene.cards) {
+    const owner = placed.get(card.owner);
+    if (!owner) continue;
+    const sw = swatch(card.kind, "done", 0);
+    const cx = owner.cx + owner.r * 0.7, cy = owner.cy - owner.r * 0.7;
+    gCell.append(el("rect", {
+      x: cx - 8, y: cy - 10, width: 16, height: 20, rx: 2.5,
+      fill: sw.base, stroke: sw.shade, "stroke-width": 0.7,
+      transform: `rotate(-8 ${cx} ${cy})` }));
+  }
+
+  host.replaceChildren(svg);
+}
+
+const SCENE = {"cells":[{"id":"job-1","kind":"instance","parent":null,"depth":0,"label":"job-1","identity":"root@1","ports":[],"phase":"idle","activity":0,"extent":4,"pinned":false},{"id":"job-1#plan","kind":"node","parent":"job-1","depth":1,"label":"plan","identity":"handler:emit","ports":[{"name":"start","direction":"receive"},{"name":"out","direction":"emit"}],"phase":"idle","activity":0.6666666666666666,"extent":2,"pinned":false},{"id":"job-1#merge","kind":"node","parent":"job-1","depth":1,"label":"merge","identity":"handler:noop","ports":[{"name":"got","direction":"receive"},{"name":"exit","direction":"receive"}],"phase":"idle","activity":0.3333333333333333,"extent":2,"pinned":false},{"id":"job-1#watch","kind":"node","parent":"job-1","depth":1,"label":"watch","identity":"handler:noop","ports":[{"name":"heard","direction":"receive"}],"phase":"idle","activity":0.6666666666666666,"extent":1,"pinned":false},{"id":"job-1#idle","kind":"node","parent":"job-1","depth":1,"label":"idle","identity":"handler:noop","ports":[{"name":"never","direction":"receive"}],"phase":"idle","activity":0,"extent":1,"pinned":false},{"id":"job-1/a1","kind":"instance","parent":"job-1","depth":1,"label":"a1","identity":"worker@1","ports":[],"phase":"idle","activity":0,"extent":2,"pinned":false},{"id":"job-1/a1#scan","kind":"node","parent":"job-1/a1","depth":2,"label":"scan","identity":"handler:emit","ports":[{"name":"in","direction":"receive"},{"name":"found","direction":"emit"},{"name":"out","direction":"emit"}],"phase":"idle","activity":1,"extent":3,"pinned":false},{"id":"job-1/a1#wrap","kind":"node","parent":"job-1/a1","depth":2,"label":"wrap","identity":"handler:noop","ports":[{"name":"got","direction":"receive"}],"phase":"idle","activity":0.3333333333333333,"extent":1,"pinned":false},{"id":"job-1/b1","kind":"instance","parent":"job-1","depth":1,"label":"b1","identity":"worker@1","ports":[],"phase":"idle","activity":0,"extent":2,"pinned":false},{"id":"job-1/b1#scan","kind":"node","parent":"job-1/b1","depth":2,"label":"scan","identity":"handler:emit","ports":[{"name":"in","direction":"receive"},{"name":"found","direction":"emit"},{"name":"out","direction":"emit"}],"phase":"idle","activity":1,"extent":3,"pinned":false},{"id":"job-1/b1#wrap","kind":"node","parent":"job-1/b1","depth":2,"label":"wrap","identity":"handler:noop","ports":[{"name":"got","direction":"receive"}],"phase":"idle","activity":0.3333333333333333,"extent":1,"pinned":false}],"cards":[{"id":"job-1/note-plan","label":"note-plan","kind":"artifact","owner":"job-1","version":1},{"id":"job-1/a1/note-scan","label":"note-scan","kind":"artifact","owner":"job-1/a1","version":1},{"id":"job-1/b1/note-scan","label":"note-scan","kind":"artifact","owner":"job-1/b1","version":1}],"flows":[{"id":"job-1:edge:p","from":{"cell":"job-1#plan","port":"out"},"to":{"cell":"job-1#merge","port":"got"},"certainty":1,"activity":0.125},{"id":"job-1:sub:listen:job-1/a1#scan","from":{"cell":"job-1/a1#scan","port":"found"},"to":{"cell":"job-1#watch","port":"heard"},"certainty":0.4,"activity":0.125,"tunnel":"findings"},{"id":"job-1:sub:listen:job-1/b1#scan","from":{"cell":"job-1/b1#scan","port":"found"},"to":{"cell":"job-1#watch","port":"heard"},"certainty":0.4,"activity":0.125,"tunnel":"findings"},{"id":"job-1:sub:quiet","from":null,"to":{"cell":"job-1#idle","port":"never"},"certainty":0,"activity":0,"tunnel":"silence"},{"id":"job-1/a1:edge:e","from":{"cell":"job-1/a1#scan","port":"out"},"to":{"cell":"job-1/a1#wrap","port":"got"},"certainty":1,"activity":0.125},{"id":"job-1/b1:edge:e","from":{"cell":"job-1/b1#scan","port":"out"},"to":{"cell":"job-1/b1#wrap","port":"got"},"certainty":1,"activity":0.125}],"tethers":[{"from":"job-1","to":"job-1#plan","relation":"contains"},{"from":"job-1","to":"job-1#merge","relation":"contains"},{"from":"job-1","to":"job-1#watch","relation":"contains"},{"from":"job-1","to":"job-1#idle","relation":"contains"},{"from":"job-1","to":"job-1/a1","relation":"contains"},{"from":"job-1/a1","to":"job-1/a1#scan","relation":"contains"},{"from":"job-1/a1","to":"job-1/a1#wrap","relation":"contains"},{"from":"job-1","to":"job-1/b1","relation":"contains"},{"from":"job-1/b1","to":"job-1/b1#scan","relation":"contains"},{"from":"job-1/b1","to":"job-1/b1#wrap","relation":"contains"},{"from":"job-1","to":"job-1/note-plan","relation":"refs"},{"from":"job-1/a1","to":"job-1/a1/note-scan","relation":"refs"},{"from":"job-1/b1","to":"job-1/b1/note-scan","relation":"refs"}],"viewport":"job-1"};
+render(SCENE, document.getElementById("stage"));
+
+/* ── 图例:用**同一个渲染器**画,所以它是设计的实例而不是描述 ── */
+const cell = (o) => ({ id: o.id, kind: o.kind ?? "node", parent: o.parent ?? null,
+  depth: o.depth ?? 0, label: o.label ?? "", identity: o.identity ?? o.id,
+  ports: [], phase: o.phase ?? "idle", activity: o.activity ?? 0,
+  extent: 0, pinned: false });
+
+const LEGEND = [
+  {
+    title: "球面着色",
+    body: "径向渐变加一个高光斑,一个圆就读成球。光源固定左上,<strong>全场一致</strong> —— 不一致会立刻穿帮。",
+    scene: { cells: [cell({ id: "a", label: "" })], cards: [], flows: [], tethers: [], viewport: "" },
+  },
+  {
+    title: "半透明容器",
+    body: "子实例浮在父球<strong>里面</strong>。看得见里面就是 <code>contains</code> 关系本身,于是这一整类连接一根线都不用画。",
+    scene: { cells: [
+      cell({ id: "box", kind: "instance", label: "", identity: "worker@1" }),
+      cell({ id: "k1", parent: "box", depth: 1, identity: "handler:scan" }),
+      cell({ id: "k2", parent: "box", depth: 1, identity: "handler:wrap" }),
+    ], cards: [], flows: [], tethers: [], viewport: "" },
+  },
+  {
+    title: "确定度即虚实",
+    body: "边 <code>certainty=1</code>,注册期就证实过;隧道靠命中累积。<strong>边和隧道是同一元素的两个确定度</strong>,不是两种线。",
+    scene: { cells: [
+      cell({ id: "s1", label: "", identity: "handler:a" }),
+      cell({ id: "s2", label: "", identity: "handler:b" }),
+      cell({ id: "s3", label: "", identity: "handler:c" }),
+    ], cards: [], flows: [
+      { id: "f1", from: { cell: "s1", port: "o" }, to: { cell: "s2", port: "i" }, certainty: 1, activity: 0.3 },
+      { id: "f2", from: { cell: "s2", port: "o" }, to: { cell: "s3", port: "i" }, certainty: 0.4, activity: 0.1, tunnel: "t" },
+    ], tethers: [], viewport: "" },
+  },
+  {
+    title: "色相即身份",
+    body: "同一个模板的所有实例同色。<strong>明度锁死</strong>,所有球视觉重量相同 —— 没有一个比别的吵。",
+    scene: { cells: [
+      cell({ id: "h1", label: "", identity: "worker@1" }),
+      cell({ id: "h2", label: "", identity: "worker@1" }),
+      cell({ id: "h3", label: "", identity: "handler:collect" }),
+      cell({ id: "h4", label: "", identity: "agent:claude" }),
+    ], cards: [], flows: [], tethers: [], viewport: "" },
+  },
+];
+
+const legendHost = document.getElementById("legend");
+for (const entry of LEGEND) {
+  const box = document.createElement("div");
+  box.className = "item";
+  const art = document.createElement("div");
+  render(entry.scene, art, { labels: false, pad: 14 });
+  const h3 = document.createElement("h3");
+  h3.textContent = entry.title;
+  const p = document.createElement("p");
+  p.innerHTML = entry.body;
+  box.append(art.firstChild, h3, p);
+  legendHost.append(box);
+}
+</script>

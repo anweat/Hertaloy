@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Hertaloy 画布</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0; padding: 28px;
+    background: oklch(0.985 0.004 250);
+    font: 13px/1.5 ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: oklch(0.45 0.02 250);
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; color: oklch(0.38 0.02 250); }
+  p  { margin: 0 0 20px; font-size: 12px; opacity: 0.7; }
+  #stage { max-width: 1100px; }
+</style>
+<h1>Hertaloy 画布 · 伪 3D 第一版</h1>
+<p>容器是半透明的，子实例浮在里面 —— 归属关系不画线。色相 = 身份，明度锁死。</p>
+<div id="stage"></div>
+<script type="module">
+  import { render } from "./render.js";
+  const scene = await (await fetch("./scene.sample.json")).json();
+  render(scene, document.getElementById("stage"));
+</script>
