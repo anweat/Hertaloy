@@ -77,7 +77,15 @@ export const SnapshotTemplate = z.object({
     )
     .default({}),
   edges: z.record(z.object({ from: Endpoint.partial({ traceid: true }), to: Endpoint.partial({ traceid: true }) })).default({}),
-  children: z.record(z.object({ template: z.string() }).passthrough()).default({}),
+  children: z
+    .record(
+      z.object({
+        template: z.string(),
+        entry: Endpoint.partial({ traceid: true }).optional(),
+        exit: Endpoint.partial({ traceid: true }).optional(),
+      }),
+    )
+    .default({}),
   subscriptions: z
     .record(z.object({ tunnel: z.string(), to: Endpoint.partial({ traceid: true }) }))
     .default({}),

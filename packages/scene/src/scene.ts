@@ -35,7 +35,17 @@ export interface AnchorRef {
  */
 export interface Cell {
   readonly id: string;
-  readonly kind: "instance" | "node";
+  /**
+   * `slot` 是**声明**，`instance` 是它的实现，`node` 是一步。
+   *
+   * 加 `slot` 不是加第五种元素 —— 它仍然是"有端口、可能有内部的东西"，
+   * 只是处在"已声明、尚未实现"的状态。少了它，定义面上**声明了还没 spawn
+   * 的子槽整个不存在**，而那恰恰是"可实例化"的那个位置。
+   * 与"从没命中过的订阅仍然要画"是同一条道理。
+   */
+  readonly kind: "instance" | "node" | "slot";
+  /** 实例填的是哪个子槽；根实例没有。 */
+  readonly slot?: string;
   readonly parent: string | null;
   readonly depth: number;
   readonly label: string;

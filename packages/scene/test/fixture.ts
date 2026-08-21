@@ -1,8 +1,8 @@
 /**
  * 真跑出来的快照 —— 由 `packages/state/fixture-gen.mts` 生成。
  *
- * 刻意造了生命周期落差：a1 已终止、b1 还开着、review 正在跑、audit 失败。
- * 手编夹具会不知不觉编成"我以为的形状"。要更新就重跑那个脚本。
+ * 刻意造了两处落差：同一个子槽 a 扇出三个实例且命运不同（a1/a2 收口、
+ * a3 还开着），子槽 b 一次都没 spawn。手编夹具会编成"我以为的形状"。
  */
 export const FIXTURE: unknown = {
  "root": "job-1",
@@ -46,11 +46,25 @@ export const FIXTURE: unknown = {
     }
    }
   },
-  "job-1/b1": {
-   "traceid": "job-1/b1",
+  "job-1/a2": {
+   "traceid": "job-1/a2",
+   "templateRef": "worker@1",
+   "status": "TERMINAL",
+   "slot": "a",
+   "nodes": {
+    "scan": {
+     "nodeId": "scan"
+    },
+    "wrap": {
+     "nodeId": "wrap"
+    }
+   }
+  },
+  "job-1/a3": {
+   "traceid": "job-1/a3",
    "templateRef": "worker@1",
    "status": "OPEN",
-   "slot": "b",
+   "slot": "a",
    "nodes": {
     "scan": {
      "nodeId": "scan"
@@ -328,7 +342,7 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-6",
    "target": {
-    "traceid": "job-1/b1",
+    "traceid": "job-1/a2",
     "node": "scan",
     "port": "in"
    },
@@ -337,13 +351,13 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-7",
    "target": {
-    "traceid": "job-1/b1",
+    "traceid": "job-1/a2",
     "node": "wrap",
     "port": "got"
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1/b1",
+    "traceid": "job-1/a2",
     "node": "scan",
     "port": "out"
    }
@@ -357,7 +371,7 @@ export const FIXTURE: unknown = {
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1/b1",
+    "traceid": "job-1/a2",
     "node": "scan",
     "port": "found"
    },
@@ -366,6 +380,44 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-9",
    "target": {
+    "traceid": "job-1/a3",
+    "node": "scan",
+    "port": "in"
+   },
+   "state": "CONSUMED"
+  },
+  {
+   "id": "msg-10",
+   "target": {
+    "traceid": "job-1/a3",
+    "node": "wrap",
+    "port": "got"
+   },
+   "state": "CONSUMED",
+   "source": {
+    "traceid": "job-1/a3",
+    "node": "scan",
+    "port": "out"
+   }
+  },
+  {
+   "id": "msg-11",
+   "target": {
+    "traceid": "job-1",
+    "node": "watch",
+    "port": "heard"
+   },
+   "state": "CONSUMED",
+   "source": {
+    "traceid": "job-1/a3",
+    "node": "scan",
+    "port": "found"
+   },
+   "tunnel": "findings"
+  },
+  {
+   "id": "msg-12",
+   "target": {
     "traceid": "job-1",
     "node": "review",
     "port": "task"
@@ -373,7 +425,7 @@ export const FIXTURE: unknown = {
    "state": "CLAIMED"
   },
   {
-   "id": "msg-10",
+   "id": "msg-13",
    "target": {
     "traceid": "job-1",
     "node": "audit",
@@ -382,16 +434,16 @@ export const FIXTURE: unknown = {
    "state": "QUEUED"
   },
   {
-   "id": "msg-11",
+   "id": "msg-14",
    "target": {
-    "traceid": "job-1/b1",
+    "traceid": "job-1/a3",
     "node": "scan",
     "port": "in"
    },
    "state": "QUEUED"
   },
   {
-   "id": "msg-12",
+   "id": "msg-15",
    "target": {
     "traceid": "job-1",
     "node": "merge",
@@ -400,6 +452,18 @@ export const FIXTURE: unknown = {
    "state": "QUEUED",
    "source": {
     "traceid": "job-1/a1"
+   }
+  },
+  {
+   "id": "msg-16",
+   "target": {
+    "traceid": "job-1",
+    "node": "merge",
+    "port": "exit"
+   },
+   "state": "QUEUED",
+   "source": {
+    "traceid": "job-1/a2"
    }
   }
  ],
@@ -463,17 +527,17 @@ export const FIXTURE: unknown = {
    "version": 3
   },
   {
-   "object_id": "job-1/b1/note-scan",
+   "object_id": "job-1/a2/note-scan",
    "kind": "artifact",
    "version": 1
   },
   {
-   "object_id": "job-1/b1/$run",
+   "object_id": "job-1/a2/$run",
    "kind": "run",
    "version": 1
   },
   {
-   "object_id": "job-1/b1/$run",
+   "object_id": "job-1/a2/$run",
    "kind": "run",
    "version": 2
   },
@@ -481,6 +545,26 @@ export const FIXTURE: unknown = {
    "object_id": "job-1/$run",
    "kind": "run",
    "version": 4
+  },
+  {
+   "object_id": "job-1/a3/note-scan",
+   "kind": "artifact",
+   "version": 1
+  },
+  {
+   "object_id": "job-1/a3/$run",
+   "kind": "run",
+   "version": 1
+  },
+  {
+   "object_id": "job-1/a3/$run",
+   "kind": "run",
+   "version": 2
+  },
+  {
+   "object_id": "job-1/$run",
+   "kind": "run",
+   "version": 5
   },
   {
    "object_id": "job-1/$exec",

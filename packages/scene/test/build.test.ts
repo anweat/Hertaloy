@@ -14,9 +14,9 @@ const flow = (from: string | null, to: string) =>
   scene.flows.find((f) => (f.from?.cell ?? null) === from && f.to.cell === to);
 
 describe("★ 实体：容器即实例，不是两种元素", () => {
-  it("实例和节点都是 Cell，只有 kind 不同", () => {
+  it("三种 kind：声明的槽、它的实例、实例里的节点", () => {
     const kinds = new Set(scene.cells.map((c) => c.kind));
-    expect(kinds).toEqual(new Set(["instance", "node"]));
+    expect(kinds).toEqual(new Set(["instance", "node", "slot"]));
   });
 
   it("深度从 traceid 段数免费得到，不需要额外账本", () => {
@@ -27,7 +27,7 @@ describe("★ 实体：容器即实例，不是两种元素", () => {
 
   it("★ 同一个模板的两个实例身份相同 → 自动同色", () => {
     const a = scene.cells.find((c) => c.id === "job-1/a1");
-    const b = scene.cells.find((c) => c.id === "job-1/b1");
+    const b = scene.cells.find((c) => c.id === "job-1/a2");
     expect(a?.identity).toBe(b?.identity);
     expect(a?.identity).toBe("worker@1");
   });
@@ -45,7 +45,7 @@ describe("★ 流：边和隧道是同一元素的两个确定度", () => {
 
   it("★ 同一条隧道的两个来源各画一条 —— 这才是补 source 换来的东西", () => {
     const fromA = flow(nodeCellId("job-1/a1", "scan"), nodeCellId("job-1", "watch"));
-    const fromB = flow(nodeCellId("job-1/b1", "scan"), nodeCellId("job-1", "watch"));
+    const fromB = flow(nodeCellId("job-1/a2", "scan"), nodeCellId("job-1", "watch"));
     expect(fromA?.tunnel).toBe("findings");
     expect(fromB?.tunnel).toBe("findings");
     // 补之前这两条长得一模一样，只能在落点上堆一个数字
@@ -92,7 +92,7 @@ describe("★ 场景是纯函数", () => {
   it("★ 视口就是前缀 —— 裁剪即前缀查询", () => {
     const zoomed = buildScene(parseSnapshot(FIXTURE), "job-1/a1");
     expect(zoomed.cells.every((c) => c.id.startsWith("job-1/a1"))).toBe(true);
-    expect(zoomed.cells.some((c) => c.id.startsWith("job-1/b1"))).toBe(false);
+    expect(zoomed.cells.some((c) => c.id.startsWith("job-1/a2"))).toBe(false);
   });
 });
 
@@ -116,13 +116,13 @@ describe("★ 生命周期是一段区间，不是一个颜色", () => {
   });
 
   it("★ 还开着的实例右端为 null —— 带不收口", () => {
-    expect(cell("job-1/b1")?.span.to).toBeNull();
+    expect(cell("job-1/a3")?.span.to).toBeNull();
     expect(cell("job-1")?.span.to).toBeNull();
   });
 
   it("★ 晚出生的左端更靠右 —— 出生点看得见", () => {
     const a = cell("job-1/a1")?.span.from ?? 0;
-    const b = cell("job-1/b1")?.span.from ?? 0;
+    const b = cell("job-1/a3")?.span.from ?? 0;
     expect(b).toBeGreaterThan(a);
   });
 
@@ -159,5 +159,39 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
 
   it("同步 handler 没有执行记录 → idle（它没有可观测的 RUNNING 窗口）", () => {
     expect(phase("job-1#plan")).toBe("idle");
+  });
+});
+
+describe("★ 子槽：声明是一等公民", () => {
+  const slot = (id: string) => scene.cells.find((c) => c.id === id);
+
+  it("声明的子槽出场", () => {
+    expect(slot("job-1~a")?.kind).toBe("slot");
+    expect(slot("job-1~a")?.identity).toBe("worker@1");
+  });
+
+  it("★ 一次都没 spawn 过的槽也出场 —— 声明本身是信息", () => {
+    // 与"从没命中过的订阅仍然要画"同一条道理
+    expect(slot("job-1~b")).toBeDefined();
+    expect(scene.cells.filter((c) => c.parent === "job-1~b")).toEqual([]);
+  });
+
+  it("★ 同一个槽的 N 个实例都挂在那个槽上 —— 画布上它们叠在一个位置", () => {
+    const onA = scene.cells.filter((c) => c.parent === "job-1~a");
+    expect(onA.map((c) => c.id).sort()).toEqual(["job-1/a1", "job-1/a2", "job-1/a3"]);
+    expect(onA.every((c) => c.slot === "a")).toBe(true);
+  });
+
+  it("★ 叠在一起但命运不同 —— 不是一个东西的三个副本", () => {
+    expect(scene.cells.find((c) => c.id === "job-1/a1")?.span.to).not.toBeNull();
+    expect(scene.cells.find((c) => c.id === "job-1/a3")?.span.to).toBeNull();
+  });
+
+  it("槽带着 entry / exit 锚点 —— 折叠时它就是靠这个被寻址的", () => {
+    expect(slot("job-1~a")?.ports.map((p) => p.direction).sort()).toEqual(["emit", "receive"]);
+  });
+
+  it("根实例没有槽", () => {
+    expect(scene.cells.find((c) => c.id === "job-1")?.slot).toBeUndefined();
   });
 });

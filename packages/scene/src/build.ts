@@ -16,6 +16,11 @@
 import type { Cell, Card, Flow, Phase, Scene, Tether, Anchor } from "./scene.js";
 import type { Snapshot, SnapshotMessage } from "./snapshot.js";
 
+/** 子槽在场景里的 id：实例路径 + `~` + 槽名。 */
+export function slotCellId(traceid: string, slot: string): string {
+  return `${traceid}~${slot}`;
+}
+
 /** 节点在场景里的 id：实例路径 + `#` + 节点名。 */
 export function nodeCellId(traceid: string, nodeId: string): string {
   return `${traceid}#${nodeId}`;
@@ -134,12 +139,21 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
     const template = snapshot.templates[instance.templateRef];
     const nodeIds = Object.keys(instance.nodes);
 
-    // ── 实例本身是一个 Cell（容器即实例：不是两种元素） ──
+    /**
+     * ── 实例本身是一个 Cell（容器即实例） ──
+     *
+     * 父不是父实例，是**子槽**：模板上声明的那个位置。同一个槽能有 N 个活实例
+     * （实测 job/a1 a2 a3 —— 扇出就长这样），所以画布上它们叠在那个位置上，
+     * 而不是各自散开。根实例没有槽，父就是 null。
+     */
     const live = spanOf(instance.traceid, instance.status === "OPEN");
+    const holder =
+      instance.slot === undefined ? null : slotCellId(parentTrace(instance.traceid) ?? "", instance.slot);
     cells.push({
       id: instance.traceid,
       kind: "instance",
-      parent: parentTrace(instance.traceid),
+      ...(instance.slot === undefined ? {} : { slot: instance.slot }),
+      parent: holder,
       depth: depthOf(instance.traceid),
       label: instance.traceid.split("/").pop() ?? instance.traceid,
       identity: instance.templateRef,
@@ -152,9 +166,8 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
       pinned: false,
     });
 
-    const parent = parentTrace(instance.traceid);
-    if (parent !== null && inScope(parent)) {
-      tethers.push({ from: parent, to: instance.traceid, relation: "contains" });
+    if (holder !== null) {
+      tethers.push({ from: holder, to: instance.traceid, relation: "contains" });
     }
 
     // ── 节点也是 Cell，父是所在实例 ──
@@ -188,6 +201,40 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
     }
 
     if (template === undefined) continue;
+
+    /**
+     * ── 声明的子槽出场，**包括一次都没 spawn 过的** ──
+     *
+     * 定义面上"可实例化"的那个位置就是它。少了它，一个声明好却还没用过的
+     * 子槽整个不可见 —— 与"从没命中过的订阅仍然要画"是同一条道理：
+     * **声明本身是信息**，不该因为还没发生就消失。
+     */
+    for (const [slotId, slot] of Object.entries(template.children)) {
+      const id = slotCellId(instance.traceid, slotId);
+      const anchors: Anchor[] = [];
+      if (slot.entry !== undefined) {
+        anchors.push({ name: `${slot.entry.node}.${slot.entry.port}`, direction: "receive" });
+      }
+      if (slot.exit !== undefined) {
+        anchors.push({ name: `${slot.exit.node}.${slot.exit.port}`, direction: "emit" });
+      }
+      cells.push({
+        id,
+        kind: "slot",
+        parent: instance.traceid,
+        depth: depthOf(instance.traceid) + 1,
+        label: slotId,
+        identity: slot.template,
+        ports: anchors,
+        span: live.span,
+        marks: [],
+        phase: "idle",
+        activity: 0,
+        extent: 0,
+        pinned: false,
+      });
+      tethers.push({ from: instance.traceid, to: id, relation: "contains" });
+    }
 
     // ── 内网边：certainty 恒 1，注册期就证实过 ──
     for (const [edgeId, edge] of Object.entries(template.edges)) {

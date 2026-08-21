@@ -128,18 +128,26 @@ s.runtime.registerHandler("emit", (_v, ctx) => {
 s.runtime.registerHandler("noop", () => ({}));
 
 s.runtime.send({ traceid: "job-1", node: "plan", port: "start" }, {});
-const a = s.registry.spawn("job-1", "a", "a1");
-s.runtime.send({ traceid: a.traceid, node: "scan", port: "in" }, {});
+
+/**
+ * **同一个子槽扇出三个实例** —— 实测一个槽能有 N 个活实例（a1/a2/a3）。
+ * 画布上它们叠在模板那一个位置上，而不是各自散开。
+ */
+const a1 = s.registry.spawn("job-1", "a", "a1");
+s.runtime.send({ traceid: a1.traceid, node: "scan", port: "in" }, {});
 s.runtime.drain();
 
-// b1 晚一点出生 —— 于是两条带的左端错开，出生点看得见
-const b = s.registry.spawn("job-1", "b", "b1");
-s.runtime.send({ traceid: b.traceid, node: "scan", port: "in" }, {});
+const a2 = s.registry.spawn("job-1", "a", "a2");
+s.runtime.send({ traceid: a2.traceid, node: "scan", port: "in" }, {});
+s.runtime.drain();
+
+// a3 晚出生，且留一条没消费的活儿 → 它会一直开着
+const a3 = s.registry.spawn("job-1", "a", "a3");
+s.runtime.send({ traceid: a3.traceid, node: "scan", port: "in" }, {});
 s.runtime.drain();
 
 /**
- * review 先出去且永不返回 —— 它得是 RUNNING，那是**有宽度的执行段**，
- * 也是"真的在外面跑"与"内核里一瞬间的事"的区别所在。
+ * review 出去且永不返回 —— 它得是 RUNNING，那是**有宽度的执行段**。
  */
 s.runtime.send({ traceid: "job-1", node: "review", port: "task" }, {});
 void s.runtime.stepAgent();
@@ -150,12 +158,12 @@ s.runtime.send({ traceid: "job-1", node: "audit", port: "task" }, {});
 await s.runtime.stepAgent();
 
 /**
- * a1 收口、b1 继续开着 —— 生命周期的落差就在这儿。
- *
- * b1 靠**还有一条没消费的消息**留住：settleAll 收敛的前提是没有在途活儿，
- * 所以给它塞一条不 drain 的消息就够了，不需要额外机关。
+ * a1/a2 收口、a3 继续开着 —— 同一个槽的三个实例命运不同，
+ * 这正是"叠加"要显示的东西：它们不是一个东西的三个副本，是三条各自的命。
+ * a3 靠**还有一条没消费的消息**留住。
+ * 子槽 b 一次都不 spawn —— 声明了没用过的那个位置也要看得见。
  */
-s.runtime.send({ traceid: b.traceid, node: "scan", port: "in" }, {});
+s.runtime.send({ traceid: a3.traceid, node: "scan", port: "in" }, {});
 s.runtime.settleAll();
 s.persist();
 
