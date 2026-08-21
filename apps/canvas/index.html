@@ -21,8 +21,9 @@
     --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
-  :root:not([data-theme="light"]) {
-    @media (prefers-color-scheme: dark) {
+  /* media 在外、选择器在内 —— 反过来写要靠 CSS 嵌套，不支持的解析器会整条丢掉 */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
       --paper:  oklch(0.168 0.012 258);
       --sheet:  oklch(0.213 0.014 258);
       --ink:    oklch(0.94 0.006 258);
