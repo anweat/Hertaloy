@@ -48,6 +48,41 @@ function certaintyFromHits(hits: number): number {
   return 1 - Math.pow(0.6, hits);
 }
 
+/**
+ * `msg-N` → N。序号是内核唯一的时间刻度（L0：没有墙钟）。
+ *
+ * 认不出格式就返回 0 —— 宁可把它排在最左，也不要因为一条怪 id 让整张图不画。
+ */
+function seqOf(messageId: string): number {
+  const m = /(\d+)$/.exec(messageId);
+  return m === null ? 0 : Number(m[1]);
+}
+
+/**
+ * 每个 traceid / 节点被碰到的序号集合。
+ *
+ * "碰到"含**收和发**两侧：只看收的话，一个只往外发的节点会显得从没活过。
+ */
+function touchIndex(messages: readonly SnapshotMessage[]): Map<string, number[]> {
+  const index = new Map<string, number[]>();
+  const add = (key: string, seq: number) => {
+    const list = index.get(key);
+    if (list === undefined) index.set(key, [seq]);
+    else list.push(seq);
+  };
+  for (const msg of messages) {
+    const seq = seqOf(msg.id);
+    add(msg.target.traceid, seq);
+    add(nodeCellId(msg.target.traceid, msg.target.node), seq);
+    if (msg.source === undefined) continue;
+    add(msg.source.traceid, seq);
+    if (msg.source.node !== undefined) {
+      add(nodeCellId(msg.source.traceid, msg.source.node), seq);
+    }
+  }
+  return index;
+}
+
 function phaseOf(
   traceid: string,
   nodeId: string,
@@ -63,6 +98,17 @@ function phaseOf(
 export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
   const scope = viewport ?? snapshot.root ?? "";
   const recent = recentMessages(snapshot.messages);
+  const touched = touchIndex(recent);
+  const seqs = recent.map((m) => seqOf(m.id));
+  const range = { from: Math.min(1, ...seqs), to: Math.max(1, ...seqs) };
+
+  /** 生存期：碰到过的最早到最晚。还开着的实例右端为 null —— 带不收口。 */
+  const spanOf = (key: string, alive: boolean) => {
+    const marks = (touched.get(key) ?? []).slice().sort((a, b) => a - b);
+    const from = marks.length === 0 ? range.from : (marks[0] as number);
+    const to = alive ? null : marks.length === 0 ? range.to : (marks[marks.length - 1] as number);
+    return { span: { from, to }, marks };
+  };
 
   // ── 流量：按落点与来源分别计数（都只数消息，见文件头） ──
   const inbound = new Map<string, number>();
@@ -89,6 +135,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
     const nodeIds = Object.keys(instance.nodes);
 
     // ── 实例本身是一个 Cell（容器即实例：不是两种元素） ──
+    const live = spanOf(instance.traceid, instance.status === "OPEN");
     cells.push({
       id: instance.traceid,
       kind: "instance",
@@ -97,6 +144,8 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
       label: instance.traceid.split("/").pop() ?? instance.traceid,
       identity: instance.templateRef,
       ports: [],
+      span: live.span,
+      marks: live.marks,
       phase: instance.status === "OPEN" ? "idle" : "done",
       activity: 0,
       extent: nodeIds.length,
@@ -117,6 +166,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         ...(p.contract === undefined ? {} : { contract: p.contract }),
       }));
       const id = nodeCellId(instance.traceid, nodeId);
+      const own = spanOf(id, instance.status === "OPEN");
       cells.push({
         id,
         kind: "node",
@@ -126,6 +176,9 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         // agent 节点与内置 handler 是不同的身份，所以颜色也该不同
         identity: decl?.agent !== undefined ? `agent:${decl.agent.argv[0]}` : `handler:${decl?.handler ?? "?"}`,
         ports,
+        // 生存期继承实例（节点与实例同生共死），刻点是自己身上发生的事
+        span: live.span,
+        marks: own.marks,
         phase: phaseOf(instance.traceid, nodeId, snapshot),
         activity: activityOf(id),
         extent: ports.length,
@@ -141,20 +194,23 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
       const from = nodeCellId(instance.traceid, edge.from.node);
       const to = nodeCellId(instance.traceid, edge.to.node);
       const contract = template.nodes[edge.to.node]?.ports[edge.to.port]?.contract;
-      const hits = recent.filter(
-        (m) =>
-          m.target.traceid === instance.traceid &&
-          m.target.node === edge.to.node &&
-          m.target.port === edge.to.port &&
-          m.source?.node === edge.from.node &&
-          m.source.traceid === instance.traceid,
-      ).length;
+      const at = recent
+        .filter(
+          (m) =>
+            m.target.traceid === instance.traceid &&
+            m.target.node === edge.to.node &&
+            m.target.port === edge.to.port &&
+            m.source?.node === edge.from.node &&
+            m.source.traceid === instance.traceid,
+        )
+        .map((m) => seqOf(m.id));
       flows.push({
         id: `${instance.traceid}:edge:${edgeId}`,
         from: { cell: from, port: edge.from.port },
         to: { cell: to, port: edge.to.port },
         certainty: 1,
-        activity: hits / Math.max(1, recent.length),
+        activity: at.length / Math.max(1, recent.length),
+        at,
         ...(contract === undefined ? {} : { contract }),
       });
     }
@@ -184,24 +240,28 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
           to,
           certainty: 0,
           activity: 0,
+          at: [],
           tunnel: sub.tunnel,
         });
         continue;
       }
-      const bySource = new Map<string, number>();
+      const bySource = new Map<string, number[]>();
       for (const m of hits) {
         if (m.source === undefined || m.source.node === undefined) continue;
         const key = `${nodeCellId(m.source.traceid, m.source.node)}|${m.source.port ?? ""}`;
-        bump(bySource, key);
+        const list = bySource.get(key);
+        if (list === undefined) bySource.set(key, [seqOf(m.id)]);
+        else list.push(seqOf(m.id));
       }
-      for (const [key, count] of bySource) {
+      for (const [key, at] of bySource) {
         const [cell, port] = key.split("|") as [string, string];
         flows.push({
           id: `${instance.traceid}:sub:${subId}:${cell}`,
           from: { cell, port },
           to,
-          certainty: certaintyFromHits(count),
-          activity: count / Math.max(1, recent.length),
+          certainty: certaintyFromHits(at.length),
+          activity: at.length / Math.max(1, recent.length),
+          at,
           tunnel: sub.tunnel,
         });
       }
@@ -239,5 +299,5 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
     tethers.push({ from: owner, to: objectId, relation: "refs" });
   }
 
-  return { cells, cards, flows, tethers, viewport: scope };
+  return { range, cells, cards, flows, tethers, viewport: scope };
 }

@@ -44,6 +44,21 @@ export interface Cell {
   readonly ports: readonly Anchor[];
 
   // ── 通道 ──
+  /**
+   * 生存期，按**消息序号**度量 —— `to` 为 null 表示还活着。
+   *
+   * 这是"生命周期"那条轴的落点：实例的生存期是一段区间，渲染成带的长度，
+   * 于是"谁还活着 / 谁死了 / 谁比谁活得久"一眼可读，不用靠颜色编码。
+   *
+   * ⚠️ **是推出来的，不是内核记的。** `ContainerInstance` 只有 status，
+   * 没有出生/终止序号，所以这里取"最早/最晚碰到这个 traceid 的消息"。
+   * 后果：早于窗口（最近 200 条）的出生点看不见，会被截在窗口左沿。
+   * 真要精确得内核记一笔 —— 和 `Message.source` 是同一类缺口，
+   * 但这个近似够画图，先不动内核。
+   */
+  readonly span: { readonly from: number; readonly to: number | null };
+  /** 这个 cell 上发生过消息的序号 —— 带上的刻点。 */
+  readonly marks: readonly number[];
   readonly phase: Phase;
   /** 0..1，最近窗口里的流量 → 亮度 */
   readonly activity: number;
@@ -75,6 +90,13 @@ export interface Flow {
   readonly to: AnchorRef;
   readonly certainty: number;
   readonly activity: number;
+  /**
+   * 这条流实际发生过的序号。空数组 = 声明了但从没走过。
+   *
+   * 序号轴布局里，一条消息就是**在某个序号上从一条道跳到另一条道**，
+   * 所以"何时"和"何事"一样是渲染要的。
+   */
+  readonly at: readonly number[];
   readonly tunnel?: string;
   readonly contract?: string;
 }
@@ -87,6 +109,8 @@ export interface Tether {
 }
 
 export interface Scene {
+  /** 序号轴的范围 —— 渲染器拿它当横轴刻度。 */
+  readonly range: { readonly from: number; readonly to: number };
   readonly cells: readonly Cell[];
   readonly cards: readonly Card[];
   readonly flows: readonly Flow[];

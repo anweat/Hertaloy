@@ -1,8 +1,8 @@
 /**
  * 真跑出来的快照 —— 由 `packages/state/fixture-gen.mts` 生成。
  *
- * 手编夹具会不知不觉编成"我以为的形状"，而这个项目最熟悉的翻车方式
- * 恰恰是两端各自都绿、中间对不上。要更新就重跑那个脚本。
+ * 刻意造了生命周期落差：a1 已终止、b1 还开着、review 正在跑、audit 失败。
+ * 手编夹具会不知不觉编成"我以为的形状"。要更新就重跑那个脚本。
  */
 export const FIXTURE: unknown = {
  "root": "job-1",
@@ -21,6 +21,12 @@ export const FIXTURE: unknown = {
     "watch": {
      "nodeId": "watch"
     },
+    "review": {
+     "nodeId": "review"
+    },
+    "audit": {
+     "nodeId": "audit"
+    },
     "idle": {
      "nodeId": "idle"
     }
@@ -29,7 +35,7 @@ export const FIXTURE: unknown = {
   "job-1/a1": {
    "traceid": "job-1/a1",
    "templateRef": "worker@1",
-   "status": "OPEN",
+   "status": "TERMINAL",
    "slot": "a",
    "nodes": {
     "scan": {
@@ -100,6 +106,44 @@ export const FIXTURE: unknown = {
        "servo": {
         "vars": {}
        }
+      }
+     }
+    },
+    "review": {
+     "kind": "handler",
+     "agent": {
+      "argv": [
+       "claude"
+      ]
+     },
+     "ports": {
+      "task": {
+       "direction": "receive",
+       "servo": {
+        "vars": {}
+       }
+      },
+      "done": {
+       "direction": "emit"
+      }
+     }
+    },
+    "audit": {
+     "kind": "handler",
+     "agent": {
+      "argv": [
+       "codex"
+      ]
+     },
+     "ports": {
+      "task": {
+       "direction": "receive",
+       "servo": {
+        "vars": {}
+       }
+      },
+      "done": {
+       "direction": "emit"
       }
      }
     },
@@ -241,15 +285,6 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-3",
    "target": {
-    "traceid": "job-1/b1",
-    "node": "scan",
-    "port": "in"
-   },
-   "state": "CONSUMED"
-  },
-  {
-   "id": "msg-4",
-   "target": {
     "traceid": "job-1",
     "node": "merge",
     "port": "got"
@@ -262,7 +297,7 @@ export const FIXTURE: unknown = {
    }
   },
   {
-   "id": "msg-5",
+   "id": "msg-4",
    "target": {
     "traceid": "job-1/a1",
     "node": "wrap",
@@ -276,7 +311,7 @@ export const FIXTURE: unknown = {
    }
   },
   {
-   "id": "msg-6",
+   "id": "msg-5",
    "target": {
     "traceid": "job-1",
     "node": "watch",
@@ -289,6 +324,15 @@ export const FIXTURE: unknown = {
     "port": "found"
    },
    "tunnel": "findings"
+  },
+  {
+   "id": "msg-6",
+   "target": {
+    "traceid": "job-1/b1",
+    "node": "scan",
+    "port": "in"
+   },
+   "state": "CONSUMED"
   },
   {
    "id": "msg-7",
@@ -318,9 +362,60 @@ export const FIXTURE: unknown = {
     "port": "found"
    },
    "tunnel": "findings"
+  },
+  {
+   "id": "msg-9",
+   "target": {
+    "traceid": "job-1",
+    "node": "review",
+    "port": "task"
+   },
+   "state": "CLAIMED"
+  },
+  {
+   "id": "msg-10",
+   "target": {
+    "traceid": "job-1",
+    "node": "audit",
+    "port": "task"
+   },
+   "state": "QUEUED"
+  },
+  {
+   "id": "msg-11",
+   "target": {
+    "traceid": "job-1/b1",
+    "node": "scan",
+    "port": "in"
+   },
+   "state": "QUEUED"
+  },
+  {
+   "id": "msg-12",
+   "target": {
+    "traceid": "job-1",
+    "node": "merge",
+    "port": "exit"
+   },
+   "state": "QUEUED",
+   "source": {
+    "traceid": "job-1/a1"
+   }
   }
  ],
- "records": [],
+ "records": [
+  {
+   "traceid": "job-1",
+   "nodeId": "review",
+   "status": "RUNNING"
+  },
+  {
+   "traceid": "job-1",
+   "nodeId": "audit",
+   "status": "SETTLED",
+   "termination": "FAILED"
+  }
+ ],
  "objects": [
   {
    "object_id": "worker",
@@ -353,16 +448,6 @@ export const FIXTURE: unknown = {
    "version": 1
   },
   {
-   "object_id": "job-1/b1/note-scan",
-   "kind": "artifact",
-   "version": 1
-  },
-  {
-   "object_id": "job-1/b1/$run",
-   "kind": "run",
-   "version": 1
-  },
-  {
    "object_id": "job-1/$run",
    "kind": "run",
    "version": 2
@@ -378,6 +463,16 @@ export const FIXTURE: unknown = {
    "version": 3
   },
   {
+   "object_id": "job-1/b1/note-scan",
+   "kind": "artifact",
+   "version": 1
+  },
+  {
+   "object_id": "job-1/b1/$run",
+   "kind": "run",
+   "version": 1
+  },
+  {
    "object_id": "job-1/b1/$run",
    "kind": "run",
    "version": 2
@@ -386,6 +481,11 @@ export const FIXTURE: unknown = {
    "object_id": "job-1/$run",
    "kind": "run",
    "version": 4
+  },
+  {
+   "object_id": "job-1/$exec",
+   "kind": "execution",
+   "version": 1
   }
  ]
 }

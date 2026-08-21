@@ -103,7 +103,61 @@ describe("★ 边界上 parse，不 as", () => {
 
   it("坏字段的路径出现在错误里", () => {
     expect(() =>
-      parseSnapshot({ ...FIXTURE, messages: [{ id: 1, target: {}, state: "X" }] }),
+      parseSnapshot({ ...(FIXTURE as object), messages: [{ id: 1, target: {}, state: "X" }] }),
     ).toThrow(/messages\.0/);
+  });
+});
+
+describe("★ 生命周期是一段区间，不是一个颜色", () => {
+  const cell = (id: string) => scene.cells.find((c) => c.id === id);
+
+  it("已终止的实例带有右端 —— 收口", () => {
+    expect(cell("job-1/a1")?.span.to).not.toBeNull();
+  });
+
+  it("★ 还开着的实例右端为 null —— 带不收口", () => {
+    expect(cell("job-1/b1")?.span.to).toBeNull();
+    expect(cell("job-1")?.span.to).toBeNull();
+  });
+
+  it("★ 晚出生的左端更靠右 —— 出生点看得见", () => {
+    const a = cell("job-1/a1")?.span.from ?? 0;
+    const b = cell("job-1/b1")?.span.from ?? 0;
+    expect(b).toBeGreaterThan(a);
+  });
+
+  it("节点的生存期继承实例（节点与实例同生共死）", () => {
+    expect(cell("job-1/a1#scan")?.span).toEqual(cell("job-1/a1")?.span);
+  });
+
+  it("刻点是自己身上发生的事，不是父的", () => {
+    const scan = cell("job-1/a1#scan");
+    expect(scan?.marks.length).toBeGreaterThan(0);
+    expect(cell("job-1#idle")?.marks).toEqual([]); // 从没被碰过
+  });
+
+  it("序号轴的范围覆盖所有刻点", () => {
+    for (const c of scene.cells) {
+      for (const m of c.marks) {
+        expect(m).toBeGreaterThanOrEqual(scene.range.from);
+        expect(m).toBeLessThanOrEqual(scene.range.to);
+      }
+    }
+  });
+});
+
+describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
+  const phase = (id: string) => scene.cells.find((c) => c.id === id)?.phase;
+
+  it("agent 在外面跑 → running（这才是有宽度的那段）", () => {
+    expect(phase("job-1#review")).toBe("running");
+  });
+
+  it("agent 跑失败 → failed，失败往下传", () => {
+    expect(phase("job-1#audit")).toBe("failed");
+  });
+
+  it("同步 handler 没有执行记录 → idle（它没有可观测的 RUNNING 窗口）", () => {
+    expect(phase("job-1#plan")).toBe("idle");
   });
 });
