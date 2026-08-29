@@ -1,8 +1,9 @@
 /**
  * 真跑出来的快照 —— 由 `packages/state/fixture-gen.mts` 生成。
  *
- * 刻意造了两处落差：同一个子槽 a 扇出三个实例且命运不同（a1/a2 收口、
- * a3 还开着），子槽 b 一次都没 spawn。手编夹具会编成"我以为的形状"。
+ * 刻意造了落差：子槽 a 扇出三个实例且命运不同（a1/a2 收口、a3 还开着，
+ * 于是根容器被 a3 的子容器锁挡着），子槽 b 一次都没 spawn。
+ * 手编夹具会编成"我以为的形状"。要更新就重跑那个脚本。
  */
 export const FIXTURE: unknown = {
  "root": "job-1",
@@ -570,6 +571,15 @@ export const FIXTURE: unknown = {
    "object_id": "job-1/$exec",
    "kind": "execution",
    "version": 1
+  }
+ ],
+ "locks": [
+  {
+   "id": "lock-3",
+   "holder": "job-1",
+   "kind": "child",
+   "key": "job-1/a3",
+   "waitingOn": "job-1/a3"
   }
  ]
 }

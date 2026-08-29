@@ -25,6 +25,15 @@ export interface RunSpec {
    */
   readonly root: string;
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * 这一次执行的网络策略，覆盖 runner 的缺省。
+   *
+   * runner 级的那条是**整个 run 一条**，于是"审计 agent 不许上网、研究
+   * agent 可以"表达不出来。策略的真正归属是**节点的能力声明**
+   * （`AgentSpec.capabilities.network`），runner 只是执行它。
+   * 省略 = 用 runner 缺省，老行为不变。
+   */
+  readonly network?: "none" | "internal" | "open";
   /** 超时即杀 —— 这是 `ExecutionLimits.wallClockSeconds` 的真落点。 */
   readonly timeoutSeconds?: number;
   /** 取消。气密性仍靠 generation fence，这里只是 best effort（不变量 L3）。 */

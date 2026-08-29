@@ -65,6 +65,32 @@ export const AgentSpec = z
      */
     env: z.record(SECRET_FREE_ENV).optional(),
     /**
+     * 这个节点的**能力上界** —— 声明在模板上，agent 碰不到。
+     *
+     * 此前它们只存在于 backend 的构造参数里：`NetworkPolicy` 是
+     * `DockerRunner` 的一个字段，**一个 run 里所有 agent 节点共用一条**。
+     * 两个后果：
+     *
+     *   1. "审计 agent 不许上网、研究 agent 可以" —— 表达不出来
+     *   2. 渲染层读不到任何节点的能力，"这个节点跑在什么策略下"画不出来
+     *
+     * 声明与使用要分在两个面上：**能力声明在模板里**（可读、可渲染、
+     * agent 碰不到），**能力使用在工具里**（可记录、有范围、agent 可调）。
+     * 放进 agent 自己能调的工具面，就等于让它松开自己的笼子。
+     *
+     * 省略 = 用 backend 的缺省（保持既有行为，这是个纯增字段）。
+     */
+    capabilities: z
+      .object({
+        /** `none` 断网 · `internal` 只通本 run 的内网 · `open` 放行。 */
+        network: z.enum(["none", "internal", "open"]).optional(),
+        wallClockSeconds: z.number().positive().optional(),
+        /** 跑完留不留沙箱 —— 留着是为了事后翻现场。 */
+        retain: z.enum(["always", "on-failure", "never"]).optional(),
+      })
+      .strict()
+      .optional(),
+    /**
      * 工作区：把一个**具名**仓库物化成工作树。
      *
      * `source` 是别名，不是路径或 URL —— 具体指向哪个仓库由 backend 配置决定。

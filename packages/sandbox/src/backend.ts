@@ -111,6 +111,16 @@ export interface SandboxDiagnostics {
    * 回答，不需要第二处记账。
    */
   readonly sandbox?: { readonly path: string; readonly retained: boolean };
+  /**
+   * 这一次**实际生效**的能力。
+   *
+   * 声明在模板上（`AgentSpec.capabilities`），但生效值可能来自 backend 缺省 ——
+   * 事后要能回答"它当时到底能不能上网"，所以记的是生效值不是声明值。
+   */
+  readonly capabilities?: {
+    readonly network: string;
+    readonly wallClockSeconds?: number;
+  };
 }
 
 export class SandboxBackend implements ExecutionBackend {
@@ -298,15 +308,21 @@ export class SandboxBackend implements ExecutionBackend {
        */
       const env = resolveEnv(spec.env, process.env);
 
+      /**
+       * 节点声明的能力优先于 backend 缺省 —— 声明在模板上的那条才是权威。
+       * 没声明就沿用缺省，所以这是个纯增字段，老模板行为不变。
+       */
+      const caps = spec.capabilities;
+      const timeout = caps?.wallClockSeconds ?? request.limits.wallClockSeconds;
+
       const outcome = await this.#runner.run({
         // 只挂 box —— 记录仓在它外面，agent 够不着（见 layout.ts）
         root: paths.box,
         argv: spec.argv,
         env,
         signal: abort.signal,
-        ...(request.limits.wallClockSeconds === undefined
-          ? {}
-          : { timeoutSeconds: request.limits.wallClockSeconds }),
+        ...(caps?.network === undefined ? {} : { network: caps.network }),
+        ...(timeout === undefined ? {} : { timeoutSeconds: timeout }),
       });
 
       // 快照按 executionId 命名 —— 与 ExecutionRecord、<traceid>/$exec 对得上
@@ -328,7 +344,15 @@ export class SandboxBackend implements ExecutionBackend {
         // 遮的是**解析后的真值** —— 遮 `$NAME` 那串字面量毫无意义
         stdoutTail: redact(tail(outcome.stdout), env),
         stderrTail: redact(tail(outcome.stderr), env),
-        sandbox: { path: root, retained: keeps(this.#retain, classify(outcome, emitted)) },
+        sandbox: {
+          path: root,
+          retained: keeps(caps?.retain ?? this.#retain, classify(outcome, emitted)),
+        },
+        // 实际生效的能力也写进 diagnostics —— 事后要能回答"它当时能上网吗"
+        capabilities: {
+          network: caps?.network ?? this.#runner.kind,
+          ...(timeout === undefined ? {} : { wallClockSeconds: timeout }),
+        },
         ...(workspace === undefined ? {} : { workspace }),
         ...(observation === undefined ? {} : { observation }),
       };

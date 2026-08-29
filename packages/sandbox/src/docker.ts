@@ -173,7 +173,8 @@ export class DockerRunner implements Runner {
       "--rm",
       "--name",
       name,
-      ...networkArgs(this.network, this.#networkName),
+      // 每次执行可以自带策略；没带就用 runner 缺省
+      ...networkArgs(spec.network ?? this.network, this.#networkName),
       ...(this.#user === undefined ? [] : ["--user", this.#user]),
       ...envArgs,
       "-v",

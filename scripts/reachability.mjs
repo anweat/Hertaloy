@@ -76,6 +76,7 @@ const ALLOWED = new Map([
   ["envRefName", "resolveEnv 在同文件里调；`$NAME` 的识别判据要能单独测"],
   ["looksLikeSecret", "template.ts 的 refine 在用；导出是为了单独测那组模式"],
   ["resolveEnv", "backend 在派发前调，把 `$NAME` 解析成真值"],
+  ["exportSnapshot", "渲染层的入口：后端侧的快照出口，由 CLI/服务端调，不在 packages 内"],
 ]);
 
 function sources() {

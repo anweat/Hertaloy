@@ -86,3 +86,35 @@ describe("★ 运行期解析", () => {
     expect(resolveEnv(undefined, { X: "1" })).toEqual({});
   });
 });
+
+describe("★ 节点能力：声明在模板上，不在工具面里", () => {
+  it("能力可以逐节点声明 —— 此前是整个 run 一条", () => {
+    const r = AgentSpec.safeParse({
+      argv: ["claude"],
+      capabilities: { network: "none", wallClockSeconds: 600, retain: "on-failure" },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("★ 审计 agent 断网、研究 agent 放行 —— 这个此前表达不出来", () => {
+    const audit = AgentSpec.safeParse({ argv: ["codex"], capabilities: { network: "none" } });
+    const research = AgentSpec.safeParse({ argv: ["claude"], capabilities: { network: "open" } });
+    expect(audit.success && research.success).toBe(true);
+  });
+
+  it("省略就是用 backend 缺省 —— 纯增字段，老模板不受影响", () => {
+    const r = AgentSpec.safeParse({ argv: ["x"] });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.capabilities).toBeUndefined();
+  });
+
+  it("认不得的策略要拒 —— 别让打错的字悄悄变成缺省", () => {
+    const r = AgentSpec.safeParse({ argv: ["x"], capabilities: { network: "hostt" } });
+    expect(r.success).toBe(false);
+  });
+
+  it("多余字段要拒 —— 能力集是闭的", () => {
+    const r = AgentSpec.safeParse({ argv: ["x"], capabilities: { gpu: true } });
+    expect(r.success).toBe(false);
+  });
+});
