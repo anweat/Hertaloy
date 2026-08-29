@@ -97,6 +97,16 @@ export const SnapshotObject = z.object({
   version: z.number(),
 });
 
+export const SnapshotLock = z.object({
+  id: z.string(),
+  holder: z.string(),
+  kind: z.string(),
+  key: z.string(),
+  /** 等谁 —— 有它才画得出"谁挡着谁"。 */
+  waitingOn: z.string().optional(),
+  originNode: z.string().optional(),
+});
+
 /** 后端送来的一整份。 */
 export const Snapshot = z.object({
   root: z.string().nullable(),
@@ -106,6 +116,7 @@ export const Snapshot = z.object({
   messages: z.array(SnapshotMessage),
   records: z.array(SnapshotRecord).default([]),
   objects: z.array(SnapshotObject).default([]),
+  locks: z.array(SnapshotLock).default([]),
 });
 
 export type Snapshot = z.infer<typeof Snapshot>;

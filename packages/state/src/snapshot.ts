@@ -22,6 +22,15 @@ export interface RunSnapshot {
   readonly messages: readonly unknown[];
   readonly records: readonly unknown[];
   readonly objects: readonly unknown[];
+  /**
+   * 锁账本 —— **谁在等谁**。
+   *
+   * 这一块此前一个字段都没导出，于是"容器间关系"里最要紧的那一半
+   * （等待、请求、子容器阻塞父容器）渲染层根本看不见。而它完整地躺在内核里：
+   * `Lock` 有 holder / waitingOn / originNode / kind。
+   * `runtime.locks` 本来就是公开 getter —— 缺的从来只是这一行导出。
+   */
+  readonly locks: readonly unknown[];
 }
 
 /**
@@ -80,5 +89,17 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
     .filter((v) => inScope(v.object_id))
     .map((v) => ({ object_id: v.object_id, kind: v.kind, version: v.version }));
 
-  return { root, instances, templates, messages, records, objects };
+  const locks = runtime.locks
+    .all()
+    .filter((l) => inScope(l.holder))
+    .map((l) => ({
+      id: l.id,
+      holder: l.holder,
+      kind: l.kind,
+      key: l.key,
+      ...(l.waitingOn === undefined ? {} : { waitingOn: l.waitingOn }),
+      ...(l.originNode === undefined ? {} : { originNode: l.originNode }),
+    }));
+
+  return { root, instances, templates, messages, records, objects, locks };
 }

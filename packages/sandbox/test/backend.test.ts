@@ -298,3 +298,56 @@ describe("★ 脱敏：密钥不进不可变的对象库", () => {
     expect(redact("MY_PASS=hunter2-plain-text", {})).toContain("hunter2");
   });
 });
+
+/**
+ * 节点声明的能力优先于 backend 缺省。
+ *
+ * 判据不是"schema 里有这个字段"，是**它真的走到了 runner 与 diagnostics**。
+ * 声明加了却没人读，正是这个项目被咬过七次的那个形状。
+ */
+describe("★ 逐节点能力：声明在模板上，backend 只是执行它", () => {
+  it("节点声明的超时盖过 request.limits", async () => {
+    const seen: { timeoutSeconds?: number; network?: string }[] = [];
+    const spy = {
+      kind: "spy", isolates: false, enforcesNetwork: false,
+      allocate: () => mkdtempSync(join(workRoot, "spy-")),
+      release: () => {},
+      toInner: (p: string) => p,
+      toHost: (p: string) => p,
+      run: async (s: { timeoutSeconds?: number; network?: string }) => {
+        seen.push({ timeoutSeconds: s.timeoutSeconds, network: s.network });
+        return { code: 0, stdout: "", stderr: "", wallClockSeconds: 0, timedOut: false };
+      },
+    };
+    const b = new SandboxBackend({ workRoot, runner: spy as never });
+    await b.run(
+      request(["true"], { capabilities: { wallClockSeconds: 42 } }, { limits: { wallClockSeconds: 999 } }),
+    );
+    expect(seen[0]?.timeoutSeconds).toBe(42);
+  });
+
+  it("★ 节点声明的网络策略传到了 runner —— 此前整个 run 只有一条", async () => {
+    const seen: string[] = [];
+    const spy = {
+      kind: "spy", isolates: false, enforcesNetwork: false,
+      allocate: () => mkdtempSync(join(workRoot, "spy-")),
+      release: () => {},
+      toInner: (p: string) => p,
+      toHost: (p: string) => p,
+      run: async (s: { network?: string }) => {
+        seen.push(s.network ?? "（未指定）");
+        return { code: 0, stdout: "", stderr: "", wallClockSeconds: 0, timedOut: false };
+      },
+    };
+    const b = new SandboxBackend({ workRoot, runner: spy as never });
+    await b.run(request(["true"], { capabilities: { network: "none" } }));
+    await b.run(request(["true"], {}, { executionId: "exec-2" }));
+    expect(seen).toEqual(["none", "（未指定）"]);
+  });
+
+  it("生效的能力写进 diagnostics —— 事后要能回答「它当时能上网吗」", async () => {
+    const r = await backend.run(request(["true"], { capabilities: { network: "none" } }));
+    const d = r.diagnostics as unknown as SandboxDiagnostics;
+    expect(d.capabilities?.network).toBe("none");
+  });
+});

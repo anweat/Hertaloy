@@ -69,6 +69,19 @@ export interface Cell {
   readonly span: { readonly from: number; readonly to: number | null };
   /** 这个 cell 上发生过消息的序号 —— 带上的刻点。 */
   readonly marks: readonly number[];
+  /**
+   * **结构性进度** —— 能从现有数据推出来的那一半。
+   *
+   *   子槽    已终止实例 / 已创建实例    扇出场景下这就是进度，也是最常用的那种
+   *   实例    已碰过的节点 / 模板节点数
+   *
+   * ⚠️ 实例那一条**对有环的流程没有意义**：循环会反复碰同一批节点，
+   * 分母不动而分子早就到顶。所以它是"覆盖率"不是"完成度"，别当进度条用。
+   *
+   * 真正的语义进度（"我在跑第 3 组测试"）内核**原则上**推不出来 ——
+   * 有环的流程没有分母。那一半只能靠 agent 上报，是另一件事。
+   */
+  readonly progress?: { readonly done: number; readonly total: number };
   readonly phase: Phase;
   /** 0..1，最近窗口里的流量 → 亮度 */
   readonly activity: number;
@@ -111,11 +124,19 @@ export interface Flow {
   readonly contract?: string;
 }
 
-/** 系 —— 不承载消息的连接。和 Flow 的区别是有没有东西在流动。 */
+/**
+ * 系 —— 不承载消息的连接。和 Flow 的区别是**有没有东西在流动**。
+ *
+ * `waits` 与前三种有一点不同：前三种是结构性的（改了模板才会变），
+ * 它是**运行期的、会消失的**。归在同一个元素里是因为判据仍然成立
+ * （它不承载消息，只是一条有向的关系），但渲染上该让它看起来是"活的"。
+ */
 export interface Tether {
   readonly from: string;
   readonly to: string;
-  readonly relation: "contains" | "refs" | "derives";
+  readonly relation: "contains" | "refs" | "derives" | "waits";
+  /** `waits` 专用：锁的种类，说明为什么在等。 */
+  readonly because?: string;
 }
 
 export interface Scene {

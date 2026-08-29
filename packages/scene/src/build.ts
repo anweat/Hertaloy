@@ -160,6 +160,16 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
       ports: [],
       span: live.span,
       marks: live.marks,
+      // 覆盖率不是完成度 —— 有环的流程会反复碰同一批节点（见 Cell.progress）
+      ...(nodeIds.length === 0
+        ? {}
+        : {
+            progress: {
+              done: nodeIds.filter((n) => (touched.get(nodeCellId(instance.traceid, n)) ?? []).length > 0)
+                .length,
+              total: nodeIds.length,
+            },
+          }),
       phase: instance.status === "OPEN" ? "idle" : "done",
       activity: 0,
       extent: nodeIds.length,
@@ -228,6 +238,20 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         ports: anchors,
         span: live.span,
         marks: [],
+        /**
+         * 槽的进度 = 已终止 / 已创建。
+         *
+         * 分母是"已创建"而不是"总共会有几个" —— 后者内核不知道，随时还能再
+         * spawn。说成已创建是**诚实的**：它答的是"派出去的这批干完没有"。
+         */
+        ...(() => {
+          const kids = Object.values(snapshot.instances).filter(
+            (i) => i.slot === slotId && parentTrace(i.traceid) === instance.traceid,
+          );
+          return kids.length === 0
+            ? {}
+            : { progress: { done: kids.filter((i) => i.status !== "OPEN").length, total: kids.length } };
+        })(),
         phase: "idle",
         activity: 0,
         extent: 0,
@@ -313,6 +337,24 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         });
       }
     }
+  }
+
+  /**
+   * ── 等待：谁挡着谁 ──
+   *
+   * 锁账本里 `waitingOn` 一直都在，只是快照从没导出过它 —— 于是"容器间关系"
+   * 里最要紧的那一半（父等子、请求方等服务方）渲染层根本看不见。
+   * 这里不新造任何东西，只是把已有的读出来。
+   */
+  for (const lock of snapshot.locks) {
+    if (lock.waitingOn === undefined) continue;
+    if (!inScope(lock.holder) || !inScope(lock.waitingOn)) continue;
+    tethers.push({
+      from: lock.holder,
+      to: lock.waitingOn,
+      relation: "waits",
+      because: lock.kind,
+    });
   }
 
   /**

@@ -154,7 +154,7 @@ describe("★ 隧道：命中从哪儿来，现在算得出", () => {
     rt.registerHandler("emit", () => ({ out: { finding: "看这儿" } }));
     rt.registerHandler("noop", () => ({}));
 
-    const kid = reg.spawn("job-1", "kid");
+    const kid = reg.spawn("job-1", "kid", "k1");
     rt.send({ traceid: kid.traceid, node: "pub", port: "in" }, {});
     rt.drain();
 
@@ -208,7 +208,7 @@ describe("★ 子实例终止通知：只有 traceid，没有 node/port", () => 
     const rt = new Runtime(store, reg);
     rt.registerHandler("noop", () => ({}));
 
-    const kid = reg.spawn("job-1", "kid");
+    const kid = reg.spawn("job-1", "kid", "k1");
     rt.send({ traceid: kid.traceid, node: "only", port: "in" }, {});
     rt.drain();
     rt.settleAll();

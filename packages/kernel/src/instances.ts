@@ -119,6 +119,16 @@ export class InstanceRegistry implements Snapshotable {
    *
    * 第一不变量：只能选已声明的槽，不能构造模板引用。
    */
+  /**
+   * ⚠️ **这个不拿子容器锁。** 要拿锁的是 `Runtime.spawn`。
+   *
+   * 两个入口只差一件事，而那件事决定"父容器能不能提前收口"。直接调这里
+   * 建出来的子实例**不会挡住父终止** —— 写夹具时踩到过：整份快照
+   * 一把锁都没有，而看起来一切正常。
+   *
+   * 生产路径（ControlPlane / handler 的 ctx.spawn / MCP）全部走 Runtime，
+   * 这里只留给注册表内部与真正不需要生命周期约束的场合。
+   */
   spawn(parentTrace: TraceId, slot: string, segment: string): ContainerInstance {
     const parent = this.get(parentTrace);
     invariant(

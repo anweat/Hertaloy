@@ -133,16 +133,16 @@ s.runtime.send({ traceid: "job-1", node: "plan", port: "start" }, {});
  * **同一个子槽扇出三个实例** —— 实测一个槽能有 N 个活实例（a1/a2/a3）。
  * 画布上它们叠在模板那一个位置上，而不是各自散开。
  */
-const a1 = s.registry.spawn("job-1", "a", "a1");
+const a1 = s.runtime.spawn("job-1", "a", "a1");
 s.runtime.send({ traceid: a1.traceid, node: "scan", port: "in" }, {});
 s.runtime.drain();
 
-const a2 = s.registry.spawn("job-1", "a", "a2");
+const a2 = s.runtime.spawn("job-1", "a", "a2");
 s.runtime.send({ traceid: a2.traceid, node: "scan", port: "in" }, {});
 s.runtime.drain();
 
 // a3 晚出生，且留一条没消费的活儿 → 它会一直开着
-const a3 = s.registry.spawn("job-1", "a", "a3");
+const a3 = s.runtime.spawn("job-1", "a", "a3");
 s.runtime.send({ traceid: a3.traceid, node: "scan", port: "in" }, {});
 s.runtime.drain();
 

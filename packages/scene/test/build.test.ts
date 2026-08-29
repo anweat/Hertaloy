@@ -195,3 +195,54 @@ describe("★ 子槽：声明是一等公民", () => {
     expect(scene.cells.find((c) => c.id === "job-1")?.slot).toBeUndefined();
   });
 });
+
+describe("★ 等待关系：谁挡着谁", () => {
+  it("锁账本导出来了 —— 此前快照一个字段都没带", () => {
+    // 数据一直躺在内核里（Lock.waitingOn），缺的从来只是那一行导出
+    const waits = scene.tethers.filter((t) => t.relation === "waits");
+    expect(waits.length).toBeGreaterThan(0);
+  });
+
+  it("父等子 —— 子容器没终止，父收不了口", () => {
+    const waits = scene.tethers.filter((t) => t.relation === "waits");
+    expect(waits.some((t) => t.from === "job-1" && t.to.startsWith("job-1/"))).toBe(true);
+  });
+
+  it("带上为什么在等 —— 锁的种类", () => {
+    const w = scene.tethers.find((t) => t.relation === "waits");
+    expect(w?.because).toBeTruthy();
+  });
+
+  it("waits 不承载消息 —— 所以是 Tether 不是 Flow", () => {
+    expect(scene.flows.some((f) => (f as { relation?: string }).relation === "waits")).toBe(false);
+  });
+});
+
+describe("★ 结构性进度：能推的那一半", () => {
+  const cell = (id: string) => scene.cells.find((c) => c.id === id);
+
+  it("★ 子槽进度 = 已终止 / 已创建 —— 扇出场景下这就是进度", () => {
+    // a1/a2 收口、a3 还开着
+    expect(cell("job-1~a")?.progress).toEqual({ done: 2, total: 3 });
+  });
+
+  it("分母是「已创建」而不是「总共会有几个」—— 后者内核不知道", () => {
+    // 随时还能再 spawn，所以说成已创建才是诚实的
+    expect(cell("job-1~a")?.progress?.total).toBe(3);
+  });
+
+  it("一次都没 spawn 的槽没有进度 —— 不是 0/0，是没有", () => {
+    expect(cell("job-1~b")?.progress).toBeUndefined();
+  });
+
+  it("实例进度 = 碰过的节点 / 模板节点数", () => {
+    const p = cell("job-1/a1")?.progress;
+    expect(p?.total).toBe(2);
+    expect(p?.done).toBeGreaterThan(0);
+    expect(p?.done).toBeLessThanOrEqual(2);
+  });
+
+  it("节点自己没有进度 —— 它是最小单位", () => {
+    expect(cell("job-1#plan")?.progress).toBeUndefined();
+  });
+});
