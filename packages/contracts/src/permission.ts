@@ -68,6 +68,27 @@ export interface AuthzDecision {
 }
 
 /**
+ * 一次授权决策的记录 —— **放行和拒绝都记**。
+ *
+ * 授权表是数据（好），但决策此前**不留任何痕迹**：事后回答不了
+ * "这次为什么放行"或"它当时被什么挡住了"。而那恰恰是人要审的东西，
+ * 也是画布上"谁能动它"背后的证据。
+ *
+ * 拒绝比放行更值得记：一次被拒的操作往往就是"权限配错了"的现场，
+ * 而它不留痕的话，排查只能靠复现。
+ */
+export interface AuditEntry {
+  readonly seq: number;
+  readonly actor: string;
+  /** 具体操作名（`define` / `send` / …），比 opClass 细。 */
+  readonly op: string;
+  readonly opClass: OpClass;
+  readonly target: string;
+  readonly allowed: boolean;
+  readonly reason: string;
+}
+
+/**
  * 授权表。**默认拒绝** —— 没有匹配的授权就是不允许。
  *
  * 内核本身不依赖它：检查发生在可信边界（控制面），Runtime 保持纯引擎。

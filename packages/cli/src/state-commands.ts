@@ -665,7 +665,12 @@ export function permissions(dir: string, actor: Principal, write: boolean): Comm
   }
 
   return readOnly(dir, (s) => {
-    void actor;
+    // 谁有什么权限，本身就是要授权才能看的 —— 此前这里是 `void actor`
+    try {
+      s.control.check(actor, "DQL", "*");
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error));
+    }
     const lines = [
       `来源：${s.permissions.source === "file" ? permissionsPath(dir) : "缺省（无配置文件）"}`,
       "",
@@ -685,12 +690,51 @@ export function permissions(dir: string, actor: Principal, write: boolean): Comm
  * 加完之后模板里写那个名字即可：模板本身不必改，也不知道路径变了。
  * 这正是别名的意义 —— 模板可移植，而 agent 拿不到真实位置。
  */
+/**
+ * 打开 run 只为问一句"我能不能"，然后关掉。
+ *
+ * 操作本身在别的层（资源表住 state，根授权表是启动配置），但**决策只有
+ * ControlPlane 一处**，而且每次都落日志。这就是"没有第二个 Runtime"
+ * 在授权上的形状：路径可以有多条，判断不能有第二处。
+ */
+function authorize(
+  dir: string,
+  actor: Principal,
+  opClass: "DDL" | "DML" | "DQL",
+  target: string,
+): CommandResult | null {
+  const state = RunState.open(dir, { readOnly: true });
+  try {
+    state.control.check(actor, opClass, target);
+    return null;
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  } finally {
+    state.close();
+  }
+}
+
 export function resources(
   dir: string,
+  actor: Principal,
   op: "list" | "add" | "remove",
   args: readonly string[],
 ): CommandResult {
   try {
+    /**
+     * 决策走 ControlPlane，操作留在这一层。
+     *
+     * 此前这个命令**连 actor 参数都没有** —— 而改别名就是改模板的实际指向
+     * （`git-main` 指到哪个仓由这张表说了算），一点授权都不过。
+     * 今天只有人能从 CLI 调到它，所以没被利用；但"第二条没有检查的路径"
+     * 这个形状本身就是错的，而且它一旦被暴露出去，失败方式是静默的。
+     *
+     * 读也要查：这张表里是**真实路径**，而"agent 拿不到真实位置"正是
+     * 别名机制的意义所在。
+     */
+    const guard = authorize(dir, actor, op === "list" ? "DQL" : "DDL", "*");
+    if (guard !== null) return guard;
+
     if (op === "add") {
       const [name, kind, path, ...rest] = args;
       if (name === undefined || kind === undefined || path === undefined) {

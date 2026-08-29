@@ -307,7 +307,7 @@ describe("★ 脱敏：密钥不进不可变的对象库", () => {
  */
 describe("★ 逐节点能力：声明在模板上，backend 只是执行它", () => {
   it("节点声明的超时盖过 request.limits", async () => {
-    const seen: { timeoutSeconds?: number; network?: string }[] = [];
+    const seen: { timeoutSeconds: number | undefined; network: string | undefined }[] = [];
     const spy = {
       kind: "spy", isolates: false, enforcesNetwork: false,
       allocate: () => mkdtempSync(join(workRoot, "spy-")),

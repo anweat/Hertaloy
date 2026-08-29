@@ -13,6 +13,7 @@
  */
 
 import {
+  formatPrincipal,
   type Endpoint,
   type Json,
   type OpClass,
@@ -73,7 +74,27 @@ export class ControlPlane {
    * 绝不从 payload 或 arguments 里取。
    */
   #authorize(actor: Principal, op: Operation, target: string): void {
-    const decision = this.#permissions.decide(actor, OPERATION_CLASS[op], target);
+    this.check(actor, OPERATION_CLASS[op], target, op);
+  }
+
+  /**
+   * 授权决策的**唯一**落点 —— 放行和拒绝都记日志，然后拒绝的抛。
+   *
+   * 公开出来是给那些操作不在内核里、但决策必须在这儿做的调用方用的
+   * （资源别名表、根授权表都住在 state 层，内核够不着）。
+   * 分层因此保持原样：**操作留在它自己那一层，决策只有这一处**。
+   * 这正是"没有第二个 Runtime"在授权上的形状。
+   */
+  check(actor: Principal, opClass: OpClass, target: string, op = opClass.toLowerCase()): void {
+    const decision = this.#permissions.decide(actor, opClass, target);
+    this.#runtime.recordAuthz({
+      actor: formatPrincipal(actor),
+      op,
+      opClass,
+      target,
+      allowed: decision.allowed,
+      reason: decision.reason,
+    });
     if (!decision.allowed) throw new AuthorizationError(decision.reason);
   }
 

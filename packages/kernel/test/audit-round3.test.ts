@@ -7,6 +7,8 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodeflow/contracts";
+import { PermissionTable } from "@nodeflow/contracts";
+import { ControlPlane } from "../src/control.js";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime } from "../src/runtime.js";
@@ -232,5 +234,81 @@ describe("★ P1 contract 引用在注册期就查", () => {
       "message_contract",
     );
     expect(() => registerContainerTemplate(store, "good", withContract(c))).not.toThrow();
+  });
+});
+
+describe("★ 授权决策落日志：放行和拒绝都记", () => {
+  const FLOW = {
+    nodes: {
+      n: {
+        kind: "handler",
+        handler: "noop",
+        ports: { in: { direction: "receive", servo: { vars: {} } } },
+      },
+    },
+    edges: {},
+    children: {},
+    subscriptions: {},
+  };
+
+  function plane() {
+    const ref = registerContainerTemplate(store, "root", FLOW, "root_config");
+    const reg = new InstanceRegistry(store);
+    reg.createRoot(ref, "job-1");
+    const rt = new Runtime(store, reg);
+    rt.registerHandler("noop", () => ({}));
+    const table = new PermissionTable();
+    table.grant({ principal: "human:*", scope: "*", ops: ["DDL", "DML", "DQL"] });
+    return { rt, control: new ControlPlane(rt, reg, store, table) };
+  }
+
+  const HUMAN = { kind: "human", id: "alice" } as const;
+  const AGENT = { kind: "agent", id: "bot" } as const;
+
+  it("放行留下记录 —— 事后答得出「凭什么放行」", () => {
+    const { rt, control } = plane();
+    control.send(HUMAN, { traceid: "job-1", node: "n", port: "in" }, {});
+    const last = rt.audit().at(-1);
+    expect(last?.allowed).toBe(true);
+    expect(last?.actor).toBe("human:alice");
+    expect(last?.op).toBe("send");
+    expect(last?.opClass).toBe("DML");
+    expect(last?.reason).toMatch(/由授权/);
+  });
+
+  it("★ 拒绝更要留下 —— 那往往就是「权限配错了」的现场", () => {
+    const { rt, control } = plane();
+    expect(() => control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {})).toThrow();
+    const last = rt.audit().at(-1);
+    expect(last?.allowed).toBe(false);
+    expect(last?.actor).toBe("agent:bot");
+    expect(last?.reason).toMatch(/无权/);
+  });
+
+  it("序号单调 —— 决策的先后是可读的", () => {
+    const { rt, control } = plane();
+    control.send(HUMAN, { traceid: "job-1", node: "n", port: "in" }, {});
+    try {
+      control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {});
+    } catch {
+      /* 意料之中 */
+    }
+    const seqs = rt.audit().map((e) => e.seq);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(new Set(seqs).size).toBe(seqs.length);
+  });
+
+  it("★ 日志有界 —— 头每次全量重写，无界增长会让写入变平方级", () => {
+    const { rt, control } = plane();
+    for (let i = 0; i < 620; i += 1) {
+      try {
+        control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {});
+      } catch {
+        /* 全被拒，正好用来灌日志 */
+      }
+    }
+    expect(rt.audit().length).toBeLessThanOrEqual(500);
+    // 留的是**最近**那些 —— 排查看的总是最近
+    expect(rt.audit().at(-1)?.seq).toBe(620);
   });
 });

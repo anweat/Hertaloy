@@ -122,7 +122,7 @@ ${USAGE}`, code: 2 } : null;
       const short = need(1);
       if (short !== null) return short;
       const op = a === "add" ? "add" : a === "remove" ? "remove" : "list";
-      return resources(dir as string, op, args.slice(2));
+      return resources(dir as string, actor, op, args.slice(2));
     }
     case "permissions":
       return need(1) ?? permissions(dir as string, actor, a === "init");

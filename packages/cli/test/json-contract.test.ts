@@ -111,9 +111,9 @@ describe("★ 测试流：从空目录到回收，每条命令的 JSON 都是契
     expect(empty.data).toMatchObject({ root: null, instances: [], queued: [] });
 
     // ② 登记资源
-    const added = resources(state(), "add", ["primary", "git", repo, "主仓库"]);
+    const added = resources(state(), HUMAN, "add", ["primary", "git", repo, "主仓库"]);
     expect(added.code).toBe(0);
-    const listed = resources(state(), "list", []);
+    const listed = resources(state(), HUMAN, "list", []);
     expect(listed.data).toMatchObject({
       source: "file",
       resources: { primary: { kind: "git", path: repo, note: "主仓库" } },

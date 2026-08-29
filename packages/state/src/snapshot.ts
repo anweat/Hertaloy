@@ -31,6 +31,13 @@ export interface RunSnapshot {
    * `runtime.locks` 本来就是公开 getter —— 缺的从来只是这一行导出。
    */
   readonly locks: readonly unknown[];
+  /**
+   * 授权决策日志 —— 放行与拒绝都在里面。
+   *
+   * 不按 scope 过滤：它记的是"谁对什么做了什么判断"，本身就是全局审计，
+   * 而且被拒的那些 target 可能根本不在任何 scope 里。
+   */
+  readonly audit: readonly unknown[];
 }
 
 /**
@@ -101,5 +108,5 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
       ...(l.originNode === undefined ? {} : { originNode: l.originNode }),
     }));
 
-  return { root, instances, templates, messages, records, objects, locks };
+  return { root, instances, templates, messages, records, objects, locks, audit: runtime.audit() };
 }

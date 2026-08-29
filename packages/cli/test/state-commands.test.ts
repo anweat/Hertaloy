@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState, writePermissions } from "@nodeflow/state";
-import { drain, history, resources, send, show, status, truncate } from "../src/state-commands.js";
+import { drain, history, permissions, resources, send, show, status, truncate } from "../src/state-commands.js";
 
 /** 缺省权限表下的人类主体 —— 全权。 */
 const HUMAN = { kind: "human", id: "local" } as const;
@@ -205,36 +205,69 @@ describe("★ 权限层真的在起作用（K2）", () => {
 
 describe("★ hertaloy resources：动态上载", () => {
   it("空表时说清怎么登记", () => {
-    const r = resources(dir, "list", []);
+    const r = resources(dir, HUMAN, "list", []);
     expect(r.code).toBe(0);
     expect(r.text).toContain("没有登记任何资源");
     expect(r.text).toContain("add");
   });
 
   it("登记之后列得出来，并说明模板里怎么用", () => {
-    const added = resources(dir, "add", ["primary", "git", "/repos/app", "主仓库"]);
+    const added = resources(dir, HUMAN, "add", ["primary", "git", "/repos/app", "主仓库"]);
     expect(added.code).toBe(0);
     expect(added.text).toContain("路径不进模板");
 
-    const list = resources(dir, "list", []);
+    const list = resources(dir, HUMAN, "list", []);
     expect(list.text).toContain("primary");
     expect(list.text).toContain("/repos/app");
     expect(list.text).toContain("主仓库");
   });
 
   it("参数不全就给用法，不猜", () => {
-    expect(resources(dir, "add", ["onlyname"]).code).toBe(1);
-    expect(resources(dir, "add", ["onlyname"]).text).toContain("用法");
+    expect(resources(dir, HUMAN, "add", ["onlyname"]).code).toBe(1);
+    expect(resources(dir, HUMAN, "add", ["onlyname"]).text).toContain("用法");
   });
 
   it("种类不认识 → 拒绝并说清有哪几种", () => {
-    const r = resources(dir, "add", ["x", "ftp", "/p"]);
+    const r = resources(dir, HUMAN, "add", ["x", "ftp", "/p"]);
     expect(r.code).toBe(1);
   });
 
   it("删得掉", () => {
-    resources(dir, "add", ["a", "dir", "/x"]);
-    expect(resources(dir, "remove", ["a"]).code).toBe(0);
-    expect(resources(dir, "list", []).text).toContain("没有登记任何资源");
+    resources(dir, HUMAN, "add", ["a", "dir", "/x"]);
+    expect(resources(dir, HUMAN, "remove", ["a"]).code).toBe(0);
+    expect(resources(dir, HUMAN, "list", []).text).toContain("没有登记任何资源");
+  });
+});
+
+/**
+ * 决策只有 ControlPlane 一处 —— "没有第二个 Runtime" 在授权上的形状。
+ *
+ * 这两个命令此前是**第二条没有检查的路径**：`resources` 连 actor 参数都没有，
+ * 而改别名就是改模板的实际指向；`permissions` 的读路径写着 `void actor`，
+ * 谁都看得到整张授权表。
+ */
+describe("★ 绕过 ControlPlane 的两条路收回来了", () => {
+  it("★ agent 读不了资源别名表 —— 那里面是真实路径", () => {
+    // "agent 拿不到真实位置"正是别名机制的意义所在
+    const r = resources(dir, AGENT, "list", []);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/无权/);
+  });
+
+  it("★ agent 改不了别名 —— 改别名就是改模板指向哪个仓", () => {
+    const r = resources(dir, AGENT, "add", ["evil", "git", "/somewhere/else"]);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/无权/);
+  });
+
+  it("agent 看不到授权表本身", () => {
+    const r = permissions(dir, AGENT, false);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/无权/);
+  });
+
+  it("人照旧 —— 缺省授权是人类全权", () => {
+    expect(resources(dir, HUMAN, "list", []).code).toBe(0);
+    expect(permissions(dir, HUMAN, false).code).toBe(0);
   });
 });

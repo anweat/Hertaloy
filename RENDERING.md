@@ -460,6 +460,38 @@ agent  →  hertaloy emit out '{...}'  →  写 .hertaloy/journal.jsonl
 
 ---
 
+### 9.5 从 Apache Maka 拿的两条
+
+看了 [apache/maka](https://github.com/apache/maka)（Apache 孵化中，TypeScript，
+local-first agent workspace）。判断大面积重合，而重合本身就是信号：
+
+| | Maka | 我们 |
+|---|---|---|
+| 单一执行权威 | "one execution authority… none owns a second Runtime" | ControlPlane |
+| 日志是权威、投影是派生 | "compaction changes **projections, not history**" | C5 版本历史即状态 |
+| 多客户端一个协议 | Desktop / TUI / CLI / bot 同一 protocol | 三个绑定一张网格（还没做到） |
+
+**拿了两条：**
+
+1. **权限决策落日志。** 授权表是数据（我们已有），但 `decide()` 的结果此前
+   **不留任何痕迹** —— "这次为什么放行 / 它当时被什么挡住"事后查不到。
+   而拒绝比放行更值得记：一次被拒往往就是"权限配错了"的现场。
+2. **客户端不该拥有第二个 Runtime。** 实测 CLI 的 `permissions` / `resources`
+   绕过 ControlPlane：前者读路径写着 `void actor`，后者**连 actor 参数都没有**
+   —— 而改别名就是改模板指向哪个仓。收法是**决策走 ControlPlane，操作留原层**
+   （资源表住 state，内核够不着），因为要守的是"判断不能有第二处"，
+   不是"所有代码都搬进内核"。
+
+**没拿：** 他们的 `packages/eval`（Experiment / Cell / Attempt，"最早的有效
+attempt 是权威，操作者不能挑"）。那是 benchmark 语义 —— repetition 是独立采样
+所以不许挑；我们的 `maxAttempts` 是失败重试，最后一次算数才对。形似神不同。
+
+**结构性差异：** 他们没有"容器即实例"这条归约，也没有 traceid = 路径。
+所以他们的多 agent 是**调度**（Agent Graph 排依赖），我们的是**结构**
+（嵌套即包含）。这也是为什么他们不需要"同一个位置 N 个实例"那套。
+
+---
+
 ## 10. 待定
 
 - 静态编辑（用户明确说放在显示效果之后）
