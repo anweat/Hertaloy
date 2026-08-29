@@ -492,6 +492,38 @@ attempt 是权威，操作者不能挑"）。那是 benchmark 语义 —— repe
 
 ---
 
+### 9.6 沙箱工具集（已做）
+
+`.hertaloy/bin/hertaloy.mjs` —— 一个自包含 node 脚本，装进每个沙箱。
+
+```
+node ../.hertaloy/bin/hertaloy.mjs emit <端口> '<JSON>'
+node ../.hertaloy/bin/hertaloy.mjs progress <已完成> <总数> [说明]
+```
+
+调用写 `journal/NNNN.op.json`（**序号即文件名**，不靠内存计数 —— 每次调用都是
+新进程；`wx` 独占创建 + 撞了重试，并发不互相覆盖）。跑完沙箱读日志，
+合成 emissions（同端口后写赢）+ 整条日志进 `diagnostics`。
+
+**内核零改动**：它只见到 `ExecutionResult`。零部分提交也天然保住 ——
+合成在沙箱侧，交付仍是一次性。
+
+**只有两个命令，缺席的都是有意的：**
+
+- **没有 `publish`** —— 走内网还是网关**由端口声明决定，不由 handler 选**（M1）。
+  给 agent 一个 `publish` 就等于让它挑传输方式，M1 当场从结构性保证降级成
+  口头约定。往带 `tunnel` 的端口 `emit`，它自然走网关。
+- **没有 `put`** —— `artifacts/` 已经是能用的落资产路径。再加一个就是
+  "两个入口、一个少做一件事"，这个形状咬过我们七次。
+
+**顺带一个不小的收益**：端口越界此前要**跑完**才在 apply 时报 `INVALID_OUTPUT`；
+现在工具当场拒绝并列出可用端口，agent 立刻知道错了。
+
+**老路径不删**：`emit.json` 保留，镜像里没有 node 时它是唯一能走的那条。
+工具是增量不是替换 —— 有专门用例钉着。
+
+---
+
 ## 10. 待定
 
 - 静态编辑（用户明确说放在显示效果之后）

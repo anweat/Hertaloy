@@ -202,6 +202,18 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         // 生存期继承实例（节点与实例同生共死），刻点是自己身上发生的事
         span: live.span,
         marks: own.marks,
+        /**
+         * 节点的进度**只可能是上报的**。
+         *
+         * 结构性那一半（覆盖率）在节点这一层没有意义 —— 节点是最小单位，
+         * 没有分母。所以这里要么有 agent 自报的，要么就没有，不编。
+         */
+        ...(() => {
+          const p = snapshot.records.find(
+            (r) => r.traceid === instance.traceid && r.nodeId === nodeId,
+          )?.progress;
+          return p === undefined ? {} : { progress: { done: p.done, total: p.total } };
+        })(),
         phase: phaseOf(instance.traceid, nodeId, snapshot),
         activity: activityOf(id),
         extent: ports.length,

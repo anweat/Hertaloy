@@ -43,6 +43,10 @@ export interface SandboxPaths {
   readonly request: string;
   readonly emit: string;
   readonly artifacts: string;
+  /** 工具调用日志：一次调用一个文件，文件名即序号。 */
+  readonly journal: string;
+  /** 沙箱内的工具本体。 */
+  readonly bin: string;
 }
 
 /**
@@ -75,6 +79,8 @@ export function sandboxPaths(root: string): SandboxPaths {
     meta,
     context: join(meta, "context"),
     request: join(meta, "request.json"),
+    journal: join(meta, "journal"),
+    bin: join(meta, "bin"),
     emit: join(meta, "emit.json"),
     artifacts: join(meta, "artifacts"),
   };
@@ -82,7 +88,7 @@ export function sandboxPaths(root: string): SandboxPaths {
 
 export function createSandbox(root: string): SandboxPaths {
   const p = sandboxPaths(root);
-  for (const dir of [p.workspace, p.context, p.artifacts]) {
+  for (const dir of [p.workspace, p.context, p.artifacts, p.journal, p.bin]) {
     mkdirSync(dir, { recursive: true });
   }
   return p;

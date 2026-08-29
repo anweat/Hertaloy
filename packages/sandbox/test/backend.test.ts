@@ -351,3 +351,59 @@ describe("★ 逐节点能力：声明在模板上，backend 只是执行它", (
     expect(d.capabilities?.network).toBe("none");
   });
 });
+
+/**
+ * 端到端：工具集从装到合成。
+ *
+ * 判据不是"某个函数返回对了"，是**agent 跑一条用工具的命令，
+ * 结果真的变成 ExecutionResult 的 emissions**。装了没人调、
+ * 或调了合成不出来，都是这个项目最熟悉的漏接。
+ */
+describe("★ 沙箱工具集：从装到合成", () => {
+  it("★ agent 用工具发的，真的成了 emissions", async () => {
+    const r = await backend.run(
+      request([
+        process.execPath,
+        "../.hertaloy/bin/hertaloy.mjs",
+        "emit",
+        "out",
+        '{"from":"工具"}',
+      ]),
+    );
+    expect(r.termination).toBe("DONE");
+    expect(r.emissions).toEqual({ out: { from: "工具" } });
+  });
+
+  it("整条调用日志进了 diagnostics —— 事后能看它试过什么", async () => {
+    const r = await backend.run(
+      request([process.execPath, "../.hertaloy/bin/hertaloy.mjs", "progress", "2", "5", "跑测试"]),
+    );
+    const d = r.diagnostics as unknown as SandboxDiagnostics;
+    expect(d.journal?.map((e) => e.op)).toEqual(["progress"]);
+    expect(d.progress).toEqual({ done: 2, total: 5, note: "跑测试" });
+  });
+
+  it("★ 老路径不删 —— 没用工具时 emit.json 照旧生效", async () => {
+    // 镜像里没有 node 时它是唯一能走的那条；工具是增量不是替换
+    const r = await backend.run(
+      request(["node", "-e", `require("fs").writeFileSync("../.hertaloy/emit.json", '{"out":{"old":1}}')`]),
+    );
+    expect(r.emissions).toEqual({ out: { old: 1 } });
+  });
+
+  it("★ agent 照着契约里那串去调，必须真的成功", async () => {
+    /**
+     * 这是 `emitPath` 那条教训的一般化：**告诉 agent 的话本身错了，
+     * 比没说更糟** —— 它会照做，然后失败得莫名其妙。
+     * 所以不验"字段长什么样"，验"照着做能不能成"。
+     */
+    const script =
+      "const {execFileSync}=require('child_process');" +
+      "const r=JSON.parse(require('fs').readFileSync('../.hertaloy/request.json','utf8'));" +
+      "const [bin,...rest]=r.tools.command.split(' ');" +
+      "execFileSync(bin,[...rest,'emit','out',JSON.stringify({照着做:true})],{stdio:'inherit'});";
+    const r = await backend.run(request([process.execPath, "-e", script]));
+    expect(r.termination).toBe("DONE");
+    expect(r.emissions).toEqual({ out: { 照着做: true } });
+  });
+});

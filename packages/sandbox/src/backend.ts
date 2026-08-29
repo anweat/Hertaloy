@@ -26,6 +26,13 @@ import {
   writeSandboxFile,
 } from "./layout.js";
 import { resolveProfile } from "./profile.js";
+import {
+  emissionsFromJournal,
+  installToolkit,
+  progressFromJournal,
+  readJournal,
+  type JournalEntry,
+} from "./toolkit.js";
 import { gitAvailable, initObserver, observe, type Observation } from "./observe.js";
 import { LocalRunner, type RunOutcome, type Runner } from "./runner.js";
 import {
@@ -121,6 +128,10 @@ export interface SandboxDiagnostics {
     readonly network: string;
     readonly wallClockSeconds?: number;
   };
+  /** agent 过程中调了哪些工具、按什么顺序。 */
+  readonly journal?: readonly JournalEntry[];
+  /** agent 自报的语义进度 —— 内核推不出来的那一半。 */
+  readonly progress?: { readonly done: number; readonly total: number; readonly note?: string };
 }
 
 export class SandboxBackend implements ExecutionBackend {
@@ -245,6 +256,12 @@ export class SandboxBackend implements ExecutionBackend {
        */
       const emitPath = "../.hertaloy/emit.json";
       const artifactsDir = "../.hertaloy/artifacts";
+      /**
+       * 工具的调用串也一律相对 cwd —— 和 `emitPath` 同一条教训：
+       * 告诉 agent 的话必须是对的，说错了比不说更糟。
+       */
+      const toolCommand = "node ../.hertaloy/bin/hertaloy.mjs";
+      installToolkit(paths);
 
       writeContext(paths, {
         ...spec.context,
@@ -258,6 +275,20 @@ export class SandboxBackend implements ExecutionBackend {
         limits: request.limits,
         emitPath,
         artifactsDir,
+        /**
+         * 过程记录的工具。**老路径不删** —— 写 emitPath 仍然有效，
+         * 镜像里没有 node 时它是唯一能走的那条。工具是增量不是替换。
+         */
+        tools: {
+          command: toolCommand,
+          usage: [
+            `${toolCommand} emit <端口> '<JSON>'`,
+            `${toolCommand} progress <已完成> <总数> [说明]`,
+          ],
+          note:
+            "emit 会当场校验端口，不合法立刻报错并列出可用的。" +
+            "进度只能由你上报 —— 有环的流程内核推不出分母。",
+        },
         /**
          * **网络与隔离如实告诉 agent。**
          *
@@ -327,7 +358,14 @@ export class SandboxBackend implements ExecutionBackend {
 
       // 快照按 executionId 命名 —— 与 ExecutionRecord、<traceid>/$exec 对得上
       const observation = canObserve ? observe(observer, exec, request.executionId) : undefined;
-      const emitted = readEmit(paths);
+      /**
+       * 日志优先于 `emit.json`。
+       *
+       * 两条路都在时以工具为准：它有顺序、有当场校验，而 `emit.json` 是
+       * 一次性快照。都没有就都是 null，行为和以前一样。
+       */
+      const journal = readJournal(paths);
+      const emitted = emissionsFromJournal(journal) ?? readEmit(paths);
       const artifacts = collectArtifacts(paths).map((a) => ({
         object_id: a.name.replace(/\.[^./]+$/, ""),
         kind: "artifact",
@@ -348,6 +386,10 @@ export class SandboxBackend implements ExecutionBackend {
           path: root,
           retained: keeps(caps?.retain ?? this.#retain, classify(outcome, emitted)),
         },
+        ...(journal.length === 0 ? {} : { journal: journal as unknown as JournalEntry[] }),
+        ...(progressFromJournal(journal) === null
+          ? {}
+          : { progress: progressFromJournal(journal) as never }),
         // 实际生效的能力也写进 diagnostics —— 事后要能回答"它当时能上网吗"
         capabilities: {
           network: caps?.network ?? this.#runner.kind,

@@ -58,6 +58,10 @@ export const SnapshotRecord = z.object({
   nodeId: z.string(),
   status: z.string(),
   termination: z.string().optional(),
+  /** agent 自报的语义进度 —— 内核原则上推不出来的那一半。 */
+  progress: z
+    .object({ done: z.number(), total: z.number(), note: z.string().optional() })
+    .optional(),
 });
 
 const PortDecl = z.object({

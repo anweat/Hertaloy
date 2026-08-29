@@ -89,6 +89,18 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
       nodeId: r.nodeId,
       status: r.status,
       ...(r.termination === undefined ? {} : { termination: r.termination }),
+      // agent 自报的语义进度 —— 推不出来的那一半，只能从执行记录里带出来
+      ...(() => {
+        try {
+          const body = state.store.head(`${r.traceid}/$exec`).body as {
+            diagnostics?: { progress?: unknown };
+          };
+          const p = body.diagnostics?.progress;
+          return p === undefined ? {} : { progress: p };
+        } catch {
+          return {};
+        }
+      })(),
     }));
 
   const objects = state.store
