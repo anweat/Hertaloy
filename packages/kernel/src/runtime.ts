@@ -48,6 +48,7 @@ import { compileContext, formatContextFailures } from "./context.js";
 import { type VarBag, extractPortVars, formatExtractionFailures } from "./extract.js";
 import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instances.js";
 import { LockView } from "./locks.js";
+import { type Message, type MessageState, MessageQueue, isLive } from "./queue.js";
 import { resolveAlias } from "./aliases.js";
 import {
   type ObligationFacts,
@@ -67,32 +68,12 @@ import {
 import { ObjectStore, refOf } from "./store.js";
 import { type Snapshotable, transact } from "./tx.js";
 
-export type MessageState = "QUEUED" | "CLAIMED" | "CONSUMED" | "FAILED" | "DISCARDED";
-
-export interface Message {
-  readonly id: string;
-  readonly target: Endpoint;
-  readonly payload: Json;
-  readonly state: MessageState;
-  readonly failure?: string;
-  /** 经哪个别名出的网关。观测用；内网边传递时不带。 */
-  readonly alias?: string;
-  /**
-   * 谁发的 —— **观测用，不是路由用**（详见 contracts 的 MessageSource）。
-   *
-   * 补它是因为渲染层要的一件事从现有数据完全推不出来：网关消息带 `alias`
-   * 和 `target`，却不带来源，于是"这次命中是从哪个实例来的"算不出 ——
-   * 而那正是"让浮动节点的命中被看见"这件事本身。扇入边（多条边汇到同一端口）
-   * 也有同样的歧义。
-   *
-   * 省略 = 外部注入（人 / CLI / MCP）。图外来的消息本来就没有图内的来源。
-   */
-  readonly source?: MessageSource;
-  /** 协议级关联，**绝不进 payload**。 */
-  readonly requestId?: string;
-  readonly inReplyTo?: string;
-  readonly attempts: number;
-}
+/**
+ * 消息与队列已抽到 `queue.ts`。这里再导出，保持既有 import 路径不变 ——
+ * 拆分不该让下游改 import，那样就不是"能单独回滚的一步"了。
+ */
+export { MessageQueue, isLive, LIVE_MESSAGE_STATES } from "./queue.js";
+export type { Message, MessageState } from "./queue.js";
 
 export interface HandlerContext {
   readonly traceid: TraceId;
@@ -285,17 +266,14 @@ export class Runtime implements Snapshotable {
   #audit: AuditEntry[] = [];
   #auditSeq = 0;
   readonly #handlers = new Map<string, BuiltinHandler>();
-  readonly #messages = new Map<string, Message>();
+  readonly #queue: MessageQueue;
   readonly #pending = new Map<string, StagedRequest>();
   readonly #records = new Map<string, ExecutionRecord>();
   /** 同 `(实例, 节点)` 不并发 claim —— 冲突域的门。 */
   readonly #busy = new Set<string>();
-  readonly #order: string[] = [];
   readonly #backend: ExecutionBackend | undefined;
   readonly #maxAttempts: number;
   readonly #onCommit: CommitHook | undefined;
-  readonly #keepConsumed: number;
-  #seq = 0;
   #requestSeq = 0;
   #executionSeq = 0;
 
@@ -305,12 +283,12 @@ export class Runtime implements Snapshotable {
     this.#backend = options.backend;
     this.#maxAttempts = options.maxAttempts ?? 3;
     this.#onCommit = options.onCommit;
-    this.#keepConsumed = options.keepConsumedMessages ?? 200;
+    this.#queue = new MessageQueue(options.keepConsumedMessages ?? 200);
   }
 
   /** 事务内通知。钩子抛出 → `transact` 回滚 → 这次提交没发生过。 */
   #commit(event: CommitEvent): void {
-    this.#prune();
+    this.#queue.prune();
     this.#onCommit?.(event);
   }
 
@@ -326,28 +304,6 @@ export class Runtime implements Snapshotable {
    *
    * 在 `#commit` 里调 ⇒ 天然在事务内，回滚一起回滚。
    * 只在明显超量时才扫，免得把平方级的磁盘写入换成平方级的内存扫描。
-   */
-  #prune(): void {
-    if (this.#keepConsumed < 0 || this.#messages.size <= this.#keepConsumed * 2) return;
-
-    const consumed: string[] = [];
-    for (const id of this.#order) {
-      if (this.#messages.get(id)?.state === "CONSUMED") consumed.push(id);
-    }
-    const excess = consumed.length - this.#keepConsumed;
-    if (excess <= 0) return;
-
-    // #order 是投递顺序，所以前面的就是更老的
-    const doomed = new Set(consumed.slice(0, excess));
-    for (const id of doomed) this.#messages.delete(id);
-    const kept = this.#order.filter((id) => !doomed.has(id));
-    this.#order.length = 0;
-    this.#order.push(...kept);
-  }
-
-  /**
-   * 锁的展示投影 —— **每次现算**，没有任何东西维护它（见 `locks.ts`）。
-   * 终止判定不走这里，走 `obligations()`。
    */
   get locks(): LockView {
     return new LockView(this.obligations());
@@ -387,11 +343,9 @@ export class Runtime implements Snapshotable {
     return {
       audit: [...this.#audit],
       auditSeq: this.#auditSeq,
-      messages: new Map(this.#messages),
-      order: [...this.#order],
+      ...(this.#queue.snapshot() as { messages: Map<string, Message>; order: string[] }),
       pending: new Map(this.#pending),
       records: new Map(this.#records),
-      seq: this.#seq,
       requestSeq: this.#requestSeq,
       executionSeq: this.#executionSeq,
     };
@@ -412,15 +366,11 @@ export class Runtime implements Snapshotable {
     // 老的落盘没有这两个字段 —— 缺就当空，别让新增字段把旧 run 装不进来
     this.#audit = s.audit === undefined ? [] : [...s.audit];
     this.#auditSeq = s.auditSeq ?? 0;
-    this.#messages.clear();
-    for (const [k, v] of s.messages) this.#messages.set(k, v);
-    this.#order.length = 0;
-    this.#order.push(...s.order);
+    this.#queue.restore({ messages: s.messages, order: s.order, seq: s.seq });
     this.#pending.clear();
     for (const [k, v] of s.pending) this.#pending.set(k, v);
     this.#records.clear();
     for (const [k, v] of s.records) this.#records.set(k, v);
-    this.#seq = s.seq;
     this.#requestSeq = s.requestSeq;
     this.#executionSeq = s.executionSeq;
   }
@@ -440,13 +390,13 @@ export class Runtime implements Snapshotable {
       if (rec.status !== "RUNNING") continue;
       for (const id of rec.claimed) claimedByRecord.add(id);
     }
-    for (const msg of this.#messages.values()) {
+    for (const msg of this.#queue.all()) {
       if (msg.state === "CLAIMED" && !claimedByRecord.has(msg.id)) {
         problems.push(`消息 ${msg.id} 是 CLAIMED，但没有 RUNNING 记录引用它`);
       }
     }
     for (const id of claimedByRecord) {
-      const msg = this.#messages.get(id);
+      const msg = this.#queue.has(id) ? this.#queue.get(id) : undefined;
       if (msg !== undefined && msg.state !== "CLAIMED") {
         problems.push(`RUNNING 记录引用了 ${id}，但它是 ${msg.state}`);
       }
@@ -480,11 +430,7 @@ export class Runtime implements Snapshotable {
       for (const inst of this.#registry.subtree(root)) {
         if (inst.status !== "TERMINAL") continue;
         // TERMINAL ⇒ 无在途消息、无在途执行、无持有锁
-        const live = [...this.#messages.values()].filter(
-          (m) =>
-            m.target.traceid === inst.traceid &&
-            (m.state === "QUEUED" || m.state === "CLAIMED"),
-        );
+        const live = this.#queue.liveFor(inst.traceid);
         if (live.length > 0) {
           problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍有 ${live.length} 条在途消息`);
         }
@@ -570,21 +516,19 @@ export class Runtime implements Snapshotable {
       port.direction === "receive",
       `端口 ${target.node}.${target.port} 方向是 emit，不能作为投递目标`,
     );
-    return this.#enqueue({ target, payload });
+    return this.#queue.enqueue({ target, payload });
   }
 
   message(id: string): Message {
-    const found = this.#messages.get(id);
-    if (found === undefined) throw new InvariantError(`未知消息：${id}`);
-    return found;
+    return this.#queue.get(id);
   }
 
   messages(): readonly Message[] {
-    return this.#order.map((id) => this.#messages.get(id) as Message);
+    return this.#queue.all();
   }
 
   pending(): readonly Message[] {
-    return this.messages().filter((m) => m.state === "QUEUED");
+    return this.#queue.queued();
   }
 
   // -------------------------------------------------------------------------
@@ -774,7 +718,7 @@ export class Runtime implements Snapshotable {
     // ↓ 以下才开始改状态。到这里已经不会再拒绝了。
     this.#executionSeq += 1;
     const executionId = `exec-${this.#executionSeq}`;
-    this.#setState(input.id, "CLAIMED");
+    this.#queue.setState(input.id, "CLAIMED");
 
     const record: ExecutionRecord = Object.freeze({
       executionId,
@@ -839,7 +783,7 @@ export class Runtime implements Snapshotable {
      */
     const instance = this.#registry.get(record.traceid);
     const stolen = record.claimed.filter((id) => {
-      const m = this.#messages.get(id);
+      const m = this.#queue.has(id) ? this.#queue.get(id) : undefined;
       return m === undefined || m.state !== "CLAIMED";
     });
     if (stolen.length > 0) {
@@ -961,7 +905,7 @@ export class Runtime implements Snapshotable {
     }
 
     const delivered = this.#commitPlan(outcome.plan);
-    this.#setState(input.id, "CONSUMED");
+    this.#queue.setState(input.id, "CONSUMED");
     this.#records.set(record.executionId, {
       ...record,
       status: "SETTLED" as const,
@@ -1007,7 +951,7 @@ export class Runtime implements Snapshotable {
     });
 
     if (NON_RETRYABLE.includes(termination)) {
-      this.#setState(input.id, "DISCARDED", reason);
+      this.#queue.setState(input.id, "DISCARDED", reason);
       return {
         consumed: input.id,
         traceid: record.traceid,
@@ -1020,7 +964,7 @@ export class Runtime implements Snapshotable {
 
     const attempts = input.attempts + 1;
     if (attempts < this.#maxAttempts) {
-      this.#replace(input.id, { state: "QUEUED", attempts, failure: reason });
+      this.#queue.replace(input.id, { state: "QUEUED", attempts, failure: reason });
       return {
         consumed: input.id,
         traceid: record.traceid,
@@ -1030,7 +974,7 @@ export class Runtime implements Snapshotable {
         retrying: true,
       };
     }
-    this.#replace(input.id, { state: "FAILED", attempts, failure: reason });
+    this.#queue.replace(input.id, { state: "FAILED", attempts, failure: reason });
     return {
       consumed: input.id,
       traceid: record.traceid,
@@ -1123,7 +1067,7 @@ export class Runtime implements Snapshotable {
     const exit = this.#registry.template(parentTrace).children[child.slot]?.exit;
     if (exit === undefined) return;
 
-    this.#enqueue({
+    this.#queue.enqueue({
       target: { traceid: parentTrace, node: exit.node, port: exit.port },
       payload: { slot: child.slot, traceid: child.traceid, status: "TERMINAL" },
       // 来源是子**实例**，不是某个节点的 emit —— 所以只有 traceid
@@ -1202,7 +1146,7 @@ export class Runtime implements Snapshotable {
     for (const msg of this.messages()) {
       if (msg.target.traceid !== trace) continue;
       if (msg.state !== "QUEUED" && msg.state !== "CLAIMED") continue;
-      this.#setState(msg.id, "DISCARDED", `实例被截断：${reason}`);
+      this.#queue.setState(msg.id, "DISCARDED", `实例被截断：${reason}`);
       truncatedMessages += 1;
     }
 
@@ -1239,7 +1183,7 @@ export class Runtime implements Snapshotable {
       this.#pending.delete(requestId);
       if (!this.#registry.has(req.requester)) continue;
       if (this.#registry.get(req.requester).status !== "OPEN") continue;
-      this.#enqueue({
+      this.#queue.enqueue({
         target: { traceid: req.requester, node: req.node, port: req.callbackPort },
         payload: { status: "UNAVAILABLE", service: trace, reason },
         // 来源是服务方**实例**，不是它某个节点的 emit —— 与终止通知同例
@@ -1338,7 +1282,7 @@ export class Runtime implements Snapshotable {
     if (!outcome.ok) return this.#fail(input, outcome.reason);
 
     const delivered = this.#commitPlan(outcome.plan);
-    this.#setState(input.id, "CONSUMED");
+    this.#queue.setState(input.id, "CONSUMED");
     this.#recordSnapshot(traceid, nodeId, [input.id], delivered, {});
     return {
       consumed: input.id,
@@ -1576,7 +1520,7 @@ export class Runtime implements Snapshotable {
   #commitPlan(plan: StagePlan): readonly string[] {
     for (const requestId of plan.resolved) this.#pending.delete(requestId);
     for (const req of plan.requests) this.#pending.set(req.requestId, req);
-    return plan.messages.map((m) => this.#enqueue(m));
+    return plan.messages.map((m) => this.#queue.enqueue(m));
   }
 
   #checkContract(port: Port, payload: Json): string | null {
@@ -1597,26 +1541,7 @@ export class Runtime implements Snapshotable {
   }
 
   #failMessage(input: Message, reason: string): void {
-    this.#setState(input.id, "FAILED", reason);
-  }
-
-  #enqueue(spec: Omit<Message, "id" | "state" | "attempts">): string {
-    this.#seq += 1;
-    const id = `msg-${this.#seq}`;
-    this.#messages.set(
-      id,
-      Object.freeze({ ...spec, id, state: "QUEUED" as const, attempts: 0 }),
-    );
-    this.#order.push(id);
-    return id;
-  }
-
-  #setState(id: string, state: MessageState, failure?: string): void {
-    this.#replace(id, failure === undefined ? { state } : { state, failure });
-  }
-
-  #replace(id: string, patch: Partial<Message>): void {
-    this.#messages.set(id, Object.freeze({ ...this.message(id), ...patch }));
+    this.#queue.setState(input.id, "FAILED", reason);
   }
 
   #resolvePort(target: Endpoint, where: string): Port {
