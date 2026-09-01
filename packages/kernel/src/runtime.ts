@@ -49,6 +49,7 @@ import { type VarBag, extractPortVars, formatExtractionFailures } from "./extrac
 import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instances.js";
 import { LockView } from "./locks.js";
 import { type Message, type MessageState, MessageQueue, isLive } from "./queue.js";
+import { formatProblems, stateProblems } from "./invariants.js";
 import { resolveAlias } from "./aliases.js";
 import {
   type ObligationFacts,
@@ -381,83 +382,24 @@ export class Runtime implements Snapshotable {
    * 这些规则以前散在各处的 if 里，没有一处声明。测试每次提交后跑一遍，
    * 半状态就会当场暴露而不是等到某个下游断言莫名其妙地挂。
    */
+  /**
+   * 跨状态机的约束检查。**规则本身在 `invariants.ts`，是纯函数**（§10.4）。
+   *
+   * 这里只负责把事实凑齐、把违规抛出来。分开的理由是可测性：挂在运行时上时，
+   * 要测"两个执行同时 claim 了一条消息"就得先把运行时摆成那个样子 ——
+   * 而正确的运行时**摆不出来**。
+   */
   checkInvariants(): void {
-    const problems: string[] = [];
-
-    // 消息 CLAIMED ⟺ 存在引用它的 RUNNING 记录
-    const claimedByRecord = new Set<string>();
-    for (const rec of this.#records.values()) {
-      if (rec.status !== "RUNNING") continue;
-      for (const id of rec.claimed) claimedByRecord.add(id);
-    }
-    for (const msg of this.#queue.all()) {
-      if (msg.state === "CLAIMED" && !claimedByRecord.has(msg.id)) {
-        problems.push(`消息 ${msg.id} 是 CLAIMED，但没有 RUNNING 记录引用它`);
-      }
-    }
-    for (const id of claimedByRecord) {
-      const msg = this.#queue.has(id) ? this.#queue.get(id) : undefined;
-      if (msg !== undefined && msg.state !== "CLAIMED") {
-        problems.push(`RUNNING 记录引用了 ${id}，但它是 ${msg.state}`);
-      }
-    }
-
-    /**
-     * **一条消息至多被一条 RUNNING 记录 claim。**
-     *
-     * 只看 RUNNING 是有理由的：重试后旧记录仍列着那条消息，但那是**历史**
-     * 不是活跃 claim —— 把 SETTLED 也算进来会把正常的重试判成违规
-     * （第一版就是这么写的，测试当场炸了）。
-     *
-     * 真正要挡的是"两个执行同时以为自己拥有这条消息"，
-     * 那正是 claim 被偷走时的样子。§10.4 说 CHECK constraint 该在的位置。
-     */
-    const owner = new Map<string, string>();
-    for (const rec of this.#records.values()) {
-      if (rec.status !== "RUNNING") continue;
-      for (const id of rec.claimed) {
-        const prev = owner.get(id);
-        if (prev !== undefined) {
-          problems.push(`消息 ${id} 同时被 ${prev} 与 ${rec.executionId} claim`);
-        } else {
-          owner.set(id, rec.executionId);
-        }
-      }
-    }
-
     const root = this.#registry.rootTrace;
-    if (root !== null) {
-      for (const inst of this.#registry.subtree(root)) {
-        if (inst.status !== "TERMINAL") continue;
-        // TERMINAL ⇒ 无在途消息、无在途执行、无持有锁
-        const live = this.#queue.liveFor(inst.traceid);
-        if (live.length > 0) {
-          problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍有 ${live.length} 条在途消息`);
-        }
-        const waiting = this.obligations(inst.traceid).filter(
-          (o) => o.kind === "request" || o.kind === "child",
-        );
-        if (waiting.length > 0) {
-          problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍在等 ${waiting.length} 件事`);
-        }
-        for (const rec of this.#records.values()) {
-          if (rec.traceid === inst.traceid && rec.status === "RUNNING") {
-            problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍有 RUNNING 执行 ${rec.executionId}`);
-          }
-        }
-      }
-      /**
-       * 此处原本还有两条："child 锁指向不存在的实例"与"child 锁仍在，但子实例
-       * 已 TERMINAL"。**归约之后这两条不可表达** —— child 义务是从实例的
-       * `status === "OPEN"` 算出来的，不存在的实例算不出义务，已终态的也算不出。
-       *
-       * 这正是删掉账本换来的东西：不是"检查得更好"，是**违规状态构造不出来**。
-       */
-    }
-
-    if (problems.length > 0) {
-      throw new InvariantError(["状态不变量被破坏：", ...problems].join("\n  "));
-    }
+    const message = formatProblems(
+      stateProblems({
+        messages: this.#queue.all(),
+        executions: [...this.#records.values()],
+        instances: root === null ? [] : this.#registry.subtree(root),
+        obligations: this.obligations(),
+      }),
+    );
+    if (message !== null) throw new InvariantError(message);
   }
 
   /** 本次提交涉及的全部可回滚部件。 */
