@@ -44,7 +44,6 @@ const spec = {
     exit: { from: { node: "loop", port: "out" }, to: { node: "sink", port: "in" } },
   },
   children: {},
-  subscriptions: {},
 };
 
 let store: ObjectStore;
@@ -208,18 +207,27 @@ describe("批 0：状态不变量断言", () => {
     rt.checkInvariants();
   });
 
-  it("★ 抓得出「child 锁还在但子实例已终态」这类半状态", () => {
+  /**
+   * 这条用例以前叫「抓得出『child 锁还在但子实例已终态』这类半状态」。
+   *
+   * 锁账本归约成派生投影之后，**那种半状态构造不出来了** —— 父的 child 义务
+   * 就是从子实例的 `status` 算出来的，改了 status 等于改了义务，两者不可能
+   * 对不上。所以这条从"检查得住"升级成"不可表达"，而不可表达严格更强。
+   *
+   * 半状态检查本身没退化：另一半（TERMINAL 却仍有在途消息）照旧咬人，
+   * 下面一并钉住。
+   */
+  it("★ 「锁还在但子已终态」不再可表达 —— 归约把它变成了不可能", () => {
     const s2 = new ObjectStore();
     const leaf = registerContainerTemplate(s2, "leaf", {
       nodes: {},
       edges: {},
       children: {},
-      subscriptions: {},
     });
     const root = registerContainerTemplate(
       s2,
       "root",
-      { nodes: {}, edges: {}, children: { k: { template: leaf } }, subscriptions: {} },
+      { nodes: {}, edges: {}, children: { k: { template: leaf } } },
       "root_config",
     );
     const r2 = new InstanceRegistry(s2);
@@ -228,15 +236,30 @@ describe("批 0：状态不变量断言", () => {
     rt2.spawn("job-2", "k", "c1");
     rt2.checkInvariants();
 
-    // 绕过 settle 直接改状态，制造半状态：锁还在，子已终态
-    r2.setStatus("job-2/c1", "TERMINAL");
-    expect(() => rt2.checkInvariants()).toThrow(InvariantError);
-    expect(() => rt2.checkInvariants()).toThrow(/child 锁仍在，但子实例 job-2\/c1 已 TERMINAL/);
+    // 父确实在等这个子
+    expect(rt2.terminationBlockers("job-2")).toEqual(["锁 child · 等 job-2/c1"]);
 
-    // 走正规路径就没问题
+    // 绕过 settle 直接改状态 —— 以前这会造出"锁还在、子已终态"的半状态
+    r2.setStatus("job-2/c1", "TERMINAL");
+    // 现在义务当场跟着消失，不变量仍然成立
+    rt2.checkInvariants();
+    expect(rt2.terminationBlockers("job-2")).toEqual([]);
+    expect(rt2.locks.all()).toEqual([]);
+
+    // 走正规路径结果相同 —— 这正是"只有一个事实来源"的意思
     r2.setStatus("job-2/c1", "OPEN");
     rt2.settle("job-2/c1");
     rt2.checkInvariants();
+    expect(rt2.terminationBlockers("job-2")).toEqual([]);
+  });
+
+  it("半状态检查没退化：TERMINAL 却仍有在途消息照旧咬人", () => {
+    rt.registerHandler("collect", () => ({}));
+    rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v: 1 });
+    // 消息还在队列里就把实例按成终态
+    reg.setStatus("job-1", "TERMINAL");
+    expect(() => rt.checkInvariants()).toThrow(InvariantError);
+    expect(() => rt.checkInvariants()).toThrow(/已 TERMINAL，却仍有 1 条在途消息/);
   });
 });
 
@@ -254,7 +277,6 @@ describe("批 F：对象命名空间（§7.7 的 bug 修复）", () => {
       },
       edges: {},
       children: {},
-      subscriptions: {},
     });
     const root = registerContainerTemplate(
       s,
@@ -269,7 +291,6 @@ describe("批 F：对象命名空间（§7.7 的 bug 修复）", () => {
         },
         edges: {},
         children: { k: { template: leaf } },
-        subscriptions: {},
       },
       "root_config",
     );

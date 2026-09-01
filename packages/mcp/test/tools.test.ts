@@ -78,7 +78,6 @@ const FLOW = {
           e2: { from: { node: "gate", port: "else" }, to: { node: "sink", port: "got" } },
         },
         children: {},
-        subscriptions: {},
       },
     },
   ],
@@ -156,7 +155,7 @@ describe("★ 纪律三：调用之间不常驻持锁", () => {
 describe("★ G1 自我修正内循环：错误是给模型读的", () => {
   it("validate_template 干跑不落库", () => {
     const r = call("validate_template", {
-      spec: { nodes: {}, edges: {}, children: {}, subscriptions: {} },
+      spec: { nodes: {}, edges: {}, children: {} },
     });
     expect(r.isError).toBe(false);
     // 没有落库：状态目录仍是空的
@@ -169,7 +168,6 @@ describe("★ G1 自我修正内循环：错误是给模型读的", () => {
         nodes: { a: { kind: "handler", handler: "noop", ports: {} } },
         edges: { bad: { from: { node: "a", port: "out" }, to: { node: "ghost", port: "in" } } },
         children: {},
-        subscriptions: {},
       },
     });
     expect(r.isError).toBe(true);

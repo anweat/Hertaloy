@@ -34,7 +34,6 @@ import {
   type Port,
   type Termination,
   type TraceId,
-  type Tunnel,
   type Usage,
   allowedEmitPorts,
   checkBackendResult,
@@ -42,14 +41,21 @@ import {
   formatJsonViolations,
   jsonViolations,
   parentTrace as parentTrace_,
-  scopeAccepts,
   validateContract,
 } from "@nodeflow/contracts";
 import { InvariantError, invariant } from "./errors.js";
 import { compileContext, formatContextFailures } from "./context.js";
 import { type VarBag, extractPortVars, formatExtractionFailures } from "./extract.js";
 import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instances.js";
-import { LockLedger } from "./locks.js";
+import { LockView } from "./locks.js";
+import { resolveAlias } from "./aliases.js";
+import {
+  type ObligationFacts,
+  type Obligation,
+  describeObligations,
+  obligationsOf,
+  outstanding,
+} from "./obligations.js";
 import {
   type StagePlan,
   type StagedRequest,
@@ -69,11 +75,12 @@ export interface Message {
   readonly payload: Json;
   readonly state: MessageState;
   readonly failure?: string;
-  readonly tunnel?: Tunnel;
+  /** 经哪个别名出的网关。观测用；内网边传递时不带。 */
+  readonly alias?: string;
   /**
    * 谁发的 —— **观测用，不是路由用**（详见 contracts 的 MessageSource）。
    *
-   * 补它是因为渲染层要的一件事从现有数据完全推不出来：隧道消息带 `tunnel`
+   * 补它是因为渲染层要的一件事从现有数据完全推不出来：网关消息带 `alias`
    * 和 `target`，却不带来源，于是"这次命中是从哪个实例来的"算不出 ——
    * 而那正是"让浮动节点的命中被看见"这件事本身。扇入边（多条边汇到同一端口）
    * 也有同样的歧义。
@@ -269,7 +276,6 @@ type ClaimOutcome =
 export class Runtime implements Snapshotable {
   readonly #store: ObjectStore;
   readonly #registry: InstanceRegistry;
-  readonly #ledger = new LockLedger();
   /**
    * 授权决策日志 —— 放行和拒绝都记（见 contracts 的 AuditEntry）。
    *
@@ -339,8 +345,24 @@ export class Runtime implements Snapshotable {
     this.#order.push(...kept);
   }
 
-  get locks(): LockLedger {
-    return this.#ledger;
+  /**
+   * 锁的展示投影 —— **每次现算**，没有任何东西维护它（见 `locks.ts`）。
+   * 终止判定不走这里，走 `obligations()`。
+   */
+  get locks(): LockView {
+    return new LockView(this.obligations());
+  }
+
+  /**
+   * 只读实例树。与 `get locks()` 同例 —— 观测方要问"还有哪些实例没终态"时，
+   * 现在只能靠调用方自己另外持有一份 registry 引用，于是同一个事实有两个来源。
+   *
+   * 加这个 getter 是为了让「未了结的义务」能在 Runtime 外面**完整派生**
+   * （见 `test/obligations.ts`）：四种义务里有一种住在 registry 里，
+   * 够不着它就只能继续维护锁表那份拷贝。
+   */
+  get registry(): InstanceRegistry {
+    return this.#registry;
   }
 
   /** 消息/记录都是冻结对象，浅拷贝即完整快照（§10.1）。 */
@@ -466,8 +488,11 @@ export class Runtime implements Snapshotable {
         if (live.length > 0) {
           problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍有 ${live.length} 条在途消息`);
         }
-        if (this.#ledger.held(inst.traceid).length > 0) {
-          problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍持有锁`);
+        const waiting = this.obligations(inst.traceid).filter(
+          (o) => o.kind === "request" || o.kind === "child",
+        );
+        if (waiting.length > 0) {
+          problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍在等 ${waiting.length} 件事`);
         }
         for (const rec of this.#records.values()) {
           if (rec.traceid === inst.traceid && rec.status === "RUNNING") {
@@ -475,15 +500,13 @@ export class Runtime implements Snapshotable {
           }
         }
       }
-      // child 锁存在 ⇒ 子实例未终态
-      for (const lock of this.#ledger.all()) {
-        if (lock.kind !== "child") continue;
-        if (!this.#registry.has(lock.key)) {
-          problems.push(`child 锁指向不存在的实例 ${lock.key}`);
-        } else if (this.#registry.get(lock.key).status === "TERMINAL") {
-          problems.push(`child 锁仍在，但子实例 ${lock.key} 已 TERMINAL`);
-        }
-      }
+      /**
+       * 此处原本还有两条："child 锁指向不存在的实例"与"child 锁仍在，但子实例
+       * 已 TERMINAL"。**归约之后这两条不可表达** —— child 义务是从实例的
+       * `status === "OPEN"` 算出来的，不存在的实例算不出义务，已终态的也算不出。
+       *
+       * 这正是删掉账本换来的东西：不是"检查得更好"，是**违规状态构造不出来**。
+       */
     }
 
     if (problems.length > 0) {
@@ -493,7 +516,7 @@ export class Runtime implements Snapshotable {
 
   /** 本次提交涉及的全部可回滚部件。 */
   get #parts(): readonly Snapshotable[] {
-    return [this, this.#ledger, this.#registry, this.#store];
+    return [this, this.#registry, this.#store];
   }
 
   records(): readonly ExecutionRecord[] {
@@ -535,14 +558,10 @@ export class Runtime implements Snapshotable {
   }
 
   spawn(parentTrace: TraceId, slot: string, segment: string): ContainerInstance {
-    const child = this.#registry.spawn(parentTrace, slot, segment);
-    this.#ledger.acquire({
-      holder: parentTrace,
-      kind: "child",
-      key: child.traceid,
-      waitingOn: child.traceid,
-    });
-    return child;
+    // 不再记 child 锁：子实例存在且 OPEN **就是**那份义务本身。
+    // 记账的那一版还依赖一条不成文约定——谁都不许直接调 `registry.spawn`，
+    // 而没有任何东西强制它。现在造不出"有子实例却没有义务"的状态。
+    return this.#registry.spawn(parentTrace, slot, segment);
   }
 
   send(target: Endpoint, payload: Json): string {
@@ -1026,25 +1045,36 @@ export class Runtime implements Snapshotable {
   // 终止与截断
   // -------------------------------------------------------------------------
 
+  /**
+   * 本地事实束 —— 派生义务的唯一输入。
+   *
+   * 只读**本进程持有**的四样东西。远端的等待由 `#pending` 里那条本地记录表达，
+   * 不去问对面还活着没 —— 这条纪律是给"每个容器都可以是一个租户"留的。
+   */
+  #facts(): ObligationFacts {
+    const root = this.#registry.rootTrace;
+    return {
+      messages: this.messages(),
+      executions: this.records(),
+      requests: [...this.#pending.values()],
+      instances: root === null ? [] : this.#registry.subtree(root),
+    };
+  }
+
+  /** 未了结的义务。不给 trace 就是全表。 */
+  obligations(trace?: TraceId): readonly Obligation[] {
+    const facts = this.#facts();
+    return trace === undefined ? outstanding(facts) : obligationsOf(facts, trace);
+  }
+
+  /**
+   * 阻塞原因。**是义务枚举的投影**，不再是三段并列的数法。
+   *
+   * 旧写法里"在途消息 / 在途执行 / 持有的锁"各扫一遍，三处漏一处就是一类 bug；
+   * 现在只有一处。文案逐字未变 —— 既有用例一条没改。
+   */
   terminationBlockers(trace: TraceId): readonly string[] {
-    const blockers: string[] = [];
-    const live = this.messages().filter(
-      (m) => m.target.traceid === trace && (m.state === "QUEUED" || m.state === "CLAIMED"),
-    );
-    if (live.length > 0) blockers.push(`${live.length} 条待处理消息`);
-
-    const running = this.records().filter(
-      (r) => r.traceid === trace && r.status === "RUNNING",
-    );
-    if (running.length > 0) blockers.push(`${running.length} 个在途 execution`);
-
-    for (const lock of this.#ledger.held(trace)) {
-      blockers.push(
-        `锁 ${lock.kind}${lock.waitingOn === undefined ? "" : ` · 等 ${lock.waitingOn}`}` +
-          `${lock.originNode === undefined ? "" : `（${lock.originNode} 发起）`}`,
-      );
-    }
-    return blockers;
+    return describeObligations(this.obligations(trace));
   }
 
   canTerminate(trace: TraceId): boolean {
@@ -1064,9 +1094,8 @@ export class Runtime implements Snapshotable {
     if (!this.canTerminate(trace)) return false;
 
     return transact(this.#parts, () => {
+      // 置终态即销账：父的那份 child 义务是从这个 status 算出来的
       this.#registry.setStatus(trace, "TERMINAL");
-      // 子终态 → 父的 child 锁销账（L1 第 2 种的对偶）
-      this.#ledger.releaseByKey("child", trace);
       this.#notifyParent(instance);
       this.#commit({ kind: "settle", traceid: trace });
       return true;
@@ -1177,12 +1206,45 @@ export class Runtime implements Snapshotable {
       truncatedMessages += 1;
     }
 
-    // 3 + 4. 自己持有的锁作废；自己在别处造成的锁**反向释放**
-    const own = this.#ledger.held(trace);
-    const caused = this.#ledger.causedBy(trace);
-    for (const lock of [...own, ...caused]) this.#ledger.release(lock.id);
+    // 3 + 4. 请求的两侧，各自了结。**没有"释放锁"这一步了** ——
+    //        义务是从 pending 与实例状态算出来的，改了源头就等于销了账。
+    const releasedLocks = this.locks.held(trace).length + this.locks.causedBy(trace).length;
+
+    // 3. 自己发出的请求：请求方死了，回复没人收 —— 直接销账
     for (const [requestId, req] of [...this.#pending]) {
       if (req.requester === trace) this.#pending.delete(requestId);
+    }
+
+    /**
+     * 4. 自己承接的请求：**代服务方发一条了结通知**回请求方的 callback。
+     *
+     * 此前这里只反向释放了锁，`#pending` 一条不删 —— 于是两份拷贝分叉，
+     * 而且 `pending` 跟着头全量落盘，每截断一个服务方就永久多一条
+     * （普查在三处独立复现，见 `test/obligations.test.ts`）。
+     *
+     * 但光删 pending 不够：那样请求方**什么都收不到**，它已经消费掉自己的
+     * 输入、发出了请求，然后永远没有下文 —— 静默放弃。所以了结要走
+     * **正常回复路径**：请求方的 callback 端口照常收到一条消息，
+     * handler 自己决定是重试、降级还是失败。
+     *
+     * 这与 `#notifyParent`（子进终态 → 往父投通知）是同一个形状：
+     * **两种义务，两种了结通知**，此前只实现了一种。
+     *
+     * 载荷是协议级通知，不带内容 —— 与子实例终止通知同例。服务方将来可以在
+     * 订阅声明里写一份自己的默认回复（那才是"服务方自己写"的完整形态），
+     * 缺省则用这条。
+     */
+    for (const [requestId, req] of [...this.#pending]) {
+      if (req.waitingOn !== trace) continue;
+      this.#pending.delete(requestId);
+      if (!this.#registry.has(req.requester)) continue;
+      if (this.#registry.get(req.requester).status !== "OPEN") continue;
+      this.#enqueue({
+        target: { traceid: req.requester, node: req.node, port: req.callbackPort },
+        payload: { status: "UNAVAILABLE", service: trace, reason },
+        // 来源是服务方**实例**，不是它某个节点的 emit —— 与终止通知同例
+        source: { traceid: trace },
+      });
     }
 
     // 5. 子实例级联
@@ -1201,7 +1263,7 @@ export class Runtime implements Snapshotable {
       reason,
       generation: bumped.generation,
       truncatedMessages,
-      releasedLocks: own.length + caused.length,
+      releasedLocks,
       cancelledExecutions,
       cascaded,
     };
@@ -1490,7 +1552,18 @@ export class Runtime implements Snapshotable {
       generation: instance.generation,
       inboundMessageId: input.id,
       ...(input.requestId === undefined ? {} : { inboundRequestId: input.requestId }),
-      subscribers: (tunnel: string) => this.#subscribers(tunnel as Tunnel, traceid),
+      /**
+       * 别名解析：只读**这个实例自己**的绑定表 + 本租户的实例存活状态。
+       * 不扫全树、不看兄弟的定义 —— 那是隧道那条路才需要的，而它已经删了。
+       */
+      resolve: (alias: string) => {
+        const root = this.#registry.rootTrace;
+        return resolveAlias(
+          this.#registry.get(traceid).bindings,
+          root === null ? [] : this.#registry.subtree(root),
+          alias,
+        );
+      },
       lookupRequest: (requestId: string) => this.#pending.get(requestId),
       nextRequestId: () => {
         this.#requestSeq += 1;
@@ -1501,29 +1574,9 @@ export class Runtime implements Snapshotable {
 
   /** 一次性落地排期结果 —— 零部分提交的提交点。 */
   #commitPlan(plan: StagePlan): readonly string[] {
-    for (const requestId of plan.resolved) {
-      this.#pending.delete(requestId);
-      this.#ledger.releaseByKey("request", requestId);
-    }
-    for (const spec of plan.locks) this.#ledger.acquire(spec);
+    for (const requestId of plan.resolved) this.#pending.delete(requestId);
     for (const req of plan.requests) this.#pending.set(req.requestId, req);
     return plan.messages.map((m) => this.#enqueue(m));
-  }
-
-  #subscribers(tunnel: Tunnel, sender: TraceId): readonly Endpoint[] {
-    const root = this.#registry.rootTrace;
-    if (root === null) return [];
-    const out: Endpoint[] = [];
-    for (const instance of this.#registry.subtree(root)) {
-      if (instance.status !== "OPEN") continue;
-      for (const sub of Object.values(this.#registry.template(instance.traceid).subscriptions)) {
-        if (sub.tunnel !== tunnel) continue;
-        // 相对作用域按**订阅方实例**解析，所以同一模板换实例仍然正确
-        if (!scopeAccepts(sub.scope, instance.traceid, sender)) continue;
-        out.push({ traceid: instance.traceid, node: sub.to.node, port: sub.to.port });
-      }
-    }
-    return out;
   }
 
   #checkContract(port: Port, payload: Json): string | null {

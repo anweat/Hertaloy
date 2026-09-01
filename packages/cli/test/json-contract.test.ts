@@ -207,8 +207,15 @@ describe("★ 构造器：只减样板，不加权威", () => {
       nodes: { a: handlerNode("noop", { vars: ["x"] }, ["out"]) },
       edges: edges("a.out -> a.in"),
     });
-    // 直接就是模板该有的四个键，注册期校验一行不用改
-    expect(Object.keys(t).sort()).toEqual(["children", "edges", "nodes", "subscriptions"]);
+    // 直接就是模板该有的键，注册期校验一行不用改
+    // （`subscriptions` 随隧道一起删了，换成 `bindings` / `selfBindings`）
+    expect(Object.keys(t).sort()).toEqual([
+      "bindings",
+      "children",
+      "edges",
+      "nodes",
+      "selfBindings",
+    ]);
     expect(t.nodes.a).toMatchObject({ kind: "handler", handler: "noop" });
     expect(t.edges.e1).toEqual({
       from: { node: "a", port: "out" },

@@ -14,7 +14,7 @@
 
 import { z } from "zod";
 import { Json } from "./json.js";
-import { Ref, TraceId, Tunnel, isDescendantOf } from "./identity.js";
+import { AliasName, Ref, TraceId, isDescendantOf } from "./identity.js";
 import { BindBlock, declaredBudget } from "./variable.js";
 import { looksLikeSecret } from "./secret.js";
 import { PortMap, allowedEmitPorts } from "./port.js";
@@ -195,6 +195,43 @@ export type EdgeDefinition = z.infer<typeof EdgeDefinition>;
  * 它指向的是**子模板里的**节点与端口，所以校验必须跨模板做 —— 见
  * `registerContainerTemplate`（纯结构校验在 contracts，跨引用校验在 kernel）。
  */
+/**
+ * 别名绑定 —— **名字 → 端点**，隧道的替代（§6.2 网关一节）。
+ *
+ * 隧道是全局名字 + 全树扫描 + 逐订阅方求 scope：**"这条 emit 去哪儿"从模板里
+ * 答不出来**，必须模拟运行时。别名把解析换成沿 traceid 向上查绑定，于是
+ * 注册期就判定得了（`checkAliases`），而且租户之间不再共享一个名字空间。
+ *
+ * 三个目标形态，互斥：
+ *
+ * | 声明 | 目标 |
+ * |---|---|
+ * | 只有 `node`/`port` | 声明这条绑定的**容器自己**的端点 |
+ * | 加 `slot` | 该子槽下**每个 OPEN 实例**的同名端点（0..N 扇出的来源）|
+ * | 加 `external` | **跨租户的不透明地址**，不枚举对面的实例 |
+ *
+ * 第三种是"单个实例自身要能维护所有情况"这条约束逼出来的：槽枚举要读别的实例
+ * 的存活状态，在自己的子树里没问题（那些实例本就归它管），跨租户就成了
+ * "去问对面还活着没"。所以跨界一律走协议：投一条到一个地址，**扇出由对面决定**。
+ */
+export const AliasBinding = z
+  .object({
+    alias: AliasName,
+    /** 目标在本容器的这个子槽下。与 `external` 互斥。 */
+    slot: Ident.optional(),
+    /** 跨租户地址。与 `slot` 互斥；解析时不枚举对面。 */
+    external: z.string().min(1).optional(),
+    node: NodeId,
+    port: Ident,
+  })
+  .strict()
+  .refine(
+    (b) => b.slot === undefined || b.external === undefined,
+    "绑定要么指向子槽（本租户内，按存活实例扇出），要么指向跨租户地址（不枚举对面），不能都给",
+  );
+
+export type AliasBinding = z.infer<typeof AliasBinding>;
+
 export const ChildSlot = z
   .object({
     template: Ref,
@@ -212,53 +249,33 @@ export const ChildSlot = z
      * 与 `entry` 方向相反：`entry` 指子模板，`exit` 指**本模板**。
      */
     exit: PortRef.optional(),
+    /**
+     * **只对这个子槽的子树可见**的别名绑定。
+     *
+     * 可见性靠放置，不靠字段：同一条绑定放在容器的 `bindings` 里就是整棵子树
+     * 可见，放在这里就只有这一支看得见。它替代的是订阅声明里的绝对 `scope`
+     * —— 而绝对 scope 要写死 traceid，换个实例就失效。
+     */
+    bindings: z.array(AliasBinding).optional(),
   })
   .strict();
 export type ChildSlot = z.infer<typeof ChildSlot>;
-
-/**
- * 订阅作用域（不变量 M2 的一半）。
- *
- * **必须支持相对形式**：模板会被实例化成 `job-1`、`job-2`……，
- * 写死绝对 traceid 的订阅换个实例就失效，与剧本帧 11"订阅自己子树"不符。
- * `$` 不是合法 traceid 字符，所以两个相对标记与绝对前缀不会歧义。
- */
-export const RELATIVE_SCOPES = ["$self", "$self_subtree"] as const;
-export const SubscriptionScope = z.union([z.enum(RELATIVE_SCOPES), TraceId]);
-export type SubscriptionScope = z.infer<typeof SubscriptionScope>;
-
-/** 网关入口：本容器订阅哪条隧道，投到哪个端点。 */
-export const SubscriptionDeclaration = z
-  .object({ tunnel: Tunnel, scope: SubscriptionScope.optional(), to: PortRef })
-  .strict();
-
-export type SubscriptionDeclaration = z.infer<typeof SubscriptionDeclaration>;
-
-/**
- * 作用域是否接受这个发送方。相对标记在**匹配时**按订阅方实例解析成绝对前缀。
- *
- * - 省略        不限作用域
- * - `$self`         只收订阅方自己发的
- * - `$self_subtree` 只收订阅方这棵子树里发的 ← 剧本帧 11
- * - 绝对 traceid    只收该前缀子树里发的
- */
-export function scopeAccepts(
-  scope: SubscriptionScope | undefined,
-  subscriber: TraceId,
-  sender: TraceId,
-): boolean {
-  if (scope === undefined) return true;
-  if (scope === "$self") return sender === subscriber;
-  if (scope === "$self_subtree") return isDescendantOf(sender, subscriber);
-  return isDescendantOf(sender, scope);
-}
 
 export const ContainerTemplate = z
   .object({
     nodes: z.record(NodeId, NodeDefinition).default({}),
     edges: z.record(Ident, EdgeDefinition).default({}),
     children: z.record(Ident, ChildSlot).default({}),
-    subscriptions: z.record(Ident, SubscriptionDeclaration).default({}),
+    /** 自己 + 整棵子树可见的别名绑定。相当于隧道时代"不限作用域"的订阅。 */
+    bindings: z.array(AliasBinding).default([]),
+    /**
+     * **只对本容器自己可见**的绑定，子树看不见。替代 `scope: "$self"`。
+     *
+     * `$self_subtree` 没有对应项 —— 它就是 `bindings` 的默认行为：
+     * 向上查找天然只够得着自己的祖先，子树外的发送方根本解析不到。
+     * 一整条作用域规则因此不需要存在。
+     */
+    selfBindings: z.array(AliasBinding).default([]),
   })
   .strict();
 
@@ -408,27 +425,6 @@ export function validateContainerTemplate(
           `回程落点 \`${slot.exit.node}.${slot.exit.port}\` 必须是**本容器**已声明的 receive 端口` +
           `（exit 指本模板，entry 才指子模板）。可用节点：` +
           `${Object.keys(tpl.nodes).sort().join(", ") || "（无）"}`,
-      });
-    }
-  }
-
-  // 订阅投递点必须是已声明的 receive 端口
-  for (const [subId, sub] of Object.entries(tpl.subscriptions)) {
-    const node = tpl.nodes[sub.to.node];
-    if (node === undefined) {
-      issues.push({
-        where: `subscriptions.${subId}.to`,
-        message:
-          `节点 \`${sub.to.node}\` 不存在。可用节点：` +
-          `${Object.keys(tpl.nodes).sort().join(", ") || "（无）"}`,
-      });
-      continue;
-    }
-    const port = node.ports[sub.to.port];
-    if (port === undefined || port.direction !== "receive") {
-      issues.push({
-        where: `subscriptions.${subId}.to`,
-        message: `\`${sub.to.node}.${sub.to.port}\` 必须是已声明的 receive 端口`,
       });
     }
   }

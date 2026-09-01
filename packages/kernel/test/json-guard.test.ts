@@ -22,7 +22,6 @@ const spec = {
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 let store: ObjectStore;

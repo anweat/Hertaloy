@@ -120,7 +120,8 @@ export interface Flow {
    * 所以"何时"和"何事"一样是渲染要的。
    */
   readonly at: readonly number[];
-  readonly tunnel?: string;
+  /** 经哪个别名出的网关。省略 = 走内网边。 */
+  readonly alias?: string;
   readonly contract?: string;
 }
 

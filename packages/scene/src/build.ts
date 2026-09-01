@@ -299,54 +299,79 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
     }
 
     /**
-     * ── 隧道：一条订阅 × 每个实际来过的来源，各画一条 ──
+     * ── 网关：一条别名绑定 × 每个实际来过的来源，各画一条 ──
      *
-     * 这就是补 `Message.source` 换来的东西。没有它，同一条隧道的所有命中
+     * 这就是补 `Message.source` 换来的东西。没有它，同一个别名的所有命中
      * 长得一模一样，只能在落点上堆一个数字；有了它，**每根来路各自染色**，
      * 浮动的节点因此被看见。
      *
-     * 一次都没命中的订阅仍然出场（`from: null`）—— "声明了但从没人往这儿发"
+     * 一次都没命中的绑定仍然出场（`from: null`）—— "声明了但从没人往这儿发"
      * 是很值钱的观察，不该因为没流量就消失。
+     *
+     * 读的是**实例物化的绑定表**，不是模板的订阅块：订阅块随隧道一起删了，
+     * 而且它本来也答不出"这一条会投到哪儿"（要扫全树匹配）。绑定表是自足的。
+     *
+     * 按**声明它的容器**去重：同一条绑定会出现在整棵子树每个实例的表里，
+     * 逐实例画就成了 N 条重复。
      */
-    for (const [subId, sub] of Object.entries(template.subscriptions)) {
-      const hits = recent.filter(
-        (m) =>
-          m.tunnel === sub.tunnel &&
-          m.target.traceid === instance.traceid &&
-          m.target.node === sub.to.node,
-      );
-      const to = { cell: nodeCellId(instance.traceid, sub.to.node), port: sub.to.port };
-      if (hits.length === 0) {
-        flows.push({
-          id: `${instance.traceid}:sub:${subId}`,
-          from: null,
-          to,
-          certainty: 0,
-          activity: 0,
-          at: [],
-          tunnel: sub.tunnel,
-        });
-        continue;
-      }
-      const bySource = new Map<string, number[]>();
-      for (const m of hits) {
-        if (m.source === undefined || m.source.node === undefined) continue;
-        const key = `${nodeCellId(m.source.traceid, m.source.node)}|${m.source.port ?? ""}`;
-        const list = bySource.get(key);
-        if (list === undefined) bySource.set(key, [seqOf(m.id)]);
-        else list.push(seqOf(m.id));
-      }
-      for (const [key, at] of bySource) {
-        const [cell, port] = key.split("|") as [string, string];
-        flows.push({
-          id: `${instance.traceid}:sub:${subId}:${cell}`,
-          from: { cell, port },
-          to,
-          certainty: certaintyFromHits(at.length),
-          activity: at.length / Math.max(1, recent.length),
-          at,
-          tunnel: sub.tunnel,
-        });
+    for (const b of instance.bindings) {
+      if (b.container !== instance.traceid) continue; // 只在声明处画一次
+      if (b.external !== undefined) continue; // 跨租户地址不在这张图里
+
+      // 绑定指向本容器的节点，或该子槽下每个活实例的同名节点
+      const targets =
+        b.slot === undefined
+          ? [b.container]
+          : Object.values(snapshot.instances)
+              .filter(
+                (i) =>
+                  i.status === "OPEN" &&
+                  i.slot === b.slot &&
+                  i.traceid.slice(0, i.traceid.lastIndexOf("/")) === b.container,
+              )
+              .map((i) => i.traceid);
+
+      for (const targetTrace of targets) {
+        const hits = recent.filter(
+          (m) =>
+            m.alias === b.alias &&
+            m.target.traceid === targetTrace &&
+            m.target.node === b.node,
+        );
+        const to = { cell: nodeCellId(targetTrace, b.node), port: b.port };
+        const flowBase = `${instance.traceid}:alias:${b.alias}:${targetTrace}`;
+        if (hits.length === 0) {
+          flows.push({
+            id: flowBase,
+            from: null,
+            to,
+            certainty: 0,
+            activity: 0,
+            at: [],
+            alias: b.alias,
+          });
+          continue;
+        }
+        const bySource = new Map<string, number[]>();
+        for (const m of hits) {
+          if (m.source === undefined || m.source.node === undefined) continue;
+          const key = `${nodeCellId(m.source.traceid, m.source.node)}|${m.source.port ?? ""}`;
+          const list = bySource.get(key);
+          if (list === undefined) bySource.set(key, [seqOf(m.id)]);
+          else list.push(seqOf(m.id));
+        }
+        for (const [key, at] of bySource) {
+          const [cell, port] = key.split("|") as [string, string];
+          flows.push({
+            id: `${flowBase}:${cell}`,
+            from: { cell, port },
+            to,
+            certainty: certaintyFromHits(at.length),
+            activity: at.length / Math.max(1, recent.length),
+            at,
+            alias: b.alias,
+          });
+        }
       }
     }
   }

@@ -12,6 +12,22 @@ export const FIXTURE: unknown = {
    "traceid": "job-1",
    "templateRef": "root@1",
    "status": "OPEN",
+   "bindings": [
+    {
+     "alias": "findings",
+     "container": "job-1",
+     "node": "watch",
+     "port": "heard",
+     "inherit": true
+    },
+    {
+     "alias": "silence",
+     "container": "job-1",
+     "node": "idle",
+     "port": "never",
+     "inherit": true
+    }
+   ],
    "nodes": {
     "plan": {
      "nodeId": "plan"
@@ -38,6 +54,22 @@ export const FIXTURE: unknown = {
    "templateRef": "worker@1",
    "status": "TERMINAL",
    "slot": "a",
+   "bindings": [
+    {
+     "alias": "findings",
+     "container": "job-1",
+     "node": "watch",
+     "port": "heard",
+     "inherit": true
+    },
+    {
+     "alias": "silence",
+     "container": "job-1",
+     "node": "idle",
+     "port": "never",
+     "inherit": true
+    }
+   ],
    "nodes": {
     "scan": {
      "nodeId": "scan"
@@ -52,6 +84,22 @@ export const FIXTURE: unknown = {
    "templateRef": "worker@1",
    "status": "TERMINAL",
    "slot": "a",
+   "bindings": [
+    {
+     "alias": "findings",
+     "container": "job-1",
+     "node": "watch",
+     "port": "heard",
+     "inherit": true
+    },
+    {
+     "alias": "silence",
+     "container": "job-1",
+     "node": "idle",
+     "port": "never",
+     "inherit": true
+    }
+   ],
    "nodes": {
     "scan": {
      "nodeId": "scan"
@@ -66,6 +114,22 @@ export const FIXTURE: unknown = {
    "templateRef": "worker@1",
    "status": "OPEN",
    "slot": "a",
+   "bindings": [
+    {
+     "alias": "findings",
+     "container": "job-1",
+     "node": "watch",
+     "port": "heard",
+     "inherit": true
+    },
+    {
+     "alias": "silence",
+     "container": "job-1",
+     "node": "idle",
+     "port": "never",
+     "inherit": true
+    }
+   ],
    "nodes": {
     "scan": {
      "nodeId": "scan"
@@ -211,22 +275,19 @@ export const FIXTURE: unknown = {
      }
     }
    },
-   "subscriptions": {
-    "listen": {
-     "tunnel": "findings",
-     "to": {
-      "node": "watch",
-      "port": "heard"
-     }
+   "bindings": [
+    {
+     "alias": "findings",
+     "node": "watch",
+     "port": "heard"
     },
-    "quiet": {
-     "tunnel": "silence",
-     "to": {
-      "node": "idle",
-      "port": "never"
-     }
+    {
+     "alias": "silence",
+     "node": "idle",
+     "port": "never"
     }
-   }
+   ],
+   "selfBindings": []
   },
   "worker@1": {
    "nodes": {
@@ -242,7 +303,7 @@ export const FIXTURE: unknown = {
       },
       "found": {
        "direction": "emit",
-       "tunnel": "findings"
+       "alias": "findings"
       },
       "out": {
        "direction": "emit"
@@ -275,7 +336,8 @@ export const FIXTURE: unknown = {
     }
    },
    "children": {},
-   "subscriptions": {}
+   "bindings": [],
+   "selfBindings": []
   }
  },
  "messages": [
@@ -338,7 +400,7 @@ export const FIXTURE: unknown = {
     "node": "scan",
     "port": "found"
    },
-   "tunnel": "findings"
+   "alias": "findings"
   },
   {
    "id": "msg-6",
@@ -376,7 +438,7 @@ export const FIXTURE: unknown = {
     "node": "scan",
     "port": "found"
    },
-   "tunnel": "findings"
+   "alias": "findings"
   },
   {
    "id": "msg-9",
@@ -414,7 +476,7 @@ export const FIXTURE: unknown = {
     "node": "scan",
     "port": "found"
    },
-   "tunnel": "findings"
+   "alias": "findings"
   },
   {
    "id": "msg-12",
@@ -575,11 +637,12 @@ export const FIXTURE: unknown = {
  ],
  "locks": [
   {
-   "id": "lock-3",
+   "id": "lock-1",
    "holder": "job-1",
    "kind": "child",
    "key": "job-1/a3",
    "waitingOn": "job-1/a3"
   }
- ]
-}
+ ],
+ "audit": []
+};

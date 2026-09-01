@@ -42,8 +42,27 @@ export const SnapshotMessage = z.object({
   state: z.string(),
   /** 观测用来源。省略 = 外部注入（人 / CLI / MCP）。 */
   source: Source.optional(),
-  tunnel: z.string().optional(),
+  /** 经哪个别名出的网关。省略 = 走内网边。 */
+  alias: z.string().optional(),
 });
+
+/**
+ * 一条**已物化到实例上**的别名绑定。
+ *
+ * 画布从这里读"声明过的去向"，而不是从模板的订阅块 —— 订阅块随隧道一起删了，
+ * 而且它本来也答不出"这一条会投到哪儿"（要扫全树匹配）。绑定表是自足的。
+ */
+export const SnapshotBinding = z.object({
+  alias: z.string(),
+  /** 声明它的容器。槽枚举在这个容器名下进行；去重也按它。 */
+  container: z.string(),
+  slot: z.string().optional(),
+  external: z.string().optional(),
+  node: z.string(),
+  port: z.string(),
+});
+
+export type SnapshotBinding = z.infer<typeof SnapshotBinding>;
 
 export const SnapshotInstance = z.object({
   traceid: z.string(),
@@ -51,6 +70,7 @@ export const SnapshotInstance = z.object({
   status: z.string(),
   slot: z.string().optional(),
   nodes: z.record(z.object({ nodeId: z.string() })).default({}),
+  bindings: z.array(SnapshotBinding).default([]),
 });
 
 export const SnapshotRecord = z.object({
@@ -67,7 +87,7 @@ export const SnapshotRecord = z.object({
 const PortDecl = z.object({
   direction: z.enum(["receive", "emit"]),
   contract: z.string().optional(),
-  tunnel: z.string().optional(),
+  alias: z.string().optional(),
 });
 
 export const SnapshotTemplate = z.object({
@@ -89,9 +109,6 @@ export const SnapshotTemplate = z.object({
         exit: Endpoint.partial({ traceid: true }).optional(),
       }),
     )
-    .default({}),
-  subscriptions: z
-    .record(z.object({ tunnel: z.string(), to: Endpoint.partial({ traceid: true }) }))
     .default({}),
 });
 

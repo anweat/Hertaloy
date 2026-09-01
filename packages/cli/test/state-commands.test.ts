@@ -40,7 +40,6 @@ const TEMPLATE = {
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 beforeEach(() => {

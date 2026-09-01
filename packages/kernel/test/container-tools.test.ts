@@ -23,7 +23,6 @@ const coderSpec = {
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 let store: ObjectStore;
@@ -51,7 +50,6 @@ function buildRoot(entry: unknown): void {
       },
       edges: {},
       children: { coders: entry === undefined ? { template: coderRef } : { template: coderRef, entry } },
-      subscriptions: {},
     },
     "root_config",
   );
@@ -137,7 +135,6 @@ describe("跨模板校验：entry 指向子模板里的真实端点", () => {
         nodes: {},
         edges: {},
         children: { coders: { template: coderRef, entry: { node: "ghost", port: "in" } } },
-        subscriptions: {},
       }),
     ).toThrow(/无节点 `ghost`。可用节点：work/);
   });
@@ -153,14 +150,12 @@ describe("跨模板校验：entry 指向子模板里的真实端点", () => {
       },
       edges: {},
       children: {},
-      subscriptions: {},
     });
     expect(() =>
       registerContainerTemplate(store, "bad-dir", {
         nodes: {},
         edges: {},
         children: { k: { template: withEmit, entry: { node: "n", port: "out" } } },
-        subscriptions: {},
       }),
     ).toThrow(/必须是子模板里已声明的 receive 端口。可用：in/);
   });

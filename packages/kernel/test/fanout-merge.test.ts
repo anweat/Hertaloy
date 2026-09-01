@@ -23,7 +23,6 @@ const coderSpec = {
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 let store: ObjectStore;
@@ -70,7 +69,6 @@ function build(withExit: boolean): void {
           ...(withExit ? { exit: { node: "merge", port: "done" } } : {}),
         },
       },
-      subscriptions: {},
     },
     "root_config",
   );
@@ -169,7 +167,6 @@ describe("注册期校验：exit 指本模板，entry 指子模板", () => {
         nodes: {},
         edges: {},
         children: { k: { template: coder, exit: { node: "ghost", port: "in" } } },
-        subscriptions: {},
       }),
     ).toThrow(/exit 指本模板，entry 才指子模板/);
   });

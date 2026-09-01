@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MessageEnvelope, SubscriptionAddress, Endpoint } from "../src/message.js";
+import { MessageEnvelope, Endpoint } from "../src/message.js";
 
 const envelope = {
   message_id: "msg-1",
@@ -8,16 +8,20 @@ const envelope = {
 };
 
 describe("MessageEnvelope —— 信封无路由字段（不变量 M1）", () => {
-  it("接受最小信封与带 in_reply_to / tunnel 的形式", () => {
+  it("接受最小信封与带 in_reply_to / alias 的形式", () => {
     expect(MessageEnvelope.safeParse(envelope).success).toBe(true);
     expect(
       MessageEnvelope.safeParse({
         ...envelope,
         in_reply_to: "msg-0",
-        tunnel: "skill.discovery",
+        alias: "skill.discovery",
       }).success,
     ).toBe(true);
     expect(Endpoint.safeParse(envelope.target).success).toBe(true);
+  });
+
+  it("`tunnel` 已经不是字段了 —— 隧道机制整个删掉，别名接管", () => {
+    expect(MessageEnvelope.safeParse({ ...envelope, tunnel: "progress" }).success).toBe(false);
   });
 
   it("拒绝任何路由字段 —— 消息不选边、不创建边", () => {
@@ -28,18 +32,5 @@ describe("MessageEnvelope —— 信封无路由字段（不变量 M1）", () =>
     expect(
       MessageEnvelope.safeParse({ ...envelope, causation_ids: ["msg-0"] }).success,
     ).toBe(false);
-  });
-});
-
-describe("SubscriptionAddress —— 隧道标签 ∩ traceid 前缀（不变量 M2）", () => {
-  it("接受带作用域与不带作用域两种", () => {
-    expect(
-      SubscriptionAddress.safeParse({ tunnel: "progress", scope: "job-1" }).success,
-    ).toBe(true);
-    expect(SubscriptionAddress.safeParse({ tunnel: "progress" }).success).toBe(true);
-  });
-
-  it("拒绝非法隧道标签", () => {
-    expect(SubscriptionAddress.safeParse({ tunnel: "Progress" }).success).toBe(false);
   });
 });

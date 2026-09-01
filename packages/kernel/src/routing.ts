@@ -22,14 +22,14 @@ import {
   allowedEmitPorts,
 } from "@nodeflow/contracts";
 import { InvariantError } from "./errors.js";
-import type { AcquireInput } from "./locks.js";
 
 export interface StagedMessage {
   readonly target: Endpoint;
   readonly payload: Json;
   /** 谁发的 —— 观测用。见 contracts 里 MessageSource 的说明。 */
   readonly source?: MessageSource;
-  readonly tunnel?: string;
+  /** 经哪个别名出的网关。观测用。 */
+  readonly alias?: string;
   readonly requestId?: string;
   readonly inReplyTo?: string;
 }
@@ -40,11 +40,18 @@ export interface StagedRequest {
   readonly node: string;
   readonly callbackPort: string;
   readonly generation: number;
+  /**
+   * 服务方 traceid。
+   *
+   * 此前这件事只存在**锁**里（`Lock.waitingOn`），而它是排期时就知道的
+   * （`targets[0].traceid`）—— 于是同一个事实有两份拷贝，且只有一份会随
+   * 请求一起落盘。放回请求记录里，锁那一份就成了可派生的。
+   */
+  readonly waitingOn: TraceId;
 }
 
 export interface StagePlan {
   readonly messages: readonly StagedMessage[];
-  readonly locks: readonly AcquireInput[];
   readonly requests: readonly StagedRequest[];
   /** 有输出但无人接走的端口 —— 观测用，不是错误。 */
   readonly dangling: readonly string[];
@@ -61,8 +68,13 @@ export interface StageContext {
   /** 本次消费的消息若是 REQUEST，其 id；否则 undefined。 */
   readonly inboundRequestId?: string;
   readonly inboundMessageId: string;
-  /** 隧道 → 订阅端点。由调用方按 M2 算好（隧道 ∩ traceid 前缀）。 */
-  readonly subscribers: (tunnel: string) => readonly Endpoint[];
+  /**
+   * 别名 → 端点。用**本实例自己的**绑定表解析（`aliases.ts`）。
+   *
+   * 这里原本还有一个 `subscribers(tunnel)`：扫全树找匹配订阅、逐订阅方求
+   * scope。别名版只读实例自带的表 —— 于是解析是局部的，租户之间不共享名字空间。
+   */
+  readonly resolve: (alias: string) => readonly Endpoint[];
   /** 查一个 pending request；返回 undefined 表示不存在或已作废。 */
   readonly lookupRequest: (requestId: string) => StagedRequest | undefined;
   readonly nextRequestId: () => string;
@@ -116,7 +128,6 @@ export function stageOutputs(
   outputs: Readonly<Record<string, Json>>,
 ): StageOutcome {
   const messages: StagedMessage[] = [];
-  const locks: AcquireInput[] = [];
   const requests: StagedRequest[] = [];
   const dangling: string[] = [];
   const resolved: string[] = [];
@@ -157,9 +168,10 @@ export function stageOutputs(
       continue;
     }
 
-    // 网关出隧道
-    if (port.tunnel !== undefined) {
-      const targets = ctx.subscribers(port.tunnel);
+    // 网关出口
+    if (port.alias !== undefined) {
+      const alias = port.alias;
+      const targets = ctx.resolve(alias);
       if (port.callback === undefined) {
         // PUBLISH：0..N 订阅者，不记锁
         if (targets.length === 0) dangling.push(portName);
@@ -168,7 +180,7 @@ export function stageOutputs(
             target,
             payload: structuredClone(value) as Json,
             source,
-            tunnel: port.tunnel,
+            alias,
           });
         }
         continue;
@@ -177,31 +189,23 @@ export function stageOutputs(
       if (targets.length !== 1) {
         return {
           ok: false,
-          reason: `隧道 \`${port.tunnel}\` 的 REQUEST 要求恰好 1 个订阅者，实际 ${targets.length} 个`,
+          reason: `别名 \`${alias}\` 的 REQUEST 要求恰好 1 个目标，实际 ${targets.length} 个`,
         };
       }
       const requestId = ctx.nextRequestId();
-      locks.push({
-        holder: ctx.traceid,
-        kind: "request",
-        key: requestId,
-        originNode: ctx.nodeId,
-        // ★ 必须记 waitingOn：反向清账完全靠它。不记的话，**服务方**被截断时
-        //    请求方的 request 锁不会释放，会永久等一个已死的服务。
-        waitingOn: (targets[0] as Endpoint).traceid,
-      });
       requests.push({
         requestId,
         requester: ctx.traceid,
         node: ctx.nodeId,
         callbackPort: port.callback,
         generation: ctx.generation,
+        waitingOn: (targets[0] as Endpoint).traceid,
       });
       messages.push({
         target: targets[0] as Endpoint,
         payload: structuredClone(value) as Json,
         source,
-        tunnel: port.tunnel,
+        alias,
         requestId,
       });
       continue;
@@ -227,6 +231,6 @@ export function stageOutputs(
 
   return {
     ok: true,
-    plan: { messages, locks, requests, dangling: dangling.sort(), resolved },
+    plan: { messages, requests, dangling: dangling.sort(), resolved },
   };
 }

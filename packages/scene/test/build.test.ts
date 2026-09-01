@@ -46,8 +46,8 @@ describe("★ 流：边和隧道是同一元素的两个确定度", () => {
   it("★ 同一条隧道的两个来源各画一条 —— 这才是补 source 换来的东西", () => {
     const fromA = flow(nodeCellId("job-1/a1", "scan"), nodeCellId("job-1", "watch"));
     const fromB = flow(nodeCellId("job-1/a2", "scan"), nodeCellId("job-1", "watch"));
-    expect(fromA?.tunnel).toBe("findings");
-    expect(fromB?.tunnel).toBe("findings");
+    expect(fromA?.alias).toBe("findings");
+    expect(fromB?.alias).toBe("findings");
     // 补之前这两条长得一模一样，只能在落点上堆一个数字
     expect(fromA?.from?.cell).not.toBe(fromB?.from?.cell);
   });
@@ -62,7 +62,7 @@ describe("★ 流：边和隧道是同一元素的两个确定度", () => {
     const quiet = flow(null, nodeCellId("job-1", "idle"));
     expect(quiet).toBeDefined();
     expect(quiet?.certainty).toBe(0);
-    expect(quiet?.tunnel).toBe("silence");
+    expect(quiet?.alias).toBe("silence");
   });
 });
 

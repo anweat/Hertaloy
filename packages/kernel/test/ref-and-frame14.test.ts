@@ -142,7 +142,6 @@ describe("★ 帧 14：第二轮的上下文不该比第一轮大", () => {
       },
       edges: { loop: { from: { node: "fix", port: "again" }, to: { node: "fix", port: "in" } } },
       children: {},
-      subscriptions: {},
     };
   }
 

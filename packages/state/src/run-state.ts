@@ -136,7 +136,11 @@ export class RunState {
       const cursor = loadObjects(dir, store);
       const parts = decodeHeadParts(head);
       registry.restore(parts.registry);
-      runtime.locks.restore(parts.ledger);
+      /**
+       * `parts.ledger` **故意不装**。锁不再是状态，是义务枚举的展示投影
+       * （见 kernel 的 `locks.ts`）—— 装回来就等于把已经删掉的第二份拷贝
+       * 从磁盘里请回来。字段本身保留，老 run 装得进来。
+       */
       runtime.restore(parts.runtime);
 
       if (cursor !== head.objectCursor) {
@@ -184,7 +188,8 @@ export class RunState {
       root: this.registry.rootTrace,
       objectCursor: this.#cursor,
       registry: this.registry.snapshot(),
-      ledger: this.runtime.locks.snapshot(),
+      // 锁已归约成派生投影，这里只为格式兼容留个空位（见装载侧的说明）
+      ledger: {},
       runtime: this.runtime.snapshot(),
     });
   }

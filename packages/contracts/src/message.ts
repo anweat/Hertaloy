@@ -10,7 +10,7 @@
 
 import { z } from "zod";
 import { Json } from "./json.js";
-import { TraceId, Tunnel } from "./identity.js";
+import { TraceId, AliasName } from "./identity.js";
 import { PortName } from "./port.js";
 
 export const NODE_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -60,23 +60,10 @@ export const MessageEnvelope = z
     target: Endpoint,
     /** REPLY 关联到发起的 REQUEST。非回复消息不带此字段。 */
     in_reply_to: z.string().regex(MESSAGE_ID_PATTERN).optional(),
-    /** 经队列投递时携带；内网边传递时不带。 */
-    tunnel: Tunnel.optional(),
+    /** 经网关（别名）投递时携带；内网边传递时不带。 */
+    alias: AliasName.optional(),
     payload: Json,
   })
   .strict();
 
 export type MessageEnvelope = z.infer<typeof MessageEnvelope>;
-
-/**
- * 订阅寻址 = **隧道标签 ∩ traceid 前缀**（不变量 M2）。
- * `scope` 省略表示不限作用域。
- */
-export const SubscriptionAddress = z
-  .object({
-    tunnel: Tunnel,
-    scope: TraceId.optional(),
-  })
-  .strict();
-
-export type SubscriptionAddress = z.infer<typeof SubscriptionAddress>;

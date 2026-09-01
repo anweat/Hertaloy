@@ -24,7 +24,7 @@ const coderSpec = {
           direction: "receive",
           servo: { vars: { task: { type: "short", from: "$.task" } } },
         },
-        ask: { direction: "emit", tunnel: "skill.discovery", callback: "got" },
+        ask: { direction: "emit", alias: "skill.discovery", callback: "got" },
         got: {
           direction: "receive",
           servo: { vars: { skill: { type: "long", from: "$.skill", max_tokens: 200 } } },
@@ -48,7 +48,6 @@ const coderSpec = {
   },
   edges: { e1: { from: { node: "work", port: "done" }, to: { node: "writer", port: "in" } } },
   children: {},
-  subscriptions: {},
 };
 
 /** 发现服务：长期 OPEN 的容器 + 订阅，没有任何新对象类型。 */
@@ -65,7 +64,6 @@ const discoverySpec = {
   },
   edges: {},
   children: {},
-  subscriptions: { s1: { tunnel: "skill.discovery", to: { node: "serve", port: "inbox" } } },
 };
 
 class FakeBackend implements ExecutionBackend {
@@ -106,7 +104,7 @@ beforeEach(() => {
       nodes: {},
       edges: {},
       children: { coders: { template: coderRef }, services: { template: discoveryRef } },
-      subscriptions: {},
+      bindings: [{ alias: "skill.discovery", slot: "services", node: "serve", port: "inbox" }],
     },
     "root_config",
   );
@@ -195,7 +193,6 @@ describe("Checkpoint B 失败路径", () => {
         },
         edges: {},
         children: {},
-        subscriptions: {},
       }),
     ).toThrow(/合计 500 tokens，超出节点预算 100/);
   });
@@ -213,7 +210,6 @@ describe("Checkpoint B 失败路径", () => {
         },
         edges: {},
         children: {},
-        subscriptions: {},
       }),
     ).toThrow(/必须给出 `budget.tokens`/);
   });
@@ -233,7 +229,6 @@ describe("Checkpoint B 失败路径", () => {
         },
         edges: {},
         children: {},
-        subscriptions: {},
       }),
     ).toThrow(/变量名 `dup` 与 bind 段冲突/);
   });

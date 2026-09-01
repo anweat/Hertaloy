@@ -60,6 +60,13 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
       templateRef: instance.templateRef,
       status: instance.status,
       ...(instance.slot === undefined ? {} : { slot: instance.slot }),
+      /**
+       * 物化的别名绑定 —— 画布读它才知道"声明过的去向"。
+       *
+       * 此前这个信息在模板的订阅块里，而那块**答不出"这一条会投到哪儿"**
+       * （要扫全树匹配）。物化绑定是自足的：实例自己就带着完整寻址表。
+       */
+      bindings: instance.bindings.map((b) => ({ ...b })),
       nodes: Object.fromEntries(
         [...instance.nodes.keys()].map((nodeId) => [nodeId, { nodeId }]),
       ),
@@ -78,7 +85,7 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
       target: m.target,
       state: m.state,
       ...(m.source === undefined ? {} : { source: m.source }),
-      ...(m.tunnel === undefined ? {} : { tunnel: m.tunnel }),
+      ...(m.alias === undefined ? {} : { alias: m.alias }),
     }));
 
   const records = runtime

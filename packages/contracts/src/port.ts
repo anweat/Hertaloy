@@ -9,7 +9,7 @@
  */
 
 import { z } from "zod";
-import { Ref, Tunnel } from "./identity.js";
+import { AliasName, Ref } from "./identity.js";
 import { PortVar, VarName } from "./variable.js";
 
 export const PORT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -41,8 +41,8 @@ export const ReceivePort = z
  * | 模式 | 声明 | 行为 |
  * |---|---|---|
  * | 内网边 | 都不声明 | 按模板的边路由（默认）|
- * | 网关广播 | `tunnel` | PUBLISH 到隧道，0..N 个订阅者，**不记锁**（发后不管）|
- * | 网关请求 | `tunnel` + `callback` | REQUEST，要求恰好 1 个订阅者，内核记一把 `request` 锁，回复落 `callback` 端口 |
+ * | 网关广播 | `alias` | PUBLISH，绑定解析出 0..N 个目标，**不记义务**（发后不管）|
+ * | 网关请求 | `alias` + `callback` | REQUEST，要求恰好 1 个目标，内核记一份 `request` 义务，回复落 `callback` 端口 |
  * | 网关回复 | `reply: true` | 回复本次正在处理的 REQUEST，销账 |
  *
  * handler 仍然只写端口名 —— 是端口的声明决定这条输出走内网还是走网关，
@@ -52,7 +52,17 @@ const EmitPortShape = z
   .object({
     direction: z.literal("emit"),
     contract: Ref.optional(),
-    tunnel: Tunnel.optional(),
+    /**
+     * **别名出口**。声明了它，目标由绑定表解析（`kernel/aliases.ts`）。
+     *
+     * `alias` 单独 = PUBLISH（0..N 个目标）；`alias` + `callback` = REQUEST
+     * （要求恰好 1 个目标，回复落 `callback` 端口）。
+     *
+     * 这里原本是 `tunnel`：全局标签 + 全树扫描匹配订阅 + 逐订阅方求 scope。
+     * 换成别名之后，"这条 emit 去哪儿"**注册期就判定得了**，而且租户之间
+     * 不再共享一个名字空间。
+     */
+    alias: AliasName.optional(),
     /** 回复落回的**本节点**端口名 —— callback 只回已声明端点（不变量 M3）。 */
     callback: PortName.optional(),
     reply: z.literal(true).optional(),
@@ -61,23 +71,23 @@ const EmitPortShape = z
 
 function checkGatewayMode(
   v: {
-    readonly tunnel?: unknown;
+    readonly alias?: unknown;
     readonly callback?: unknown;
     readonly reply?: unknown;
   },
   ctx: z.RefinementCtx,
 ): void {
-  const usesTunnel = v.tunnel !== undefined || v.callback !== undefined;
-  if (usesTunnel && v.reply !== undefined) {
+  const usesGateway = v.alias !== undefined || v.callback !== undefined;
+  if (usesGateway && v.reply !== undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "emit 端口不能同时是网关出隧道（tunnel）与网关回复（reply）",
+      message: "emit 端口不能同时是网关出口（alias）与网关回复（reply）",
     });
   }
-  if (v.callback !== undefined && v.tunnel === undefined) {
+  if (v.callback !== undefined && v.alias === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "声明了 `callback` 就必须声明 `tunnel` —— 回复落点只对 REQUEST 有意义",
+      message: "声明了 `callback` 就必须声明 `alias` —— 回复落点只对 REQUEST 有意义",
     });
   }
 }

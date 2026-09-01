@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime, type StepFailure, type StepResult } from "../src/runtime.js";
+import { deadlocks } from "../src/obligations.js";
 
-/** 请求方容器：ask 端口出隧道，回复落 got 端口。 */
+/** 请求方容器：ask 端口出网关（别名），回复落 got 端口。 */
 const askerSpec = {
   nodes: {
     worker: {
@@ -11,18 +12,17 @@ const askerSpec = {
       handler: "ask",
       ports: {
         start: { direction: "receive", servo: { vars: { q: { type: "short", from: "$.q" } } } },
-        ask: { direction: "emit", tunnel: "skill.discovery", callback: "got" },
+        ask: { direction: "emit", alias: "skill.discovery", callback: "got" },
         got: { direction: "receive", servo: { vars: { a: { type: "short", from: "$.a" } } } },
-        report: { direction: "emit", tunnel: "progress" },
+        report: { direction: "emit", alias: "progress" },
       },
     },
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
-/** 服务方容器：订阅隧道，answer 端口回复。 */
+/** 服务方容器：被别名绑定指到，answer 端口回复。 */
 const serviceSpec = {
   nodes: {
     serve: {
@@ -36,7 +36,6 @@ const serviceSpec = {
   },
   edges: {},
   children: {},
-  subscriptions: { s1: { tunnel: "skill.discovery", to: { node: "serve", port: "inbox" } } },
 };
 
 let store: ObjectStore;
@@ -55,10 +54,22 @@ beforeEach(() => {
     store,
     "root",
     {
-      nodes: {},
+      /**
+       * `sink` 是为了给 `progress` 一个落点。
+       *
+       * 隧道时代 asker 的 `report` 端口没人订阅是合法的（表现为运行期 dangling），
+       * 于是**"我故意不接"与"我忘了接"长得一模一样**。别名时代根必须显式表态，
+       * 所以这里把它接到一个明摆着的收集节点上 —— 多写一行，换"忘了接线"当场被拒。
+       */
+      nodes: {
+        sink: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } },
+      },
       edges: {},
       children: { askers: { template: askerRef }, services: { template: serviceRef } },
-      subscriptions: {},
+      bindings: [
+        { alias: "skill.discovery", slot: "services", node: "serve", port: "inbox" },
+        { alias: "progress", node: "sink", port: "in" },
+      ],
     },
     "root_config",
   );
@@ -67,6 +78,7 @@ beforeEach(() => {
   rt = new Runtime(store, reg);
   rt.registerHandler("ask", (vars) => ({ ask: { q: vars.q ?? null } }));
   rt.registerHandler("serve", (vars) => ({ answer: { a: `answered:${String(vars.q)}` } }));
+  rt.registerHandler("noop", () => ({}));
 });
 
 function setupPair(): void {
@@ -115,7 +127,7 @@ describe("REQUEST / REPLY 与锁账本", () => {
     rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
     const none = rt.step();
     expect(isFailure(none)).toBe(true);
-    if (isFailure(none)) expect(none.reason).toMatch(/恰好 1 个订阅者，实际 0 个/);
+    if (isFailure(none)) expect(none.reason).toMatch(/恰好 1 个目标，实际 0 个/);
 
     rt.spawn("job-1", "services", "d1");
     rt.spawn("job-1", "services", "d2");
@@ -194,36 +206,47 @@ describe("强制截断（§9.6）", () => {
   });
 });
 
-describe("PUBLISH 与 traceid 作用域（不变量 M2）", () => {
-  it("订阅声明 scope 后只收该子树发出的消息", () => {
-    const watcherSpec = {
-      nodes: {
-        metrics: {
-          kind: "handler",
-          handler: "noop",
-          ports: { in: { direction: "receive" } },
-        },
-      },
-      edges: {},
-      children: {},
-      subscriptions: {
-        mine: { tunnel: "progress", scope: "job-1/team-a", to: { node: "metrics", port: "in" } },
-      },
-    };
-    const watcherRef = registerContainerTemplate(store, "watcher", watcherSpec);
+describe("PUBLISH 的可见范围（原不变量 M2 的作用域）", () => {
+  /** 只有一个收集节点的容器，用来当"接住 progress 的那一方"。 */
+  const sinkSpec = {
+    nodes: {
+      metrics: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } },
+    },
+    edges: {},
+    children: {},
+  };
+
+  it("绑定挂在子槽上，只有那一支看得见 —— 替代绝对 scope", () => {
+    const watcherRef = registerContainerTemplate(store, "watcher", sinkSpec);
     const askerRef = "asker@1";
     const rootRef = registerContainerTemplate(
       store,
       "root2",
       {
-        nodes: {},
+        /**
+         * 隧道时代 team-b 发的 progress 匹配不到订阅者，表现为运行期 dangling
+         * —— 而"我故意排除了 team-b"与"我忘了给 team-b 接线"长得一模一样。
+         *
+         * 别名时代根必须显式表态：team-a 接到 watchers 槽，team-b 接到根自己的
+         * `spill`。要验的性质没变（**team-b 发的到不了 w1**），只是现在由结构给出，
+         * 而不是投递时逐对求 scope。
+         */
+        nodes: {
+          spill: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } },
+        },
         edges: {},
         children: {
           watchers: { template: watcherRef },
-          "team-a": { template: askerRef },
-          "team-b": { template: askerRef },
+          "team-a": {
+            template: askerRef,
+            bindings: [{ alias: "progress", slot: "watchers", node: "metrics", port: "in" }],
+          },
+          "team-b": {
+            template: askerRef,
+            bindings: [{ alias: "progress", node: "spill", port: "in" }],
+          },
         },
-        subscriptions: {},
+        bindings: [{ alias: "skill.discovery", slot: "watchers", node: "metrics", port: "in" }],
       },
       "root_config",
     );
@@ -236,45 +259,48 @@ describe("PUBLISH 与 traceid 作用域（不变量 M2）", () => {
     rt2.spawn("job-1", "team-a", "team-a");
     rt2.spawn("job-1", "team-b", "team-b");
 
-    // 作用域内：team-a 发的 progress 被 w1 收到
+    // team-a 发的 progress 落到 w1
     rt2.send({ traceid: "job-1/team-a", node: "worker", port: "start" }, { q: "a" });
     const inScope = rt2.step() as StepResult;
     expect(inScope.traceid).toBe("job-1/team-a");
-    expect(inScope.delivered).toHaveLength(1);
     expect(rt2.message(inScope.delivered[0] as string).target.traceid).toBe("job-1/w1");
 
-    // 作用域外：team-b 发的 progress 一个订阅者都匹配不上
-    // —— 精确定位到 team-b 那一步，不靠 step() 的取活顺序
+    // team-b 发的**到不了 w1** —— 它那一支绑的是根自己的 spill
     rt2.drain();
-    const before = rt2.messages().filter((m) => m.tunnel === "progress").length;
     rt2.send({ traceid: "job-1/team-b", node: "worker", port: "start" }, { q: "b" });
-    const outOfScope = rt2
+    const outside = rt2
       .drain()
       .filter((r): r is StepResult => !("reason" in r) && r.traceid === "job-1/team-b");
-
-    expect(outOfScope).toHaveLength(1);
-    expect(outOfScope[0]?.delivered).toEqual([]);
-    expect(outOfScope[0]?.dangling).toEqual(["report"]);
-    expect(rt2.messages().filter((m) => m.tunnel === "progress")).toHaveLength(before);
+    expect(outside).toHaveLength(1);
+    const target = rt2.message(outside[0]?.delivered[0] as string).target;
+    expect(target).toEqual({ traceid: "job-1", node: "spill", port: "in" });
+    // w1 一条都没多收
+    expect(
+      rt2.messages().filter((m) => m.target.traceid === "job-1/w1" && m.alias === "progress"),
+    ).toHaveLength(1);
   });
 
-  it("★ 相对作用域 `$self_subtree` 换实例仍然正确（同一模板实例化两次）", () => {
+  it("★ 帧 11：绑定对自己整棵子树可见，换实例仍然正确 —— 而且没有作用域字段", () => {
     const watcherSpec = {
-      nodes: {
-        metrics: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } },
-      },
-      edges: {},
+      ...sinkSpec,
       children: { teams: { template: "asker@1" } },
-      // 相对作用域：只收**本实例子树**里发的 —— 不写死任何绝对 traceid
-      subscriptions: {
-        mine: { tunnel: "progress", scope: "$self_subtree", to: { node: "metrics", port: "in" } },
-      },
+      /**
+       * 这就是 `$self_subtree` 的全部替代：**一条普通绑定**。
+       *
+       * 向上查找天然只够得着自己的祖先，所以 t1 只解析得到 w-a、t2 只解析得到 w-b。
+       * "只收本子树发的"不再是一条要在投递时求值的规则，而是查找方向的推论 ——
+       * 整个 `SubscriptionScope` 因此失去存在理由。
+       */
+      bindings: [
+        { alias: "progress", node: "metrics", port: "in" },
+        { alias: "skill.discovery", node: "metrics", port: "in" },
+      ],
     };
     const watcherRef = registerContainerTemplate(store, "watcher-rel", watcherSpec);
     const rootRef = registerContainerTemplate(
       store,
       "root3",
-      { nodes: {}, edges: {}, children: { w: { template: watcherRef } }, subscriptions: {} },
+      { nodes: {}, edges: {}, children: { w: { template: watcherRef } } },
       "root_config",
     );
     const reg3 = new InstanceRegistry(store);
@@ -291,19 +317,38 @@ describe("PUBLISH 与 traceid 作用域（不变量 M2）", () => {
 
     rt3.send({ traceid: "job-9/w-a/t1", node: "worker", port: "start" }, { q: "a" });
     const step = rt3.step() as StepResult;
-
-    // 只投给 w-a，不投给 w-b —— 绝对 scope 做不到这件事
+    // 只投给 w-a，不投给 w-b
     expect(step.delivered).toHaveLength(1);
     expect(rt3.message(step.delivered[0] as string).target.traceid).toBe("job-9/w-a");
+
+    // ★ 自给自足：t1 手里就有完整寻址表，解析不需要再往上问任何人
+    expect(reg3.get("job-9/w-a/t1").bindings.map((b) => `${b.alias}@${b.container}`)).toEqual([
+      "progress@job-9/w-a",
+      "skill.discovery@job-9/w-a",
+    ]);
   });
 });
 
 describe("死锁检测只报警不裁决", () => {
+  /**
+   * 这条用例原本靠 `rt.locks.acquire(...)` 手工往账本里塞两把互等的锁。
+   * 账本归约成派生投影之后没有 `acquire` 了 —— 而这反而让测试更直接：
+   * 环检测是**等待图上的纯函数**，喂它一组义务就行，不必先把状态摆成那样。
+   */
   it("互等形成环时能报出参与者", () => {
-    rt.locks.acquire({ holder: "job-1/a", kind: "child", key: "b", waitingOn: "job-1/b" });
-    rt.locks.acquire({ holder: "job-1/b", kind: "child", key: "a", waitingOn: "job-1/a" });
-    const cycles = rt.locks.deadlocks();
+    const cycles = deadlocks([
+      { kind: "child", holder: "job-1/a", key: "b", waitingOn: "job-1/b" },
+      { kind: "child", holder: "job-1/b", key: "a", waitingOn: "job-1/a" },
+    ]);
     expect(cycles).toHaveLength(1);
     expect([...(cycles[0] as string[])].sort()).toEqual(["job-1/a", "job-1/b"]);
+  });
+
+  it("没有环就不报", () => {
+    const cycles = deadlocks([
+      { kind: "child", holder: "job-1", key: "a", waitingOn: "job-1/a" },
+      { kind: "request", holder: "job-1/a", key: "req-1", waitingOn: "job-1/b" },
+    ]);
+    expect(cycles).toEqual([]);
   });
 });

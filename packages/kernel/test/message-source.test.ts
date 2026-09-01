@@ -44,7 +44,6 @@ describe("★ 内网边：来源是发出它的那个 emit 端口", () => {
     },
     edges: { e: { from: { node: "a", port: "out" }, to: { node: "b", port: "got" } } },
     children: {},
-    subscriptions: {},
   };
 
   it("下游消息带 {traceid, node, port}", () => {
@@ -94,7 +93,6 @@ describe("★ 内网边：来源是发出它的那个 emit 端口", () => {
         r: { from: { node: "right", port: "out" }, to: { node: "sink", port: "got" } },
       },
       children: {},
-      subscriptions: {},
     });
     rt.registerHandler("emit", () => ({ out: {} }));
     rt.registerHandler("noop", () => ({}));
@@ -112,8 +110,8 @@ describe("★ 内网边：来源是发出它的那个 emit 端口", () => {
   });
 });
 
-describe("★ 隧道：命中从哪儿来，现在算得出", () => {
-  it("PUBLISH 出去的消息同时带 tunnel 和 source", () => {
+describe("★ 网关：命中从哪儿来，现在算得出", () => {
+  it("PUBLISH 出去的消息同时带别名标签和 source", () => {
     const child = registerContainerTemplate(store, "child", {
       nodes: {
         pub: {
@@ -121,13 +119,12 @@ describe("★ 隧道：命中从哪儿来，现在算得出", () => {
           handler: "emit",
           ports: {
             in: { direction: "receive", servo: { vars: {} } },
-            out: { direction: "emit", tunnel: "findings" },
+            out: { direction: "emit", alias: "findings" },
           },
         },
       },
       edges: {},
       children: {},
-      subscriptions: {},
     });
     const ref = registerContainerTemplate(
       store,
@@ -142,9 +139,8 @@ describe("★ 隧道：命中从哪儿来，现在算得出", () => {
         },
         edges: {},
         children: { kid: { template: child, entry: { node: "pub", port: "in" } } },
-        subscriptions: {
-          s: { tunnel: "findings", to: { node: "watcher", port: "heard" } },
-        },
+        // 别名绑到根自己的节点 —— 对整棵子树可见，子容器往上发就落这儿
+        bindings: [{ alias: "findings", node: "watcher", port: "heard" }],
       },
       "root_config",
     );
@@ -159,7 +155,7 @@ describe("★ 隧道：命中从哪儿来，现在算得出", () => {
     rt.drain();
 
     const heard = rt.messages().find((m) => m.target.node === "watcher");
-    expect(heard?.tunnel).toBe("findings");
+    expect(heard?.alias).toBe("findings");
     // ★ 这一行是整件事的重点：染色能染出那根来路了
     expect(heard?.source?.traceid).toBe(kid.traceid);
     expect(heard?.source?.port).toBe("out");
@@ -178,7 +174,6 @@ describe("★ 子实例终止通知：只有 traceid，没有 node/port", () => 
       },
       edges: {},
       children: {},
-      subscriptions: {},
     });
     const ref = registerContainerTemplate(
       store,
@@ -199,7 +194,6 @@ describe("★ 子实例终止通知：只有 traceid，没有 node/port", () => 
             exit: { node: "done", port: "exit" },
           },
         },
-        subscriptions: {},
       },
       "root_config",
     );

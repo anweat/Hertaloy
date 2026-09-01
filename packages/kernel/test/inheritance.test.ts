@@ -26,7 +26,6 @@ const baseSpec = {
   },
   edges: { e1: { from: { node: "coder", port: "out" }, to: { node: "sink", port: "in" } } },
   children: {},
-  subscriptions: {},
 };
 
 let store: ObjectStore;
@@ -130,7 +129,7 @@ describe("★ eager 的全部理由：改基模板不影响已有实例（C4）"
     const rootRef = registerContainerTemplate(
       store,
       "root",
-      { nodes: {}, edges: {}, children: { k: { template: strictRef } }, subscriptions: {} },
+      { nodes: {}, edges: {}, children: { k: { template: strictRef } } },
       "root_config",
     );
     const reg = new InstanceRegistry(store);

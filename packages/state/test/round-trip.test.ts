@@ -35,7 +35,6 @@ const TEMPLATE = {
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 /** 起一个进程、干点活、落盘、退出。 */

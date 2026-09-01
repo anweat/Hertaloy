@@ -29,7 +29,6 @@ function rig(handler: string, servo: Record<string, unknown>) {
       },
       edges: {},
       children: {},
-      subscriptions: {},
     },
     "root_config",
   );

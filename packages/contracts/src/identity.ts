@@ -104,22 +104,26 @@ export function isDescendantOf(candidate: TraceId, ancestor: TraceId): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Tunnel —— 隧道标签（不变量 M2）
+// AliasName —— 别名（隧道的替代）
 // ---------------------------------------------------------------------------
 
 /**
- * 隧道是**统一标识符**，不是第三种传递机制 —— 它是队列的寻址语法。
+ * 别名是**名字**，不是地址：它指向什么由绑定表决定（`AliasBinding`）。
  *
- * 与 traceid 正交：隧道回答"是什么"，traceid 回答"在哪儿"。
- * 投递匹配 = 隧道标签相等 ∩ 发送方落在订阅声明的 traceid 作用域内。
+ * 与资源别名（`workspace: { source: "primary" }`）同一条纪律 —— 模板只写名字，
+ * 真实位置由别处给。差别只在绑定表住哪：资源的住机器配置（"这台机器上有什么"），
+ * 别名寻址的住模板（图结构，要版本化、要注册期可校验）。
+ *
+ * 字符集与容器里的其他标识符（端口、子槽、节点）一致，好让"统一地址"这件事
+ * 后面能真的统一 —— 隧道当年选了小写点分的另一套语法，那就是两套并存的开始。
  */
-export const TUNNEL_PATTERN = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/;
+export const ALIAS_PATTERN = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 
-export const Tunnel = z
+export const AliasName = z
   .string()
-  .regex(TUNNEL_PATTERN, "隧道标签必须是小写点分标识符，如 `skill.discovery`");
+  .regex(ALIAS_PATTERN, "别名必须以字母或下划线起头，可含字母数字与 `._-`");
 
-export type Tunnel = z.infer<typeof Tunnel>;
+export type AliasName = z.infer<typeof AliasName>;
 
 // ---------------------------------------------------------------------------
 // Principal —— 控制面主体（§11）

@@ -33,7 +33,6 @@ const TEMPLATE = {
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 /**
@@ -287,7 +286,6 @@ describe("★ source 活得过落盘", () => {
     },
     edges: { e: { from: { node: "a", port: "out" }, to: { node: "b", port: "got" } } },
     children: {},
-    subscriptions: {},
   };
 
   it("写进去、换个进程读出来，来源还在", () => {

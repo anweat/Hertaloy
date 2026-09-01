@@ -43,7 +43,7 @@ const worker = registerContainerTemplate(s.store, "worker", {
       handler: "emit",
       ports: {
         in: { direction: "receive", servo: { vars: {} } },
-        found: { direction: "emit", tunnel: "findings" },
+        found: { direction: "emit", alias: "findings" },
         out: { direction: "emit" },
       },
     },
@@ -55,7 +55,6 @@ const worker = registerContainerTemplate(s.store, "worker", {
   },
   edges: { e: { from: { node: "scan", port: "out" }, to: { node: "wrap", port: "got" } } },
   children: {},
-  subscriptions: {},
 });
 
 const root = registerContainerTemplate(
@@ -111,11 +110,12 @@ const root = registerContainerTemplate(
       a: { template: worker, entry: { node: "scan", port: "in" }, exit: { node: "merge", port: "exit" } },
       b: { template: worker, entry: { node: "scan", port: "in" }, exit: { node: "merge", port: "exit" } },
     },
-    subscriptions: {
-      listen: { tunnel: "findings", to: { node: "watch", port: "heard" } },
-      // 声明了但从没人往这儿发 —— certainty 恒 0 的那根须
-      quiet: { tunnel: "silence", to: { node: "idle", port: "never" } },
-    },
+    bindings: [
+      { alias: "findings", node: "watch", port: "heard" },
+      // 绑了但从没人往这儿发 —— certainty 恒 0 的那根须。
+      // 别名校验只要求"用到的必须绑上"，反过来不要求，所以这根须仍然表达得出来。
+      { alias: "silence", node: "idle", port: "never" },
+    ],
   },
   "root_config",
 );

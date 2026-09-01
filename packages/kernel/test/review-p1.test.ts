@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodeflow/contracts";
-import { scopeAccepts } from "@nodeflow/contracts";
+import { resolveAlias } from "../src/aliases.js";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime, type StepFailure, type StepResult } from "../src/runtime.js";
@@ -25,7 +25,6 @@ const agentSpec = {
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 class OneShot implements ExecutionBackend {
@@ -151,20 +150,18 @@ describe("P1-4 REQUEST 锁必须记 waitingOn，否则服务方死亡时请求�
         handler: "ask",
         ports: {
           start: { direction: "receive", servo: { vars: { q: { type: "short", from: "$.q" } } } },
-          ask: { direction: "emit", tunnel: "t.disc", callback: "got" },
+          ask: { direction: "emit", alias: "t.disc", callback: "got" },
           got: { direction: "receive" },
         },
       },
     },
     edges: {},
     children: {},
-    subscriptions: {},
   };
   const svcSpec = {
     nodes: { s: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } } },
     edges: {},
     children: {},
-    subscriptions: { s1: { tunnel: "t.disc", to: { node: "s", port: "in" } } },
   };
 
   it("★ 截断服务方后，请求方的 request 锁被反向清账", () => {
@@ -174,7 +171,12 @@ describe("P1-4 REQUEST 锁必须记 waitingOn，否则服务方死亡时请求�
     const root = registerContainerTemplate(
       s,
       "root",
-      { nodes: {}, edges: {}, children: { a: { template: a }, v: { template: v } }, subscriptions: {} },
+      {
+        nodes: {},
+        edges: {},
+        children: { a: { template: a }, v: { template: v } },
+        bindings: [{ alias: "t.disc", slot: "v", node: "s", port: "in" }],
+      },
       "root_config",
     );
     const r = new InstanceRegistry(s);
@@ -203,12 +205,11 @@ describe("P1-5 自然终止必须存在，并释放父的 child 锁", () => {
       nodes: { n: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } } },
       edges: {},
       children: {},
-      subscriptions: {},
     });
     const root = registerContainerTemplate(
       s,
       "root",
-      { nodes: {}, edges: {}, children: { k: { template: leaf } }, subscriptions: {} },
+      { nodes: {}, edges: {}, children: { k: { template: leaf } } },
       "root_config",
     );
     const r = new InstanceRegistry(s);
@@ -247,14 +248,14 @@ describe("P1-6 重复回复必须真的被拒（不是靠改名蒙混）", () =>
     };
     const outcome = stageOutputs(
       {
-        template: { nodes: { n: node }, edges: {}, children: {}, subscriptions: {} },
+        template: { nodes: { n: node }, edges: {}, children: {}, bindings: [], selfBindings: [] },
         node,
         traceid: "job-1",
         nodeId: "n",
         generation: 0,
         inboundMessageId: "msg-1",
         inboundRequestId: "req-1",
-        subscribers: () => [],
+        resolve: () => [],
         lookupRequest: () => undefined, // ← 已被首次回复销账
         nextRequestId: () => "req-2",
       },
@@ -265,16 +266,37 @@ describe("P1-6 重复回复必须真的被拒（不是靠改名蒙混）", () =>
   });
 });
 
-describe("P1-7 订阅作用域必须支持相对形式", () => {
-  it("scopeAccepts 的四种形态", () => {
-    expect(scopeAccepts(undefined, "job-1/w", "任意")).toBe(true);
-    expect(scopeAccepts("$self", "job-1/w", "job-1/w")).toBe(true);
-    expect(scopeAccepts("$self", "job-1/w", "job-1/w/t")).toBe(false);
-    expect(scopeAccepts("$self_subtree", "job-1/w", "job-1/w/t")).toBe(true);
-    expect(scopeAccepts("$self_subtree", "job-1/w", "job-1/other")).toBe(false);
-    expect(scopeAccepts("job-2", "job-1/w", "job-2/x")).toBe(true);
-    // 段边界：job-1 不该捞到 job-10
-    expect(scopeAccepts("$self_subtree", "job-1", "job-10/x")).toBe(false);
+describe("P1-7 换实例仍然正确 —— 原「相对作用域」保护的性质", () => {
+  /**
+   * 这条原本钉的是 `scopeAccepts` 的四种形态。作用域字段随隧道一起删掉之后，
+   * 它保护的性质**没有消失**，只是换了落点：
+   *
+   *   "换实例仍然正确"  → 绑定按实例物化，兄弟实例各有各的表，不互相借用
+   *   "段边界不越界"    → 槽枚举按 `parentOf` 精确切分，`job-1` 捞不到 `job-10`
+   *
+   * 前者由 `aliases.test.ts` 的帧 11 场景钉住；这里钉后者，因为它是那种
+   * "写错了也看着正常"的边界。
+   */
+  it("★ 段边界：job-1 声明的槽绑定，捞不到 job-10 底下的实例", () => {
+    const bindings = [
+      { alias: "a", container: "job-1", slot: "kids", node: "n", port: "in", inherit: true },
+    ] as const;
+    const instances = [
+      { traceid: "job-1/k1", slot: "kids", status: "OPEN" },
+      // 名字前缀像，但**不是** job-1 的子实例
+      { traceid: "job-10/k1", slot: "kids", status: "OPEN" },
+      // 同一个父，但占的是别的槽
+      { traceid: "job-1/other", slot: "others", status: "OPEN" },
+      // 同一个槽，但已终态
+      { traceid: "job-1/k2", slot: "kids", status: "TERMINAL" },
+    ];
+    expect(resolveAlias(bindings, instances, "a")).toEqual([
+      { traceid: "job-1/k1", node: "n", port: "in" },
+    ]);
+  });
+
+  it("不匹配的别名解析成空集，不是报错", () => {
+    expect(resolveAlias([], [], "nope")).toEqual([]);
   });
 });
 

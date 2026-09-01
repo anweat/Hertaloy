@@ -40,7 +40,6 @@ const AGENT_FLOW = {
   },
   edges: { e: { from: { node: "n", port: "out" }, to: { node: "sink", port: "got" } } },
   children: {},
-  subscriptions: {},
 };
 
 describe("★ P0-1 重复 apply 只生效一次", () => {
@@ -128,7 +127,6 @@ describe("★ P0-4 同步 handler 路径也编上下文", () => {
     },
     edges: {},
     children: {},
-    subscriptions: {},
   });
 
   it("运行期上界对同步节点生效 —— 此前完全没查", () => {
@@ -165,13 +163,11 @@ describe("★ P1 覆盖层不是逃生舱", () => {
       },
       edges: {},
       children: {},
-      subscriptions: {},
     });
     const base = registerContainerTemplate(store, "base", {
       nodes: {},
       edges: {},
       children: {},
-      subscriptions: {},
     });
 
     expect(() =>
@@ -194,7 +190,6 @@ describe("★ P1 contract 引用在注册期就查", () => {
     },
     edges: {},
     children: {},
-    subscriptions: {},
   });
 
   it("指向不存在的引用 → 拒绝，不是等运行期抛", () => {
@@ -208,7 +203,6 @@ describe("★ P1 contract 引用在注册期就查", () => {
       nodes: {},
       edges: {},
       children: {},
-      subscriptions: {},
     });
     expect(() => registerContainerTemplate(store, "bad", withContract(notAContract))).toThrow(
       /不是一份合法 MessageContract/,
@@ -248,7 +242,6 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
     },
     edges: {},
     children: {},
-    subscriptions: {},
   };
 
   function plane() {

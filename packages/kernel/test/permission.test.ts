@@ -17,7 +17,6 @@ const leafSpec = {
   nodes: { w: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } } },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 const alice = parsePrincipal("human:alice");
@@ -36,7 +35,7 @@ beforeEach(() => {
   const root = registerContainerTemplate(
     store,
     "root",
-    { nodes: {}, edges: {}, children: { k: { template: leaf } }, subscriptions: {} },
+    { nodes: {}, edges: {}, children: { k: { template: leaf } } },
     "root_config",
   );
   reg = new InstanceRegistry(store);

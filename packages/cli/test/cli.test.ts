@@ -23,7 +23,6 @@ const leaf = {
   },
   edges: {},
   children: {},
-  subscriptions: {},
 };
 
 describe("hertaloy validate —— 干跑校验，不落库", () => {

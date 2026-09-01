@@ -28,7 +28,6 @@ const agentSpec = {
   },
   edges: { e1: { from: { node: "coder", port: "out" }, to: { node: "sink", port: "in" } } },
   children: {},
-  subscriptions: {},
 };
 
 /** 可编程 backend：按调用序返回预设结果，并记录 execute 期间的观察点。 */
@@ -324,7 +323,6 @@ describe("★ 可变头封顶：已消费消息不无限累积（GC 第一条）
         },
         edges: {},
         children: {},
-        subscriptions: {},
       },
       "root_config",
     );
@@ -401,7 +399,6 @@ describe("★ 被拒的 claim 不留残骸（外部审核 P0-3）", () => {
         },
         edges: {},
         children: {},
-        subscriptions: {},
       },
       "root_config",
     );

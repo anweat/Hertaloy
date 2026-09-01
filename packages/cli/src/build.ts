@@ -130,7 +130,9 @@ export interface TemplateInput {
   readonly nodes: Record<string, NodeDefinition>;
   readonly edges?: Record<string, EdgeDefinition>;
   readonly children?: Record<string, unknown>;
-  readonly subscriptions?: Record<string, unknown>;
+  /** 别名绑定：自己 + 整棵子树可见（`selfBindings` 只对自己）。 */
+  readonly bindings?: readonly unknown[];
+  readonly selfBindings?: readonly unknown[];
 }
 
 /**
@@ -144,7 +146,8 @@ export function template(input: TemplateInput): ContainerTemplate {
     nodes: input.nodes,
     edges: input.edges ?? {},
     children: input.children ?? {},
-    subscriptions: input.subscriptions ?? {},
+    bindings: input.bindings ?? [],
+    selfBindings: input.selfBindings ?? [],
   } as ContainerTemplate;
 }
 

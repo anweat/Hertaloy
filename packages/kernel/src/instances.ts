@@ -15,6 +15,7 @@
  */
 
 import {
+  type AliasBinding,
   MessageContract,
   ContainerTemplate,
   TemplateOverlay,
@@ -32,6 +33,13 @@ import {
 import { InvariantError, invariant } from "./errors.js";
 import { ObjectStore } from "./store.js";
 import type { Snapshotable } from "./tx.js";
+import {
+  type MaterializedBinding,
+  checkAliases,
+  checkRootAliases,
+  childBindings,
+  rootBindings,
+} from "./aliases.js";
 
 export type InstanceStatus = "OPEN" | "TERMINAL";
 
@@ -66,6 +74,14 @@ export interface ContainerInstance {
   readonly seq: number;
   /** 从父容器的哪个子槽创建的。根实例没有。回程通知要靠它找 `exit` 声明。 */
   readonly slot?: string;
+  /**
+   * **物化的别名绑定表** —— 创建时算一次，此后不变（见 `aliases.ts`）。
+   *
+   * 与 `templateRef` 的 pin 同一条论证（C4 / §5.1）：lazy 地每次读走祖先链，
+   * 祖先事后改绑定就会让在途实例的寻址漂掉。物化之后**实例自给自足**，
+   * 解析不依赖任何其他实例的定义 —— 这是租户能跨进程的前提。
+   */
+  readonly bindings: readonly MaterializedBinding[];
 }
 
 export class InstanceRegistry implements Snapshotable {
@@ -153,7 +169,7 @@ export class InstanceRegistry implements Snapshotable {
     if (this.#instances.has(trace)) {
       throw new InvariantError(`实例已存在：${trace}`);
     }
-    return this.#materialize(trace, declared.template, slot);
+    return this.#materialize(trace, declared.template, slot, parent, declared.bindings ?? []);
   }
 
   get(trace: TraceId): ContainerInstance {
@@ -212,8 +228,19 @@ export class InstanceRegistry implements Snapshotable {
     return next;
   }
 
-  #materialize(trace: TraceId, templateRef: Ref, slot?: string): ContainerInstance {
+  #materialize(
+    trace: TraceId,
+    templateRef: Ref,
+    slot?: string,
+    parent?: ContainerInstance,
+    slotBindings?: readonly AliasBinding[],
+  ): ContainerInstance {
     const template = this.#template(templateRef);
+    // 绑定表在这里算一次就定死 —— 与 templateRef 的 pin 同一时刻、同一理由
+    const bindings =
+      parent === undefined
+        ? rootBindings(trace, template)
+        : childBindings(trace, template, parent.traceid, parent.bindings, slotBindings ?? []);
     const nodes = new Map<string, NodeInstance>();
     for (const nodeId of Object.keys(template.nodes)) {
       nodes.set(nodeId, Object.freeze({ nodeId }));
@@ -223,6 +250,7 @@ export class InstanceRegistry implements Snapshotable {
       templateRef,
       status: "OPEN" as const,
       nodes,
+      bindings,
       generation: 0,
       seq: 0,
       ...(slot === undefined ? {} : { slot }),
@@ -295,6 +323,16 @@ export function registerContainerTemplate(
     ...validateContainerTemplate(parsed.data),
     ...validateChildEntries(store, parsed.data),
     ...validateContractRefs(store, parsed.data),
+    /**
+     * 别名的注册期判定（`aliases.ts`）。跨模板的那半与 `validateChildEntries`
+     * 同一个时机、同一条路 —— 父注册时它已经持有子模板的 ref。
+     *
+     * 只有**根配置**要求"一个别名都不欠"：非根模板还会被装进更外层，
+     * 欠账由那时候的父来还。这正是 §3.1「根是递归的终止条件」。
+     */
+    ...(kind === "root_config"
+      ? checkRootAliases(templateId, parsed.data, (ref) => resolveTemplate(store, ref))
+      : checkAliases(templateId, parsed.data, (ref) => resolveTemplate(store, ref)).issues),
   ];
   if (issues.length > 0) {
     throw new InvariantError(
@@ -503,4 +541,13 @@ function validateChildEntries(
     }
   }
   return issues;
+}
+
+/** 按 ref 取一份容器模板；取不到（或不是模板）返回 undefined。 */
+function resolveTemplate(store: ObjectStore, ref: Ref): ContainerTemplate | undefined {
+  try {
+    return ContainerTemplate.parse(store.resolve(ref).body);
+  } catch {
+    return undefined;
+  }
 }

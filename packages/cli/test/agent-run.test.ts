@@ -61,7 +61,6 @@ const TEMPLATE = {
   },
   edges: { e1: { from: { node: "worker", port: "out" }, to: { node: "sink", port: "got" } } },
   children: {},
-  subscriptions: {},
 };
 
 beforeEach(() => {
