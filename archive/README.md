@@ -11,6 +11,18 @@
 | `docs/v4/` | V4 foundation、interfaces、复杂度与执行面评估 | 旧实现规格；仅按 V5 §14 选择性继承 |
 | `docs/superseded-v5-transition/` | 旧全栈架构、一次性构建提示词、重置前 README | 名称虽含 V5，仍以 V4 GraphTemplate/7 类节点和长期 parity 为基础，已被 `FOUNDATION_V5.md` 取代 |
 
+## 演示页面
+
+`apps/canvas-tunnel-era/` —— 隧道时代的画布演示（`index.html` / `board.html` / `arch.html`
+与 `scene.sample.json`）。
+
+它读的是**订阅块 + `Message.tunnel`** 那一版 Scene 结构。隧道机制已被别名寻址取代
+（`packages/kernel/src/aliases.ts`），Scene 的 `SnapshotTemplate.subscriptions` 换成了
+实例上的 `bindings`，`Message.tunnel` 改名 `alias`。留在树里只会成为下一处
+"文档宣称的与代码强制的对不上"，所以整体冻结在这里。
+
+要重做画布的话，读 `packages/scene/` 的当前结构 + `RENDERING.md`，不要从这些文件改。
+
 ## 实现
 
 `implementations/pre-v5-reset/` 保留重置前的原始相对布局，包括：

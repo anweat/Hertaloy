@@ -228,7 +228,7 @@ readonly skew?: { readonly disk: number; readonly head: number };
 
 ### 5.1 L1 里什么进什么不进
 
-进：实例树、锁账本、消息头（不含 payload）、执行记录、对象清单、`can{}`、游标、skew。
+进：实例树、未了结的义务、消息头（不含 payload）、执行记录、对象清单、`can{}`、游标、skew。
 不进：任何 body。**`$run` 的 `consumed/produced` 也不进** —— 因果视图是 L2 的按需查询。
 
 ### 5.2 唯一违反规则的那一项，以及怎么办
@@ -295,7 +295,11 @@ POST /api/truncate → { ..., cursor: {seq, objects, config} }
 `seq`（提交序号）· `slot`（来自父容器哪个子槽）· `nodes`（节点 id 集）
 派生：父子 / 深度 / 子树 —— 全部从 traceid 前缀免费得到
 
-### B. `head.ledger` —— 锁账本（阻塞的全部依据）
+### B. 未了结的义务 —— 阻塞的全部依据（**派生，不在 head 里**）
+
+> ⚠️ 原本这里是 `head.ledger`（一张落盘的锁账本）。第八次归约把它删了：
+> 义务从实例状态 + 消息 + 执行记录 + 待回复请求**算出来**，`head.ledger` 现在写空位
+> 只为格式兼容，装载时不读。观察方读 `Runtime.obligations()` 或它的展示投影 `locks`。
 
 `id` · `kind`（只有 `request` / `child` 两种）· `holder` · `waitingOn` ·
 `originNode`（仅供展示）· `key` · `since`（逻辑时钟，不是墙钟）
@@ -305,7 +309,7 @@ POST /api/truncate → { ..., cursor: {seq, objects, config} }
 
 - **消息**：`id`（`msg-N`）· `target{traceid,node,port}` · `state`（QUEUED /
   CLAIMED / CONSUMED / FAILED / DISCARDED）· `source{traceid,node?,port?}`（**省略 =
-  外部注入**）· `tunnel` · `requestId` · `inReplyTo` · `attempts` · `failure` ·
+  外部注入**）· `alias` · `requestId` · `inReplyTo` · `attempts` · `failure` ·
   `payload`（**L2**）
 - **执行记录**：`executionId` · `traceid` · `nodeId` · `status`（RUNNING / SETTLED /
   VOIDED）· `termination`（DONE / CANCELLED / BUDGET / INVALID_OUTPUT / FAILED，
@@ -352,7 +356,7 @@ POST /api/truncate → { ..., cursor: {seq, objects, config} }
 | agent 在沙箱里干了什么 | 内核不中介它的工具调用（第五次归约） | `$exec` 的 diagnostics；沙箱外的 git 观察仍是 📋 |
 | **没有 diagnostics 的那次执行** | `#recordExecution` 在 `diagnostics === undefined` 时提前 return | 无。执行记录还在 head 里，但版本层没有那一条 |
 | 运行时的**内网形态** | 边目前只存在于模板里，动态边未做 | 无。所以第一版不做拖拽连边 |
-| 隧道**将来**会连到谁 | `scope: "$self_subtree"` 要匹配的实例还没被创建 —— **原理上不可判定** | 只能靠命中累积（certainty） |
+| 别名**将来**会连到哪个实例 | 绑定指向子槽，而那个槽里的实例还没被创建 —— **原理上不可判定** | 只能靠命中累积（certainty）。注意：**绑定存在性是注册期已知的**，不可判定的只有"是哪个实例" |
 | 进度百分比 / 剩余时间 | 系统里没有这个量，也推不出来 | **无。不要造。** |
 
 ---

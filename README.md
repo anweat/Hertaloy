@@ -8,7 +8,7 @@
 - 测试与实现准备：[V5_WORKPLAN.md](./V5_WORKPLAN.md)
 - 历史资料与旧实现索引：[archive/README.md](./archive/README.md)
 
-V5 的第一性变化是：容器成为实例，资产归约为变量，跨网关等待归约为锁账本。V4 的编排对象模型不再是实现基线。
+V5 的第一性变化是：容器成为实例，资产归约为变量，跨网关等待归约为**未了结的义务**（第八次归约把锁账本也删了，见 §9）。V4 的编排对象模型不再是实现基线。
 
 ## 仓库状态（v1）
 
@@ -16,7 +16,7 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 
 | 能力 | 已设计 | 已实现 | 入口可达 | 崩溃验证 | 端到端 |
 |---|:-:|:-:|:-:|:-:|:-:|
-| 内核编排（实例/锁/路由/截断/事务） | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 内核编排（实例/义务/别名路由/截断/事务） | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 沙箱执行面（local/wsl/docker + 出网） | ✅ | ✅ | ✅ | — | ✅ |
 | 持久化与恢复 | ✅ | ✅ | ✅ | 部分 | ✅ |
 | 权限层（ControlPlane + 授权文件） | ✅ | ✅ | ✅ | — | ✅ |
@@ -43,13 +43,14 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 - **帧 14（上下文不随轮次膨胀）有测量但没有强制**，见 §21.6。
 
 ```
-packages/contracts    54 条   身份/路径/变量/端口/消息/契约/模板/执行面/权限/资源
-packages/kernel      145 条   store · tx · instances · locks · context · extract · routing · runtime · control
-packages/sandbox     117 条   契约目录 · runner(local/wsl/docker) · 出网 · git 观察 · profile · 资源
-packages/state        52 条   对象落盘 · 可变头 · 目录锁 · 权限/资源文件 · claim 耐久性
-packages/cli         110 条   16 条命令 · 内置 handler · 模板构造器 · agent · JSON 契约
+packages/contracts    71 条   身份/路径/变量/端口/消息/契约/模板/执行面/权限/资源
+packages/kernel      203 条   store · tx · instances · obligations · aliases · context · extract · routing · runtime · control
+packages/sandbox     135 条   契约目录 · runner(local/wsl/docker) · 出网 · git 观察 · profile · 资源
+packages/state        55 条   对象落盘 · 可变头 · 目录锁 · 权限/资源文件 · claim 耐久性
+packages/cli         114 条   16 条命令 · 内置 handler · 模板构造器 · agent · JSON 契约
 packages/mcp          15 条   11 个工具 · 三条纪律（过控制面 / 身份不可伪造 / 不常驻持锁）
-合计                 493 条   pnpm -r test · typecheck · reachability 三个退出码均为 0
+packages/scene        39 条   层积渲染的纯函数投影
+合计                 632 条   pnpm -r test · typecheck · reachability 三个退出码均为 0
 ```
 
 **上手看 [DEVELOPING.md](./DEVELOPING.md)** —— 每一条都对应一次真踩过的坑。

@@ -125,7 +125,7 @@ POST /api/define | validate           → DDL（validate 干跑，不落库）
 
 | 补什么 | 现在在哪 | 界面上是什么 |
 |---|---|---|
-| `locks[]`（kind/holder/waitingOn/originNode/since） | `LockLedger` | **阻塞的全部依据**：谁在等谁 |
+| `locks[]`（kind/holder/waitingOn/originNode/since） | `LockView`（**义务枚举的展示投影**，每次现算）| **阻塞的全部依据**：谁在等谁 |
 | `blockers[]`（按实例） | `terminationBlockers` | 实例为什么收不了口 |
 | `deadlocks[][]` | `locks.deadlocks()` | 环，红色，最高优先级提示 |
 | `generation`（按实例） | `ContainerInstance` | 截断后的第二代，必须与第一代区分 |
@@ -161,7 +161,7 @@ POST /api/define | validate           → DDL（validate 干跑，不落库）
 - 嵌套 = **几何包含**（父框套子框）。父必须等所有子终止才能收口，
   所以几何包含不是排版风格，**是那条不变量的直接可视化**。
 - 节点是框里的块，**子槽是虚线位** —— 声明本身是信息，
-  与「从没命中过的订阅仍然要画」同一条道理。
+  与「从没命中过的绑定仍然要画」同一条道理。
 - 折叠**无损**：`ChildSlot.entry` 本来就定义了子树如何以单个端口示人。
 - 阻塞：持锁的实例画一条指向 `waitingOn` 的连线；死锁环因此**长得就像一个环**。
 
@@ -260,7 +260,7 @@ POST /api/define | validate           → DDL（validate 干跑，不落库）
 |---|---|---|
 | `phase` | 记录 + 实例状态 | 相位：idle / running / done / failed / voided |
 | `activity` | **最近 200 条消息**里的命中数 | 亮度 / 线宽 / 流动粒子 |
-| `certainty` | 隧道命中累积（边恒为 1） | 虚 ↔ 实、软 ↔ 硬 |
+| `certainty` | 别名命中累积（边恒为 1） | 虚 ↔ 实、软 ↔ 硬 |
 
 不许动的那条：**横轴永远是序号**。墙钟只允许出现在**执行卡片**上
 （`Usage.wallClockSeconds` 是执行面的真实测量值），永不作为图的坐标 —— 编排面没有时钟。
@@ -284,7 +284,7 @@ POST /api/define | validate           → DDL（validate 干跑，不落库）
   超过阈值（约 2000 元素）再上 Canvas —— 届时它是同一份 `Scene` 的第三个渲染器，不是重写。
 - **颜色走 `style` 不走 SVG 属性**：presentation attribute 里 `var()` 不解析，
   写死具体值会导致主题一换 SVG 留在上个主题。
-- **隐形加宽命中路径**（细线外包 ~20px 透明路径）：低 certainty 的隧道线很淡，不加宽根本点不中。
+- **隐形加宽命中路径**（细线外包 ~20px 透明路径）：低 certainty 的别名线很淡，不加宽根本点不中。
 - **命令面板**：一切都是地址，所以「输入地址跳转」几乎免费，顺带给了键盘用户完整通路。
 
 ---
