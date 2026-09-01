@@ -50,6 +50,7 @@ import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instan
 import { LockView } from "./locks.js";
 import { type Message, type MessageState, MessageQueue, isLive } from "./queue.js";
 import { formatProblems, stateProblems } from "./invariants.js";
+import { type ExecutionRecord, ExecutionLedger } from "./executions.js";
 import { resolveAlias } from "./aliases.js";
 import {
   type ObligationFacts,
@@ -159,38 +160,10 @@ export interface StepFailure {
 }
 
 /**
- * 执行进行到哪一步。**只有三个值，因为只有一件事需要分支**：还在跑吗。
- *
- * 原先有七个：`RUNNING / APPLIED / VOIDED / CANCELLED / BUDGET /
- * INVALID_OUTPUT / FAILED`。后四个是 `Termination` 的**字面重复**，
- * 靠一句 `termination as ExecutionStatus` 接起来 —— 于是 `Termination`
- * 一旦增加取值，这个 cast 会**静默**造出一个非法的 ExecutionStatus。
- *
- * 而实测：七个值里只有 `RUNNING` 被代码分支读过，其余六个只写不读，
- * 是**伪装成状态的展示数据**。所以拆成两个字段，各自只表达一件事：
- *
- *   status      还在跑吗（唯一被分支的）
- *   termination 怎么结束的（`Termination` 是唯一权威，不再有第二套编码）
+ * 执行记录已抽到 `executions.ts`。这里再导出，保持既有 import 路径不变。
  */
-export type ExecutionStatus = "RUNNING" | "SETTLED" | "VOIDED";
-
-/** claim/execute/apply 的持久事实 —— 取消与崩溃接管的唯一依据。 */
-export interface ExecutionRecord {
-  readonly executionId: string;
-  readonly traceid: TraceId;
-  readonly nodeId: string;
-  readonly status: ExecutionStatus;
-  /**
-   * 怎么结束的。`RUNNING` 时没有；`VOIDED` 时无意义 —— 结果被栅栏丢掉了，
-   * backend 说了什么都不作数。
-   */
-  readonly termination?: Termination;
-  /** 被 claim 的消息集合 —— 冲突域的一半。 */
-  readonly claimed: readonly string[];
-  /** claim 时的实例 generation —— 冲突域的另一半，apply 时复核（L3）。 */
-  readonly generation: number;
-  readonly usage?: Usage;
-}
+export { ExecutionLedger } from "./executions.js";
+export type { ExecutionRecord, ExecutionStatus } from "./executions.js";
 
 export interface TruncationResult {
   readonly traceid: TraceId;
@@ -269,14 +242,11 @@ export class Runtime implements Snapshotable {
   readonly #handlers = new Map<string, BuiltinHandler>();
   readonly #queue: MessageQueue;
   readonly #pending = new Map<string, StagedRequest>();
-  readonly #records = new Map<string, ExecutionRecord>();
-  /** 同 `(实例, 节点)` 不并发 claim —— 冲突域的门。 */
-  readonly #busy = new Set<string>();
+  readonly #ledger = new ExecutionLedger();
   readonly #backend: ExecutionBackend | undefined;
   readonly #maxAttempts: number;
   readonly #onCommit: CommitHook | undefined;
   #requestSeq = 0;
-  #executionSeq = 0;
 
   constructor(store: ObjectStore, registry: InstanceRegistry, options: RuntimeOptions = {}) {
     this.#store = store;
@@ -340,15 +310,33 @@ export class Runtime implements Snapshotable {
     }
   }
 
+  /**
+   * 落盘形状**逐键写明，不用展开**。
+   *
+   * 队列与执行记录各自的快照里都有一个 `seq`，展开会互相覆盖，而且是静默的：
+   * `executionSeq` 会整个消失，老 run 装进来时消息 id 从头发放、覆盖既有消息。
+   * 拆分时差点就这么写了 —— 子部件各自命名自己的计数器，合成时必须显式改名。
+   */
   snapshot(): unknown {
+    const queue = this.#queue.snapshot() as {
+      messages: Map<string, Message>;
+      order: string[];
+      seq: number;
+    };
+    const ledger = this.#ledger.snapshot() as {
+      records: Map<string, ExecutionRecord>;
+      seq: number;
+    };
     return {
       audit: [...this.#audit],
       auditSeq: this.#auditSeq,
-      ...(this.#queue.snapshot() as { messages: Map<string, Message>; order: string[] }),
+      messages: queue.messages,
+      order: queue.order,
+      seq: queue.seq,
       pending: new Map(this.#pending),
-      records: new Map(this.#records),
+      records: ledger.records,
+      executionSeq: ledger.seq,
       requestSeq: this.#requestSeq,
-      executionSeq: this.#executionSeq,
     };
   }
 
@@ -370,10 +358,8 @@ export class Runtime implements Snapshotable {
     this.#queue.restore({ messages: s.messages, order: s.order, seq: s.seq });
     this.#pending.clear();
     for (const [k, v] of s.pending) this.#pending.set(k, v);
-    this.#records.clear();
-    for (const [k, v] of s.records) this.#records.set(k, v);
+    this.#ledger.restore({ records: s.records, seq: s.executionSeq });
     this.#requestSeq = s.requestSeq;
-    this.#executionSeq = s.executionSeq;
   }
 
   /**
@@ -394,7 +380,7 @@ export class Runtime implements Snapshotable {
     const message = formatProblems(
       stateProblems({
         messages: this.#queue.all(),
-        executions: [...this.#records.values()],
+        executions: this.#ledger.all(),
         instances: root === null ? [] : this.#registry.subtree(root),
         obligations: this.obligations(),
       }),
@@ -408,11 +394,11 @@ export class Runtime implements Snapshotable {
   }
 
   records(): readonly ExecutionRecord[] {
-    return [...this.#records.values()];
+    return this.#ledger.all();
   }
 
   record(executionId: string): ExecutionRecord {
-    const found = this.#records.get(executionId);
+    const found = this.#ledger.all().find((r) => r.executionId === executionId);
     if (found === undefined) throw new InvariantError(`未知 execution：${executionId}`);
     return found;
   }
@@ -532,7 +518,7 @@ export class Runtime implements Snapshotable {
           });
         } catch (error) {
           // 钩子抛了 → 这次 claim 要整体撤销，而 `#busy` 不归 transact 管
-          this.#busy.delete(`${outcome.record.traceid}/${outcome.record.nodeId}`);
+          this.#ledger.releaseDriving(outcome.record.traceid, outcome.record.nodeId);
           throw error;
         }
       }
@@ -555,7 +541,7 @@ export class Runtime implements Snapshotable {
     invariant(inputId !== undefined, `execution ${executionId} 没有被 claim 的消息`);
     const input = this.message(inputId);
 
-    this.#busy.delete(`${record.traceid}/${record.nodeId}`);
+    this.#ledger.releaseDriving(record.traceid, record.nodeId);
 
     const checked = checkBackendResult(executionId, raw);
     if (!checked.ok) {
@@ -573,7 +559,7 @@ export class Runtime implements Snapshotable {
     const record = this.record(executionId);
     const inputId = record.claimed[0];
     invariant(inputId !== undefined, `execution ${executionId} 没有被 claim 的消息`);
-    this.#busy.delete(`${record.traceid}/${record.nodeId}`);
+    this.#ledger.releaseDriving(record.traceid, record.nodeId);
     return this.#applyFailure(record, this.message(inputId), termination, reason);
   }
 
@@ -614,7 +600,7 @@ export class Runtime implements Snapshotable {
 
     const { traceid, node: nodeId } = input.target;
     const key = `${traceid}/${nodeId}`;
-    if (this.#busy.has(key)) return { kind: "idle" };
+    if (this.#ledger.isDriving(traceid, nodeId)) return { kind: "idle" };
 
     const instance = this.#registry.get(traceid);
     const template = this.#registry.template(traceid);
@@ -658,8 +644,7 @@ export class Runtime implements Snapshotable {
     }
 
     // ↓ 以下才开始改状态。到这里已经不会再拒绝了。
-    this.#executionSeq += 1;
-    const executionId = `exec-${this.#executionSeq}`;
+    const executionId = this.#ledger.nextId();
     this.#queue.setState(input.id, "CLAIMED");
 
     const record: ExecutionRecord = Object.freeze({
@@ -670,7 +655,7 @@ export class Runtime implements Snapshotable {
       claimed: [input.id],
       generation: instance.generation,
     });
-    this.#records.set(executionId, record);
+    this.#ledger.put(record);
 
     const limits: ExecutionLimits =
       node.budget === undefined ? {} : { tokenBudget: node.budget.tokens };
@@ -691,7 +676,7 @@ export class Runtime implements Snapshotable {
      * 的 busy 标记，那个 (实例, 节点) 从此再也不被调度 —— 而且悄无声息。
      * 推迟到"确定要执行"才置位，被拒的路径就不留残迹。
      */
-    this.#busy.add(key);
+    this.#ledger.markDriving(traceid, nodeId);
     return { kind: "claimed", record, input: this.message(input.id), request };
   }
 
@@ -729,7 +714,7 @@ export class Runtime implements Snapshotable {
       return m === undefined || m.state !== "CLAIMED";
     });
     if (stolen.length > 0) {
-      this.#records.set(record.executionId, { ...record, status: "VOIDED" });
+      this.#ledger.replace(record.executionId, { status: "VOIDED" });
       return {
         consumed: record.claimed[0] ?? "",
         traceid: record.traceid,
@@ -741,7 +726,7 @@ export class Runtime implements Snapshotable {
       };
     }
     if (instance.status !== "OPEN" || instance.generation !== record.generation) {
-      this.#records.set(record.executionId, { ...record, status: "VOIDED" });
+      this.#ledger.replace(record.executionId, { status: "VOIDED" });
       return {
         consumed: input.id,
         traceid: record.traceid,
@@ -848,7 +833,7 @@ export class Runtime implements Snapshotable {
 
     const delivered = this.#commitPlan(outcome.plan);
     this.#queue.setState(input.id, "CONSUMED");
-    this.#records.set(record.executionId, {
+    this.#ledger.put({
       ...record,
       status: "SETTLED" as const,
       termination: "DONE" as const,
@@ -885,7 +870,7 @@ export class Runtime implements Snapshotable {
     reason: string,
     usage?: Usage,
   ): StepFailure {
-    this.#records.set(record.executionId, {
+    this.#ledger.put({
       ...record,
       status: "SETTLED" as const,
       termination,
@@ -1074,11 +1059,23 @@ export class Runtime implements Snapshotable {
     let cancelledExecutions = 0;
     for (const rec of this.records()) {
       if (rec.traceid !== trace || rec.status !== "RUNNING") continue;
-      this.#records.set(rec.executionId, {
+      this.#ledger.put({
         ...rec,
         status: "SETTLED",
         termination: "CANCELLED",
       });
+      /**
+       * 驱动标记也要放掉。
+       *
+       * 此前这里只改记录不清标记，于是 `(实例, 节点)` 永远留在 driving 集里。
+       * 今天不炸是因为实例已 TERMINAL、`#pickWork` 本来就跳过它 —— 但那是
+       * **另一条规则替它兜住了**，不是这里对。而集合只增不减，长跑进程里
+       * 每截断一次就多一条，属进程内无界增长。
+       *
+       * 抽 `ExecutionLedger` 时才看见：记录与标记本该同进同出，
+       * 分散在两处写就会漏。
+       */
+      this.#ledger.releaseDriving(rec.traceid, rec.nodeId);
       void this.#backend?.cancel(rec.executionId).catch(() => undefined);
       cancelledExecutions += 1;
     }
@@ -1284,9 +1281,7 @@ export class Runtime implements Snapshotable {
    * 能写这个 run 的进程只有一个，而它就是我们自己。
    */
   orphanedExecutions(): readonly ExecutionRecord[] {
-    return this.records().filter(
-      (r) => r.status === "RUNNING" && !this.#busy.has(`${r.traceid}/${r.nodeId}`),
-    );
+    return this.#ledger.orphans();
   }
 
   /**
