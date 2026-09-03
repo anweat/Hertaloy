@@ -39,7 +39,7 @@ import {
   checkRootAliases,
   childBindings,
   rootBindings,
-} from "./aliases.js";
+} from "./aliases/index.js";
 
 export type InstanceStatus = "OPEN" | "TERMINAL";
 

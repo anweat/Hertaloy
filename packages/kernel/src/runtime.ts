@@ -21,7 +21,7 @@
  *   executions.ts  执行记录 + 本进程在驱动谁
  *   obligations.ts 未了结的义务（纯函数）
  *   invariants.ts  跨状态机的约束检查（纯函数）
- *   aliases.ts     别名的校验 / 物化 / 解析
+ *   aliases/       别名：按时机分成 check / materialize / resolve
  *   facts.ts       上面几样共用的事实投影
  *
  * 留下的是**命令**：三段式与强制截断。它们是"多实例 + 外部副作用"这两个词
@@ -69,7 +69,7 @@ import { type Message, type MessageState, MessageQueue, isLive } from "./queue.j
 import { formatProblems, stateProblems } from "./invariants.js";
 import { type Candidate, type Scheduler, acceptedPick, fifo } from "./scheduling.js";
 import { type ExecutionRecord, ExecutionLedger } from "./executions.js";
-import { resolveAlias } from "./aliases.js";
+import { resolveAlias } from "./aliases/index.js";
 import {
   type ObligationFacts,
   type Obligation,

@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodeflow/contracts";
-import { resolveAlias } from "../src/aliases.js";
+import { resolveAlias } from "../src/aliases/index.js";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime, type StepFailure, type StepResult } from "../src/runtime.js";

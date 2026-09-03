@@ -82,17 +82,29 @@ const ALLOWED = new Map([
   ["exportSnapshot", "渲染层的入口：后端侧的快照出口，由 CLI/服务端调，不在 packages 内"],
 ]);
 
+/**
+ * **要递归子目录。**
+ *
+ * 第一版只扫 `src/*.ts`。`aliases/` 按时机拆成子目录之后，那三块的导出
+ * 就整个从体检里消失了 —— 符号数从 173 掉到 166，而报告仍然是绿的。
+ *
+ * "少检查了七个"与"没有孤儿"长得一模一样，正是这个体检本身要防的形状。
+ * 所以走目录树，不走一层。
+ */
 function sources() {
   const out = [];
-  for (const pkg of PACKAGES) {
-    const dir = join(ROOT, "packages", pkg, "src");
+  const walk = (dir, pkg, prefix) => {
     for (const name of readdirSync(dir)) {
-      if (!name.endsWith(".ts") || name === "index.ts") continue;
       const path = join(dir, name);
-      if (!statSync(path).isFile()) continue;
-      out.push({ pkg, file: `${pkg}/${name}`, path, text: readFileSync(path, "utf8") });
+      if (statSync(path).isDirectory()) {
+        walk(path, pkg, `${prefix}${name}/`);
+        continue;
+      }
+      if (!name.endsWith(".ts") || name === "index.ts") continue;
+      out.push({ pkg, file: `${pkg}/${prefix}${name}`, path, text: readFileSync(path, "utf8") });
     }
-  }
+  };
+  for (const pkg of PACKAGES) walk(join(ROOT, "packages", pkg, "src"), pkg, "");
   return out;
 }
 
