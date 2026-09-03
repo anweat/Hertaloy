@@ -58,6 +58,8 @@ const ALLOWED = new Map([
   ["toHostPath", "同上"],
   ["headPath", "readHead / writeHead 在同文件里调"],
   ["lockPath", "StateLock 在同文件里调"],
+  ["authzLogPath", "FileAuthzLog 在同文件里调"],
+  ["BoundedAuthzLog", "AuthzLog 的内存实现，给用例与不留证据的场合；生产走 state 的 FileAuthzLog"],
   ["isLocked", "给外部查锁状态用"],
   ["versionsOnDisk", "给外部查磁盘版本用"],
   ["encodeSegment", "objectDir 在同文件里调"],

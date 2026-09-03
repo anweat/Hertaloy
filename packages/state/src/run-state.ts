@@ -31,6 +31,7 @@ import { type LoadedPermissions, loadPermissions } from "./permissions.js";
 import { type LoadedResources, loadResources } from "./resources.js";
 import { decodeHeadParts, readHead, writeHead } from "./head.js";
 import { StateLock } from "./lock.js";
+import { FileAuthzLog } from "./authz-log.js";
 import { flushObjects, loadObjects } from "./objects.js";
 
 export interface OpenOptions {
@@ -72,6 +73,13 @@ export class RunState {
   readonly resources: LoadedResources;
   /** 本次打开认领了哪些孤儿执行。空数组 = 上次是干净退出的。 */
   reconciled: readonly StepFailure[] = [];
+  /**
+   * 授权决策日志 —— **追加写的文件**，不进可变头（§17.6 / `authz-log.ts`）。
+   *
+   * 由 `RunState` 持有而不是 `ControlPlane`：后者是每次访问现构造的，拿不住
+   * 任何东西 —— 那也正是这份日志当初错落在 `Runtime` 上的原因。
+   */
+  readonly authzLog: FileAuthzLog;
 
   readonly #lock: StateLock | null;
   #cursor: number;
@@ -96,6 +104,8 @@ export class RunState {
     this.resources = resources;
     this.#lock = lock;
     this.#cursor = cursor;
+    // 只读打开不写日志：那些命令不拿目录锁，写就成了两个进程同时写一个文件（§17.8）
+    this.authzLog = new FileAuthzLog(dir, lock === null);
   }
 
   static open(dir: string, options: OpenOptions = {}): RunState {
@@ -211,7 +221,13 @@ export class RunState {
    * （CLI 的 `--as`、将来的 MCP 会话），绝不从载荷里取（§11.3）。
    */
   get control(): ControlPlane {
-    return new ControlPlane(this.runtime, this.registry, this.store, this.permissions.table);
+    return new ControlPlane(
+      this.runtime,
+      this.registry,
+      this.store,
+      this.permissions.table,
+      this.authzLog,
+    );
   }
 
   /**

@@ -38,7 +38,6 @@ import {
   type ExecutionRequest,
   type ExecutionResult,
   type Json,
-  type AuditEntry,
   type MessageSource,
   type MessageContract,
   type NodeDefinition,
@@ -199,14 +198,6 @@ export interface TruncationResult {
  * `claim` 与其余分开，因为它们的耐久性要求不同（§17.4）：claim 之后紧接着是
  * 花钱的外部副作用，必须当场落盘；其余重放无代价，可以攒到静止点。
  */
-/**
- * 授权日志留多少条。
- *
- * 和 `keepConsumedMessages` 同一个理由：头每次提交全量重写，无界增长会让
- * 累计写入变成平方级。排查看的总是最近那些，所以给个够用的定值。
- */
-const AUDIT_KEEP = 500;
-
 export interface CommitEvent {
   readonly kind: "commit" | "claim" | "apply" | "settle" | "truncate";
   readonly traceid: TraceId;
@@ -256,14 +247,6 @@ type ClaimOutcome =
 export class Runtime implements Snapshotable {
   readonly #store: ObjectStore;
   readonly #registry: InstanceRegistry;
-  /**
-   * 授权决策日志 —— 放行和拒绝都记（见 contracts 的 AuditEntry）。
-   *
-   * 有界，和 `#prune` 同一个理由：头每次提交全量重写，无界增长会让累计写入
-   * 变成平方级。留最近 `AUDIT_KEEP` 条 —— 排查看的总是最近那些。
-   */
-  #audit: AuditEntry[] = [];
-  #auditSeq = 0;
   readonly #handlers = new Map<string, BuiltinHandler>();
   readonly #queue: MessageQueue;
   readonly #pending = new Map<string, StagedRequest>();
@@ -320,29 +303,16 @@ export class Runtime implements Snapshotable {
   }
 
   /** 消息/记录都是冻结对象，浅拷贝即完整快照（§10.1）。 */
-  /** 授权决策日志，最近的在后。 */
-  audit(): readonly AuditEntry[] {
-    return this.#audit;
-  }
-
-  /**
-   * 记一次授权决策。由 ControlPlane 在**抛异常之前**调 ——
-   * 被拒的那次尤其要留下，它往往就是"权限配错了"的现场。
-   */
-  recordAuthz(entry: Omit<AuditEntry, "seq">): void {
-    this.#auditSeq += 1;
-    this.#audit.push({ ...entry, seq: this.#auditSeq });
-    if (this.#audit.length > AUDIT_KEEP) {
-      this.#audit = this.#audit.slice(-AUDIT_KEEP);
-    }
-  }
-
   /**
    * 落盘形状**逐键写明，不用展开**。
    *
    * 队列与执行记录各自的快照里都有一个 `seq`，展开会互相覆盖，而且是静默的：
    * `executionSeq` 会整个消失，老 run 装进来时消息 id 从头发放、覆盖既有消息。
    * 拆分时差点就这么写了 —— 子部件各自命名自己的计数器，合成时必须显式改名。
+   *
+   * **不再有 `audit` / `auditSeq`**：授权日志不是编排状态，是追加写的观测日志
+   * （§17.6），已搬到 ControlPlane 的注入日志上。老 head 里若带着这两个键，
+   * 装载时原样忽略。
    */
   snapshot(): unknown {
     const queue = this.#queue.snapshot() as {
@@ -355,8 +325,6 @@ export class Runtime implements Snapshotable {
       seq: number;
     };
     return {
-      audit: [...this.#audit],
-      auditSeq: this.#auditSeq,
       messages: queue.messages,
       order: queue.order,
       seq: queue.seq,
@@ -376,12 +344,7 @@ export class Runtime implements Snapshotable {
       seq: number;
       requestSeq: number;
       executionSeq: number;
-      audit?: AuditEntry[];
-      auditSeq?: number;
     };
-    // 老的落盘没有这两个字段 —— 缺就当空，别让新增字段把旧 run 装不进来
-    this.#audit = s.audit === undefined ? [] : [...s.audit];
-    this.#auditSeq = s.auditSeq ?? 0;
     this.#queue.restore({ messages: s.messages, order: s.order, seq: s.seq });
     this.#pending.clear();
     for (const [k, v] of s.pending) this.#pending.set(k, v);
@@ -389,12 +352,6 @@ export class Runtime implements Snapshotable {
     this.#requestSeq = s.requestSeq;
   }
 
-  /**
-   * 跨四套状态机的约束检查（§10 / DBMS 的 CHECK constraint 位置）。
-   *
-   * 这些规则以前散在各处的 if 里，没有一处声明。测试每次提交后跑一遍，
-   * 半状态就会当场暴露而不是等到某个下游断言莫名其妙地挂。
-   */
   /**
    * 跨状态机的约束检查。**规则本身在 `invariants.ts`，是纯函数**（§10.4）。
    *

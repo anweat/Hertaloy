@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodeflow/contracts";
 import { PermissionTable } from "@nodeflow/contracts";
 import { ControlPlane } from "../src/control.js";
+import { BoundedAuthzLog } from "../src/authz-log.js";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime } from "../src/runtime.js";
@@ -252,16 +253,17 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
     rt.registerHandler("noop", () => ({}));
     const table = new PermissionTable();
     table.grant({ principal: "human:*", scope: "*", ops: ["DDL", "DML", "DQL"] });
-    return { rt, control: new ControlPlane(rt, reg, store, table) };
+    const log = new BoundedAuthzLog();
+    return { rt, log, control: new ControlPlane(rt, reg, store, table, log) };
   }
 
   const HUMAN = { kind: "human", id: "alice" } as const;
   const AGENT = { kind: "agent", id: "bot" } as const;
 
   it("放行留下记录 —— 事后答得出「凭什么放行」", () => {
-    const { rt, control } = plane();
+    const { log, control } = plane();
     control.send(HUMAN, { traceid: "job-1", node: "n", port: "in" }, {});
-    const last = rt.audit().at(-1);
+    const last = log.recent().at(-1);
     expect(last?.allowed).toBe(true);
     expect(last?.actor).toBe("human:alice");
     expect(last?.op).toBe("send");
@@ -270,29 +272,29 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
   });
 
   it("★ 拒绝更要留下 —— 那往往就是「权限配错了」的现场", () => {
-    const { rt, control } = plane();
+    const { log, control } = plane();
     expect(() => control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {})).toThrow();
-    const last = rt.audit().at(-1);
+    const last = log.recent().at(-1);
     expect(last?.allowed).toBe(false);
     expect(last?.actor).toBe("agent:bot");
     expect(last?.reason).toMatch(/无权/);
   });
 
   it("序号单调 —— 决策的先后是可读的", () => {
-    const { rt, control } = plane();
+    const { log, control } = plane();
     control.send(HUMAN, { traceid: "job-1", node: "n", port: "in" }, {});
     try {
       control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {});
     } catch {
       /* 意料之中 */
     }
-    const seqs = rt.audit().map((e) => e.seq);
+    const seqs = log.recent().map((e) => e.seq);
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 
   it("★ 日志有界 —— 头每次全量重写，无界增长会让写入变平方级", () => {
-    const { rt, control } = plane();
+    const { log, control } = plane();
     for (let i = 0; i < 620; i += 1) {
       try {
         control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {});
@@ -300,8 +302,10 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
         /* 全被拒，正好用来灌日志 */
       }
     }
-    expect(rt.audit().length).toBeLessThanOrEqual(500);
+    expect(log.recent().length).toBeLessThanOrEqual(500);
     // 留的是**最近**那些 —— 排查看的总是最近
-    expect(rt.audit().at(-1)?.seq).toBe(620);
+    expect(log.recent().at(-1)?.seq).toBe(620);
+    // 界在日志自己身上，不再是"因为要进 head 才不得不截" —— 见 authz-log.ts
+    expect(log.count).toBe(620);
   });
 });

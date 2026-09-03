@@ -127,5 +127,5 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
       ...(l.originNode === undefined ? {} : { originNode: l.originNode }),
     }));
 
-  return { root, instances, templates, messages, records, objects, locks, audit: runtime.audit() };
+  return { root, instances, templates, messages, records, objects, locks, audit: state.authzLog.recent() };
 }

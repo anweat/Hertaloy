@@ -24,6 +24,7 @@ import {
   type TraceId,
 } from "@nodeflow/contracts";
 import { AuthorizationError } from "./errors.js";
+import type { AuthzLog } from "./authz-log.js";
 import { type ContainerInstance, InstanceRegistry, registerContainerTemplate } from "./instances.js";
 import type { ObjectStore } from "./store.js";
 import type { Lock } from "./locks.js";
@@ -54,17 +55,27 @@ export class ControlPlane {
   readonly #registry: InstanceRegistry;
   readonly #store: ObjectStore;
   readonly #permissions: PermissionTable;
+  readonly #log: AuthzLog;
 
+  /**
+   * `log` **必填，没有默认值**。
+   *
+   * `RunState.control` 是每次访问现构造的 —— 一个"默认内存实现"会在每次构造时
+   * 新开一份，于是日志每次都是空的，而调用方看不出任何异常。那正是
+   * "两端各自都绿、中间没人走"。必填就逼每个构造点当场决定日志去哪。
+   */
   constructor(
     runtime: Runtime,
     registry: InstanceRegistry,
     store: ObjectStore,
     permissions: PermissionTable,
+    log: AuthzLog,
   ) {
     this.#runtime = runtime;
     this.#registry = registry;
     this.#store = store;
     this.#permissions = permissions;
+    this.#log = log;
   }
 
   /**
@@ -80,6 +91,9 @@ export class ControlPlane {
   /**
    * 授权决策的**唯一**落点 —— 放行和拒绝都记日志，然后拒绝的抛。
    *
+   * 日志走注入的 `AuthzLog`：授权的正确性由 `decide` 加"拒绝就抛"给出，
+   * 日志是**证据**不是判据 —— 换掉它一条不变量都不破，所以它是缝不是状态。
+   *
    * 公开出来是给那些操作不在内核里、但决策必须在这儿做的调用方用的
    * （资源别名表、根授权表都住在 state 层，内核够不着）。
    * 分层因此保持原样：**操作留在它自己那一层，决策只有这一处**。
@@ -87,7 +101,7 @@ export class ControlPlane {
    */
   check(actor: Principal, opClass: OpClass, target: string, op = opClass.toLowerCase()): void {
     const decision = this.#permissions.decide(actor, opClass, target);
-    this.#runtime.recordAuthz({
+    this.#log.record({
       actor: formatPrincipal(actor),
       op,
       opClass,

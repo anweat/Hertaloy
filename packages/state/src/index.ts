@@ -7,3 +7,4 @@ export * from "./run-state.js";
 export * from "./permissions.js";
 export * from "./resources.js";
 export * from "./snapshot.js";
+export * from "./authz-log.js";

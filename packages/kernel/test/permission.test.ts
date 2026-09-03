@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { PermissionTable, parsePrincipal, scopeCovers } from "@nodeflow/contracts";
 import { ControlPlane, OPERATION_CLASS } from "../src/control.js";
+import { BoundedAuthzLog } from "../src/authz-log.js";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime } from "../src/runtime.js";
@@ -43,7 +44,7 @@ beforeEach(() => {
   rt = new Runtime(store, reg);
   rt.registerHandler("noop", () => ({}));
   perms = new PermissionTable();
-  cp = new ControlPlane(rt, reg, store, perms);
+  cp = new ControlPlane(rt, reg, store, perms, new BoundedAuthzLog());
 });
 
 describe("默认拒绝", () => {
