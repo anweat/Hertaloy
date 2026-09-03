@@ -22,25 +22,13 @@
  *     运行期的 0 个是合法的"这个槽里现在没有活实例"。
  */
 
-import type { TraceId } from "@nodeflow/contracts";
 import type { Obligation } from "./obligations.js";
-import { type Message, isLive } from "./queue.js";
+import { type ExecutionFact, type InstanceFact, type MessageFact, isLive } from "./facts.js";
 
-/** 只用得上这几个字段 —— `ExecutionRecord` 天然满足。 */
-export interface ExecutionFact {
-  readonly executionId: string;
-  readonly traceid: TraceId;
-  readonly status: string;
-  readonly claimed: readonly string[];
-}
-
-export interface InstanceFact {
-  readonly traceid: TraceId;
-  readonly status: string;
-}
+export type { ExecutionFact, InstanceFact } from "./facts.js";
 
 export interface InvariantFacts {
-  readonly messages: readonly Message[];
+  readonly messages: readonly MessageFact[];
   readonly executions: readonly ExecutionFact[];
   readonly instances: readonly InstanceFact[];
   /** 全表。按 holder 过滤在本模块里做。 */

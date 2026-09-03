@@ -18,11 +18,12 @@
 import { InvariantError } from "./errors.js";
 import type { Endpoint, Json, MessageSource, TraceId } from "@nodeflow/contracts";
 import type { Snapshotable } from "./tx.js";
+import { type MessageFact, type MessageState, isLive } from "./facts.js";
 
-export type MessageState = "QUEUED" | "CLAIMED" | "CONSUMED" | "FAILED" | "DISCARDED";
-
-export interface Message {
-  readonly id: string;
+/**
+ * 完整的消息。`MessageFact`（`facts.ts`）是它里面纯函数用得上的那部分。
+ */
+export interface Message extends MessageFact {
   readonly target: Endpoint;
   readonly payload: Json;
   readonly state: MessageState;
@@ -46,18 +47,14 @@ export interface Message {
   readonly attempts: number;
 }
 
-/** 还会动的状态。其余三种都已了结。 */
-export const LIVE_MESSAGE_STATES: readonly MessageState[] = ["QUEUED", "CLAIMED"];
-
-export function isLive(message: Message): boolean {
-  return LIVE_MESSAGE_STATES.includes(message.state);
-}
-
 interface QueueSnapshot {
   readonly messages: Map<string, Message>;
   readonly order: string[];
   readonly seq: number;
 }
+
+export type { MessageState } from "./facts.js";
+export { isLive, LIVE_MESSAGE_STATES } from "./facts.js";
 
 export class MessageQueue implements Snapshotable {
   readonly #messages = new Map<string, Message>();

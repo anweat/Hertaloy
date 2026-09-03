@@ -41,12 +41,16 @@
  * 副产品：跨界的 REQUEST「恰好 1 个」是构造性成立的（一个地址就是一个）。
  */
 
-import type {
-  AliasBinding,
-  ContainerTemplate,
-  Endpoint,
-  TraceId,
+import {
+  type AliasBinding,
+  type ContainerTemplate,
+  type Endpoint,
+  type TraceId,
+  parentTrace as parentOf,
 } from "@nodeflow/contracts";
+import type { InstanceFact } from "./facts.js";
+
+export type { InstanceFact } from "./facts.js";
 
 /**
  * 已经属于某个实例自己的绑定。
@@ -118,18 +122,6 @@ export function childBindings(
     ...materialize(childTemplate.bindings, childTrace, true),
     ...materialize(childTemplate.selfBindings, childTrace, false),
   ]);
-}
-
-/** 解析时要读的实例事实。只用得上这两个字段。 */
-export interface InstanceFact {
-  readonly traceid: TraceId;
-  readonly slot?: string;
-  readonly status: string;
-}
-
-function parentOf(trace: TraceId): TraceId | null {
-  const at = trace.lastIndexOf("/");
-  return at === -1 ? null : trace.slice(0, at);
 }
 
 /**
