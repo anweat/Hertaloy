@@ -1,16 +1,33 @@
 /**
- * 内网转发 + 网关 + 锁账本 + 强制截断 + agent 三段式。
+ * 编排的**命令面** —— 内网转发 + 网关 + 强制截断 + 三段式。
  *
  * 对应 FOUNDATION_V5.md §8 / §9 / §10：
- *   M1/M2/M3  编排权威属于边；隧道 ∩ traceid 前缀；callback 落已声明端点
- *   L1/L2     锁只在网关穿越时产生；owner 唯一是容器
+ *   M1/M2/M3  编排权威属于边；别名沿 traceid 向上解析；callback 落已声明端点
+ *   L1/L2     义务全部派生，没有记账点；owner 唯一是容器
  *   L3        截断靠 generation fence，`cancel` 只是 best effort
- *   L5        可终止 ⟺ 无非终态消息 ∧ 无活跃 execution ∧ 锁表空
+ *   L5        可终止 ⟺ 名下未了结的义务为空
  *   §10       claim（同步临界区）→ execute（await，临界区外）→ apply（同步临界区）
  *             冲突域 = 实例 + 被消费的消息集合
  *
  * **零部分提交**：排期（`routing.stageOutputs`）与提交分离，失败时一条下游都不创建。
- * **订阅不物化**：模板声明 + 实例终身 pin ⇒ 当前订阅是派生的，没有退订簿记。
+ * **绑定不物化为实例对象**：模板声明 + 创建时物化进实例 ⇒ 当前可达的目标是派生的，
+ * 没有退订簿记，也就没有幽灵订阅。
+ *
+ * ## 这里留下的与搬走的
+ *
+ * 搬走的都是**组件**（内部分解，为了可测与可读），不是可插拔点：
+ *
+ *   queue.ts       消息与投递顺序
+ *   executions.ts  执行记录 + 本进程在驱动谁
+ *   obligations.ts 未了结的义务（纯函数）
+ *   invariants.ts  跨状态机的约束检查（纯函数）
+ *   aliases.ts     别名的校验 / 物化 / 解析
+ *   facts.ts       上面几样共用的事实投影
+ *
+ * 留下的是**命令**：三段式与强制截断。它们是"多实例 + 外部副作用"这两个词
+ * 合起来的必然要求，硬拆只会把一条内聚的提交路径切成来回传参的几段。
+ *
+ * 唯一真正的策略缝是 `scheduling.ts`（先跑哪条）—— 判据见那个文件。
  */
 
 import {
@@ -50,6 +67,7 @@ import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instan
 import { LockView } from "./locks.js";
 import { type Message, type MessageState, MessageQueue, isLive } from "./queue.js";
 import { formatProblems, stateProblems } from "./invariants.js";
+import { type Candidate, type Scheduler, acceptedPick, fifo } from "./scheduling.js";
 import { type ExecutionRecord, ExecutionLedger } from "./executions.js";
 import { resolveAlias } from "./aliases.js";
 import {
@@ -216,6 +234,13 @@ export interface RuntimeOptions {
    * 而其中在队列里的是 0 条。文档里"账很小，不随历史增长"那句话是错的。
    */
   readonly keepConsumedMessages?: number;
+  /**
+   * 先跑哪条。默认 `fifo`（先到先跑，天然无饥饿）。
+   *
+   * **内核唯一真正的策略缝** —— 换掉它一条不变量都不破（见 `scheduling.ts`）。
+   * 换成优先级 / 公平 / 按租户配额都行，但饿死谁由换的人负责。
+   */
+  readonly scheduler?: Scheduler;
 }
 
 type ClaimOutcome =
@@ -246,6 +271,7 @@ export class Runtime implements Snapshotable {
   readonly #backend: ExecutionBackend | undefined;
   readonly #maxAttempts: number;
   readonly #onCommit: CommitHook | undefined;
+  readonly #scheduler: Scheduler;
   #requestSeq = 0;
 
   constructor(store: ObjectStore, registry: InstanceRegistry, options: RuntimeOptions = {}) {
@@ -255,6 +281,7 @@ export class Runtime implements Snapshotable {
     this.#maxAttempts = options.maxAttempts ?? 3;
     this.#onCommit = options.onCommit;
     this.#queue = new MessageQueue(options.keepConsumedMessages ?? 200);
+    this.#scheduler = options.scheduler ?? fifo;
   }
 
   /** 事务内通知。钩子抛出 → `transact` 回滚 → 这次提交没发生过。 */
@@ -1154,15 +1181,34 @@ export class Runtime implements Snapshotable {
 
   // -------------------------------------------------------------------------
 
+  /**
+   * 挑下一条要跑的消息。
+   *
+   * **内核先筛，调度器只排序**：只有 `QUEUED`、目标实例 `OPEN`、节点种类对得上
+   * 的消息才进候选集；调度器从候选里挑一个，或者不挑。挑完复核它确实是发出去
+   * 的那批里的一个（`acceptedPick`）—— 于是一个写坏的调度器**造不出**
+   * "跑一条不该跑的消息"，不是靠它自觉。
+   */
   #pickWork(accept: (node: NodeDefinition) => boolean): Message | null {
+    const eligible: Message[] = [];
+    const candidates: Candidate[] = [];
     for (const msg of this.pending()) {
       const instance = this.#registry.get(msg.target.traceid);
       if (instance.status !== "OPEN") continue;
       const node = this.#registry.template(msg.target.traceid).nodes[msg.target.node];
       if (node === undefined || !accept(node)) continue;
-      return msg;
+      candidates.push({
+        message: msg,
+        traceid: msg.target.traceid,
+        nodeId: msg.target.node,
+        position: candidates.length,
+      });
+      eligible.push(msg);
     }
-    return null;
+    if (candidates.length === 0) return null;
+    const picked = acceptedPick(candidates, this.#scheduler(candidates));
+    if (picked === null) return null;
+    return eligible[picked.position] as Message;
   }
 
   #commitSync(input: Message): StepResult | StepFailure {
@@ -1502,3 +1548,6 @@ export class Runtime implements Snapshotable {
     return port;
   }
 }
+
+export { fifo } from "./scheduling.js";
+export type { Candidate, Scheduler } from "./scheduling.js";

@@ -24,6 +24,7 @@ import {
   InstanceRegistry,
   ObjectStore,
   Runtime,
+  type Scheduler,
 } from "@nodeflow/kernel";
 import type { ExecutionBackend } from "@nodeflow/contracts";
 import { type LoadedPermissions, loadPermissions } from "./permissions.js";
@@ -49,6 +50,13 @@ export interface OpenOptions {
    * 不知道外面有个 agent 在跑，会再派一个。
    */
   readonly manualDurability?: boolean;
+  /**
+   * 先跑哪条。不给就是内核默认的 FIFO。
+   *
+   * 接出来是因为**缝不通到调用得着的地方就等于没有**：`instances.ts` 里那条
+   * 注释记着"K5、E1 是同一类：实现在，路不通"，这个项目被这个形状咬过四次。
+   */
+  readonly scheduler?: Scheduler;
 }
 
 export class RunState {
@@ -123,6 +131,7 @@ export class RunState {
       const runtime = new Runtime(store, registry, {
         ...(onCommit === undefined ? {} : { onCommit }),
         ...(options.backend === undefined ? {} : { backend: options.backend }),
+        ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
       });
       const head = readHead(dir);
 

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "../src/run-state.js";
+import type { Scheduler } from "@nodeflow/kernel";
 import { versionsOnDisk } from "../src/objects.js";
 import { isLocked } from "../src/lock.js";
 
@@ -206,5 +207,55 @@ describe("★ 完整性：宁可炸，不要似是而非", () => {
   it("格式版本不认识 → 拒绝，不猜着读", () => {
     writeFileSync(join(dir, "head.json"), JSON.stringify({ format: 2 }), "utf8");
     expect(() => RunState.open(dir)).toThrow(/只认 1/);
+  });
+});
+
+describe("★ 调度缝真的通到 RunState", () => {
+  /**
+   * 内核里通了不算通。`instances.ts` 那条注释记着"K5、E1 是同一类：
+   * 实现在，路不通" —— 这个项目被这个形状咬过四次，所以每加一条缝都要有
+   * 一条用例**真的从外层穿过去**。
+   */
+  it("从 OpenOptions 换掉调度顺序，跑出来的顺序跟着变", () => {
+    const seen: unknown[] = [];
+    const lifo: Scheduler = (c) => c[c.length - 1] ?? null;
+
+    const state = RunState.open(dir, { scheduler: lifo });
+    try {
+      const ref = registerContainerTemplate(state.store, "root", TEMPLATE, "root_config");
+      state.registry.createRoot(ref, "job-1");
+      state.runtime.registerHandler("note", (vars) => {
+        seen.push(vars.text);
+        return {};
+      });
+      for (const text of ["甲", "乙", "丙"]) {
+        state.runtime.send({ traceid: "job-1", node: "work", port: "in" }, { text });
+      }
+      state.runtime.drain();
+    } finally {
+      state.close();
+    }
+
+    expect(seen).toEqual(["丙", "乙", "甲"]);
+  });
+
+  it("不给就是内核默认的 FIFO", () => {
+    const seen: unknown[] = [];
+    const state = RunState.open(dir);
+    try {
+      const ref = registerContainerTemplate(state.store, "root", TEMPLATE, "root_config");
+      state.registry.createRoot(ref, "job-1");
+      state.runtime.registerHandler("note", (vars) => {
+        seen.push(vars.text);
+        return {};
+      });
+      for (const text of ["甲", "乙", "丙"]) {
+        state.runtime.send({ traceid: "job-1", node: "work", port: "in" }, { text });
+      }
+      state.runtime.drain();
+    } finally {
+      state.close();
+    }
+    expect(seen).toEqual(["甲", "乙", "丙"]);
   });
 });
