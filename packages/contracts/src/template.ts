@@ -13,7 +13,7 @@
  */
 
 import { z } from "zod";
-import { Json } from "./json.js";
+import { Json, JsonObject } from "./json.js";
 import { AliasName, Ref, TraceId, isDescendantOf } from "./identity.js";
 import { BindBlock, declaredBudget } from "./variable.js";
 import { looksLikeSecret } from "./secret.js";
@@ -23,126 +23,64 @@ import { NodeId } from "./message.js";
 export const IDENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 export const Ident = z.string().regex(IDENT_PATTERN, "标识符必须以字母或下划线起头");
 
-/** 有 `agent` 段 = 走执行面 backend；没有 = 走内核内置 handler。 */
 /**
- * env 的值：`$NAME` 引用，或**不像凭据的**字面量。
+ * 节点的**执行面声明** —— 内核不解释它，原样透传（`ExecutionRequest.agentSpec`）。
  *
- * 拒绝理由要给出正确路径 —— 只说"不行"的校验会被绕过（换个变量名塞进去），
- * 说清"改写成 `$NAME`"才真的解决问题。
+ * 这里原本是完整的 `AgentSpec`：`argv` / `profile` / `context` / `env` /
+ * `capabilities` / `workspace` / `resources`。那是**沙箱语义穿进了契约层** ——
+ * `workspace.from`、`network: none|internal|open`、`profile: claude-code|codex`
+ * 全是执行面怎么跑的事，而契约层是给画布与 LLM 用的纯结构层（`instances.ts`
+ * 那条注释说的就是这个）。它归 `@nodeflow/sandbox`。
+ *
+ * 内核对这一段只坚持一条：**不许把凭据写进去**。
+ *
+ * ## 为什么这条不能一起搬走
+ *
+ * 模板是对象：不可变、内容寻址、按前缀可读（§17.7）。一份 `sk-…` 落进
+ * `<id>@1` 的正文就再也拿不出来 —— 只能换密钥。这不是执行面的规矩，
+ * 是对象库的规矩，所以它留在这儿。
+ *
+ * ## 而且比原来管得宽
+ *
+ * 原来只查 `env` 的值（`SECRET_FREE_ENV`）—— 一份 `sk-…` 写在 `context`
+ * 或 `argv` 里照样进得去。现在递归扫**所有字符串**，那个洞一并堵上。
+ *
+ * 黑名单必然漏得掉，所以它不是保证；真正的保证是 `$NAME` 那条正确路径
+ * （见 `secret.ts`）。没有正确路径的禁止只会被绕过。
  */
-const SECRET_FREE_ENV = z.string().refine((v) => !looksLikeSecret(v), {
-  message:
-    "env 的值看起来是一份凭据。模板是不可变对象，写进去就撤不回来（§17.7）——" +
-    "改写成 `$NAME` 引用，值由跑它的那台机器从环境里提供",
+export const NodeExecutionSpec = JsonObject.superRefine((spec, ctx) => {
+  const walk = (value: Json, path: readonly (string | number)[]): void => {
+    if (typeof value === "string") {
+      if (looksLikeSecret(value)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...path],
+          message:
+            "这里看起来是一份凭据。模板是不可变对象，写进去就撤不回来（§17.7）——" +
+            "改写成 `$NAME` 引用，值由跑它的那台机器从环境里提供",
+        });
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => walk(v, [...path, i]));
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) walk(v as Json, [...path, k]);
+    }
+  };
+  walk(spec as Json, []);
 });
 
-/**
- * agent 节点的声明 —— **一条命令行**（第五次归约，§14）。
- *
- * 之前这里是 `{ model: string }`，那是归约之前"内核挑后端、内核中介工具调用"
- * 时代的形状。归约之后执行面收成了"在沙箱里跑一条命令行"，`SandboxBackend`
- * 要的是 `argv`，而这个 schema 还在要 `model` 且 `.strict()` ——
- * 于是**任何声明了沙箱 agent 的模板都注册不进去**，整个执行面从编排面够不着。
- * 契约与实现各自演进却没人对过账，正是这种断裂的典型来源。
- *
- * `env` 只放**取值方式**，不放值本身：模板是对象，对象不可变、内容寻址、
- * 按前缀可读，密钥写进去就撤不回来（§17.7）。
- */
-export const AgentSpec = z
-  .object({
-    argv: z.array(z.string()).nonempty(),
-    /** 卡片渲染成谁认识的文件（`claude-code` / `codex` / `hertaloy-agent`）。 */
-    profile: z.string().optional(),
-    /** 注入到 `.hertaloy/context/` 的文件：相对路径 → 内容。 */
-    context: z.record(z.string()).optional(),
-    /**
-     * 环境变量。**只放取值方式，不放值本身。**
-     *
-     * `$NAME` 从跑它那台机器的环境里取；字面量只允许非凭据的配置值
-     * （`NODE_ENV=production` 这类）。像凭据的字面量在**注册期**就被拒 ——
-     * 此前这条只是注释，没有任何强制点，而模板是不可变对象：
-     * 写进去就撤不回来，只能换密钥。
-     */
-    env: z.record(SECRET_FREE_ENV).optional(),
-    /**
-     * 这个节点的**能力上界** —— 声明在模板上，agent 碰不到。
-     *
-     * 此前它们只存在于 backend 的构造参数里：`NetworkPolicy` 是
-     * `DockerRunner` 的一个字段，**一个 run 里所有 agent 节点共用一条**。
-     * 两个后果：
-     *
-     *   1. "审计 agent 不许上网、研究 agent 可以" —— 表达不出来
-     *   2. 渲染层读不到任何节点的能力，"这个节点跑在什么策略下"画不出来
-     *
-     * 声明与使用要分在两个面上：**能力声明在模板里**（可读、可渲染、
-     * agent 碰不到），**能力使用在工具里**（可记录、有范围、agent 可调）。
-     * 放进 agent 自己能调的工具面，就等于让它松开自己的笼子。
-     *
-     * 省略 = 用 backend 的缺省（保持既有行为，这是个纯增字段）。
-     */
-    capabilities: z
-      .object({
-        /** `none` 断网 · `internal` 只通本 run 的内网 · `open` 放行。 */
-        network: z.enum(["none", "internal", "open"]).optional(),
-        wallClockSeconds: z.number().positive().optional(),
-        /** 跑完留不留沙箱 —— 留着是为了事后翻现场。 */
-        retain: z.enum(["always", "on-failure", "never"]).optional(),
-      })
-      .strict()
-      .optional(),
-    /**
-     * 工作区：把一个**具名**仓库物化成工作树。
-     *
-     * `source` 是别名，不是路径或 URL —— 具体指向哪个仓库由 backend 配置决定。
-     * 模板因此可移植：同一份模板在不同机器上跑不同的仓库，而 agent 始终
-     * 拿不到真实位置。
-     */
-    /**
-     * 工作区来源，**二选一**：
-     *
-     *   `source`  从具名仓库克隆一份新的（起点可用 `base` 钉住）
-     *   `from`    **接过本容器内某个上游节点的工作区** —— 子流程的关键
-     *
-     * `from` 只能写**本容器内的节点名**，于是交接天然被限定在自己的命名空间里：
-     * 一个实例接不到兄弟实例的工作区。这不是靠额外检查实现的，
-     * 是靠"节点名是模板局部的"这条本来就有的性质。
-     *
-     * 交接而不是共享：下游拿到的是上游工作区的**一份拷贝**，各自仍有独立沙箱、
-     * 独立快照。共享目录会让并行的两个节点互相踩，而沙箱一次性正是并行安全的来源。
-     */
-    workspace: z
-      .object({
-        source: Ident.optional(),
-        base: z.string().min(1).optional(),
-        from: NodeId.optional(),
-      })
-      .strict()
-      .refine(
-        (w) => (w.source === undefined) !== (w.from === undefined),
-        "workspace 要么给 source（从具名仓库克隆），要么给 from（接过上游节点的工作区），不能都给也不能都不给",
-      )
-      .refine(
-        (w) => w.base === undefined || w.source !== undefined,
-        "base 只在 source 模式下有意义 —— 接过上游工作区时起点由上游决定",
-      )
-      .optional(),
-    /**
-     * 参考资料：别名 → 具名资源。落在 `.hertaloy/resources/<别名>/`。
-     *
-     * 不落 `workspace/`：工作树是被观察的，参考资料混进去会被算成 agent 的改动。
-     */
-    resources: z.record(Ident, Ident).optional(),
-  })
-  .strict();
-
-export type AgentSpec = z.infer<typeof AgentSpec>;
+export type NodeExecutionSpec = z.infer<typeof NodeExecutionSpec>;
 
 const HandlerNodeShape = z
   .object({
     kind: z.literal("handler"),
     /** 内置 handler 名。与 `agent` 二选一。 */
     handler: Ident.optional(),
-    agent: AgentSpec.optional(),
+    agent: NodeExecutionSpec.optional(),
     bind: BindBlock.optional(),
     ports: PortMap,
     /**

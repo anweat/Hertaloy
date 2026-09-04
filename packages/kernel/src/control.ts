@@ -25,7 +25,13 @@ import {
 } from "@nodeflow/contracts";
 import { AuthorizationError } from "./errors.js";
 import type { AuthzLog } from "./authz-log.js";
-import { type ContainerInstance, InstanceRegistry, registerContainerTemplate } from "./instances.js";
+
+import {
+  type ContainerInstance,
+  type ExecutionSpecValidator,
+  InstanceRegistry,
+  registerContainerTemplate,
+} from "./instances.js";
 import type { ObjectStore } from "./store.js";
 import type { Lock } from "./locks.js";
 import type {
@@ -36,6 +42,19 @@ import type {
   StepResult,
   TruncationResult,
 } from "./runtime.js";
+
+/**
+ * 注入给控制面的东西。**收成一个对象而不是继续加位置参数** ——
+ * 第 6 个位置参数就是没人记得住顺序的开始。
+ *
+ * 两样都是缝：换掉一条不变量都不破（判据见 `scheduling.ts` 开头）。
+ */
+export interface ControlPlaneDeps {
+  /** 授权决策日志。**必填** —— 理由见 `authz-log.ts`。 */
+  readonly log: AuthzLog;
+  /** 执行面声明的注册期校验。不给就只剩契约层那条凭据扫描。 */
+  readonly validateExecutionSpec?: ExecutionSpecValidator;
+}
 
 /** 操作 → 类别的映射表。**这张表就是分层本身**，不散在各处 if 里。 */
 export const OPERATION_CLASS = {
@@ -55,7 +74,7 @@ export class ControlPlane {
   readonly #registry: InstanceRegistry;
   readonly #store: ObjectStore;
   readonly #permissions: PermissionTable;
-  readonly #log: AuthzLog;
+  readonly #deps: ControlPlaneDeps;
 
   /**
    * `log` **必填，没有默认值**。
@@ -69,13 +88,13 @@ export class ControlPlane {
     registry: InstanceRegistry,
     store: ObjectStore,
     permissions: PermissionTable,
-    log: AuthzLog,
+    deps: ControlPlaneDeps,
   ) {
     this.#runtime = runtime;
     this.#registry = registry;
     this.#store = store;
     this.#permissions = permissions;
-    this.#log = log;
+    this.#deps = deps;
   }
 
   /**
@@ -101,7 +120,7 @@ export class ControlPlane {
    */
   check(actor: Principal, opClass: OpClass, target: string, op = opClass.toLowerCase()): void {
     const decision = this.#permissions.decide(actor, opClass, target);
-    this.#log.record({
+    this.#deps.log.record({
       actor: formatPrincipal(actor),
       op,
       opClass,
@@ -117,7 +136,13 @@ export class ControlPlane {
   /** 注册容器定义或覆盖层。scope 按**定义路径前缀**判定（对象级 GRANT）。 */
   define(actor: Principal, templateId: string, spec: unknown, kind?: string): Ref {
     this.#authorize(actor, "define", templateId);
-    return registerContainerTemplate(this.#store, templateId, spec, kind);
+    return registerContainerTemplate(
+      this.#store,
+      templateId,
+      spec,
+      kind,
+      this.#deps.validateExecutionSpec,
+    );
   }
 
   // --- DML ---------------------------------------------------------------

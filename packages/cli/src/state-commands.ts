@@ -14,6 +14,7 @@
  * `actor` 由 `--as` 注入，默认 `human:local`；绝不从载荷里取（§11.3）。
  */
 
+import { checkAgentSpec } from "@nodeflow/sandbox";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -56,7 +57,7 @@ const fail = (text: string, data?: Json): CommandResult =>
 
 /** 只读打开：不拿目录锁，所以能在写进程跑着的时候查（§17.8）。 */
 function readOnly(dir: string, fn: (s: RunState) => CommandResult): CommandResult {
-  const state = RunState.open(dir, { readOnly: true });
+  const state = RunState.open(dir, { readOnly: true, validateExecutionSpec: checkAgentSpec });
   try {
     return guard(() => fn(state));
   } finally {
@@ -80,7 +81,7 @@ function guard(fn: () => CommandResult): CommandResult {
 }
 
 function writable(dir: string, fn: (s: RunState) => CommandResult): CommandResult {
-  const state = RunState.open(dir);
+  const state = RunState.open(dir, { validateExecutionSpec: checkAgentSpec });
   try {
     const result = guard(() => fn(state));
     if (result.code === 0) state.persist();
@@ -319,7 +320,10 @@ export async function drain(
    * 而控制面在 agent 挂死时不可用，等于没有控制面。
    */
   const withState = <T>(fn: (s: RunState) => T): T => {
-    const state = RunState.open(dir, backend === undefined ? {} : { backend });
+    const state = RunState.open(dir, {
+      validateExecutionSpec: checkAgentSpec,
+      ...(backend === undefined ? {} : { backend }),
+    });
     try {
       const out = fn(state);
       state.persist();
@@ -647,7 +651,7 @@ export function init(dir: string, actor: Principal, raw: unknown): CommandResult
  */
 export function permissions(dir: string, actor: Principal, write: boolean): CommandResult {
   if (write) {
-    const state = RunState.open(dir);
+    const state = RunState.open(dir, { validateExecutionSpec: checkAgentSpec });
     try {
       if (state.permissions.source === "file") {
         return fail(`${permissionsPath(dir)} 已存在 —— 不覆盖已有的授权表。`);
@@ -703,7 +707,7 @@ function authorize(
   opClass: "DDL" | "DML" | "DQL",
   target: string,
 ): CommandResult | null {
-  const state = RunState.open(dir, { readOnly: true });
+  const state = RunState.open(dir, { readOnly: true, validateExecutionSpec: checkAgentSpec });
   try {
     state.control.check(actor, opClass, target);
     return null;

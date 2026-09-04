@@ -280,11 +280,28 @@ export class InstanceRegistry implements Snapshotable {
  * 校验只在 approve 时才经 publish 触发，等于人成了 AI 的语法检查器，
  * 自我修正的内循环不存在（FOUNDATION §14 缺陷 1）。
  */
+/**
+ * 执行面声明的校验器 —— **一条缝**。
+ *
+ * `agent` 段的 schema 归执行面（`@nodeflow/sandbox` 的 `AgentSpec`）：
+ * `workspace` / `capabilities` / `profile` 全是"怎么跑"，契约层不该认识它们。
+ * 但**搬走不等于推到运行期**：接上这个校验器，"workspace 既给 source 又给 from"
+ * 这类错仍然在注册期被拒（§1：注册期拒绝，不做运行期救火）。
+ *
+ * 不给就只剩契约层那条凭据扫描（`NodeExecutionSpec`）—— 那条是对象库的规矩，
+ * 永远在。
+ *
+ * 按判据它是合法的缝：**换掉它一条内核不变量都不破** —— 端口白名单、子槽、
+ * 别名、预算全不经过它。
+ */
+export type ExecutionSpecValidator = (spec: unknown, where: string) => readonly string[];
+
 export function registerContainerTemplate(
   store: ObjectStore,
   templateId: string,
   spec: unknown,
   kind = "container_template",
+  validateExecutionSpec?: ExecutionSpecValidator,
 ): Ref {
   /**
    * **按 kind 分派校验。**
@@ -330,6 +347,7 @@ export function registerContainerTemplate(
      * 只有**根配置**要求"一个别名都不欠"：非根模板还会被装进更外层，
      * 欠账由那时候的父来还。这正是 §3.1「根是递归的终止条件」。
      */
+    ...validateExecutionSpecs(parsed.data, validateExecutionSpec),
     ...(kind === "root_config"
       ? checkRootAliases(templateId, parsed.data, (ref) => resolveTemplate(store, ref))
       : checkAliases(templateId, parsed.data, (ref) => resolveTemplate(store, ref)).issues),
@@ -550,4 +568,20 @@ function resolveTemplate(store: ObjectStore, ref: Ref): ContainerTemplate | unde
   } catch {
     return undefined;
   }
+}
+
+/** 逐个 agent 节点跑执行面校验器。没给校验器就什么都不查。 */
+function validateExecutionSpecs(
+  tpl: ContainerTemplate,
+  validate: ExecutionSpecValidator | undefined,
+): readonly TemplateIssue[] {
+  if (validate === undefined) return [];
+  const issues: TemplateIssue[] = [];
+  for (const [nodeId, node] of Object.entries(tpl.nodes)) {
+    if (node.agent === undefined) continue;
+    for (const message of validate(node.agent, `nodes.${nodeId}.agent`)) {
+      issues.push({ where: `nodes.${nodeId}.agent`, message });
+    }
+  }
+  return issues;
 }

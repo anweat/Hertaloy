@@ -9,7 +9,8 @@
 
 import { join } from "node:path";
 import { z } from "zod";
-import { AgentSpec, MASK, SECRET_PATTERNS, resolveEnv } from "@nodeflow/contracts";
+import { MASK, SECRET_PATTERNS, resolveEnv } from "@nodeflow/contracts";
+import { AgentSpec } from "./agent-spec.js";
 import type {
   ExecutionBackend,
   ExecutionRequest,

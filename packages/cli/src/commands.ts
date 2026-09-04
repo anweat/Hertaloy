@@ -16,6 +16,7 @@ import {
   type StepFailure,
   type StepResult,
 } from "@nodeflow/kernel";
+import { checkAgentSpec } from "@nodeflow/sandbox";
 import { BUILTIN_HANDLERS, BUILTIN_NAMES } from "./builtins.js";
 import { Scenario } from "./scenario.js";
 
@@ -46,7 +47,25 @@ export function validate(raw: unknown): CommandResult {
       ),
     );
   }
-  const issues = validateContainerTemplate(parsed.data);
+  /**
+   * 执行面声明也要在这里查一遍。
+   *
+   * `validate` 走的是自己那条结构校验路，**不经过 `registerContainerTemplate`** ——
+   * `AgentSpec` 搬去 sandbox 之后，如果不在这儿显式接上，这条"干跑校验"命令
+   * 对 agent 段就瞎了。而它正是 G1（AI 自己验自己搭的图）的出口，
+   * 瞎在这儿等于把最需要早报的那条路关掉。
+   */
+  const issues = [
+    ...validateContainerTemplate(parsed.data),
+    ...Object.entries(parsed.data.nodes).flatMap(([nodeId, node]) =>
+      node.agent === undefined
+        ? []
+        : checkAgentSpec(node.agent, `nodes.${nodeId}.agent`).map((message) => ({
+            where: `nodes.${nodeId}.agent`,
+            message,
+          })),
+    ),
+  ];
   if (issues.length > 0) {
     return fail(
       ["连接期校验失败：", ...issues.map((i: { where: string; message: string }) => `${i.where}：${i.message}`)].join("\n  "),
@@ -79,7 +98,7 @@ export function run(rawScenario: unknown): CommandResult {
           ? { ...(t.spec as object), extends: refs.get((t.spec as { extends: string }).extends) ??
               (t.spec as { extends: string }).extends }
           : t.spec;
-      refs.set(t.id, registerContainerTemplate(store, t.id, spec, t.kind));
+      refs.set(t.id, registerContainerTemplate(store, t.id, spec, t.kind, checkAgentSpec));
     }
   } catch (error) {
     return fail(`注册失败：${(error as Error).message}`);

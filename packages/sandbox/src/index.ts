@@ -1,3 +1,4 @@
+export * from "./agent-spec.js";
 export * from "./layout.js";
 export * from "./runner.js";
 export * from "./observe.js";

@@ -44,7 +44,7 @@ beforeEach(() => {
   rt = new Runtime(store, reg);
   rt.registerHandler("noop", () => ({}));
   perms = new PermissionTable();
-  cp = new ControlPlane(rt, reg, store, perms, new BoundedAuthzLog());
+  cp = new ControlPlane(rt, reg, store, perms, { log: new BoundedAuthzLog() });
 });
 
 describe("默认拒绝", () => {

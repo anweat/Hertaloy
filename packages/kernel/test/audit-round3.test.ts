@@ -254,7 +254,7 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
     const table = new PermissionTable();
     table.grant({ principal: "human:*", scope: "*", ops: ["DDL", "DML", "DQL"] });
     const log = new BoundedAuthzLog();
-    return { rt, log, control: new ControlPlane(rt, reg, store, table, log) };
+    return { rt, log, control: new ControlPlane(rt, reg, store, table, { log }) };
   }
 
   const HUMAN = { kind: "human", id: "alice" } as const;

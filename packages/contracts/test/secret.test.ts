@@ -1,12 +1,17 @@
 /**
- * env 里不许有密钥值 —— 从"注释这么写"变成"注册期这么强制"。
+ * 执行面声明里不许有密钥值 —— 从"注释这么写"变成"注册期这么强制"。
  *
  * 判据不是"有个 refine"，是**塞得进去的那份模板现在塞不进去了**，
  * 且被拒时能看到正确路径（改写成 `$NAME`）。
+ *
+ * `AgentSpec` 搬去 sandbox 之后这条留在契约层，因为**它是对象库的规矩不是
+ * 执行面的规矩**（§17.7：模板不可变、内容寻址、按前缀可读）。而且顺带管宽了：
+ * 原来只查 `env`，现在递归扫整段声明的所有字符串 —— `context` / `argv` 里的
+ * 密钥以前是漏的。
  */
 
 import { describe, expect, it } from "vitest";
-import { AgentSpec, envRefName, looksLikeSecret, resolveEnv } from "../src/index.js";
+import { NodeExecutionSpec, envRefName, looksLikeSecret, resolveEnv } from "../src/index.js";
 
 /**
  * 样例**在运行期拼出来**，不写成字面量。
@@ -28,7 +33,7 @@ describe("★ 像凭据的字面量在注册期被拒", () => {
 
   for (const [what, value] of cases) {
     it(`${what} → 拒绝`, () => {
-      const r = AgentSpec.safeParse({ argv: ["x"], env: { KEY: value } });
+      const r = NodeExecutionSpec.safeParse({ argv: ["x"], env: { KEY: value } });
       expect(r.success).toBe(false);
       if (!r.success) {
         // 拒绝理由必须给出正确路径，否则只会被换个名字绕过
@@ -38,15 +43,33 @@ describe("★ 像凭据的字面量在注册期被拒", () => {
   }
 
   it("普通配置值照旧通过 —— 这不是禁止 env，是禁止把值写死", () => {
-    const r = AgentSpec.safeParse({
+    const r = NodeExecutionSpec.safeParse({
       argv: ["x"],
       env: { NODE_ENV: "production", LANG: "zh_CN.UTF-8", MAX_RETRIES: "3" },
     });
     expect(r.success).toBe(true);
   });
 
+  it("★ 不止 env —— context 里的密钥以前是漏的", () => {
+    const leaked = fake("sk-", "abcdefghijklmnopqrstuvwxyz012345");
+    const r = NodeExecutionSpec.safeParse({
+      argv: ["x"],
+      context: { "notes.md": `凭据是 ${leaked}` },
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]?.path).toEqual(["context", "notes.md"]);
+  });
+
+  it("★ argv 里的也拦得住", () => {
+    const r = NodeExecutionSpec.safeParse({
+      argv: ["claude", "--key", fake("sk-", "abcdefghijklmnopqrstuvwxyz012345")],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]?.path).toEqual(["argv", 2]);
+  });
+
   it("★ `$NAME` 引用通过 —— 模板只存取值方式", () => {
-    const r = AgentSpec.safeParse({ argv: ["x"], env: { ANTHROPIC_API_KEY: "$MY_KEY" } });
+    const r = NodeExecutionSpec.safeParse({ argv: ["x"], env: { ANTHROPIC_API_KEY: "$MY_KEY" } });
     expect(r.success).toBe(true);
   });
 });
@@ -84,37 +107,5 @@ describe("★ 运行期解析", () => {
 
   it("没有 env 段就是空袋子", () => {
     expect(resolveEnv(undefined, { X: "1" })).toEqual({});
-  });
-});
-
-describe("★ 节点能力：声明在模板上，不在工具面里", () => {
-  it("能力可以逐节点声明 —— 此前是整个 run 一条", () => {
-    const r = AgentSpec.safeParse({
-      argv: ["claude"],
-      capabilities: { network: "none", wallClockSeconds: 600, retain: "on-failure" },
-    });
-    expect(r.success).toBe(true);
-  });
-
-  it("★ 审计 agent 断网、研究 agent 放行 —— 这个此前表达不出来", () => {
-    const audit = AgentSpec.safeParse({ argv: ["codex"], capabilities: { network: "none" } });
-    const research = AgentSpec.safeParse({ argv: ["claude"], capabilities: { network: "open" } });
-    expect(audit.success && research.success).toBe(true);
-  });
-
-  it("省略就是用 backend 缺省 —— 纯增字段，老模板不受影响", () => {
-    const r = AgentSpec.safeParse({ argv: ["x"] });
-    expect(r.success).toBe(true);
-    if (r.success) expect(r.data.capabilities).toBeUndefined();
-  });
-
-  it("认不得的策略要拒 —— 别让打错的字悄悄变成缺省", () => {
-    const r = AgentSpec.safeParse({ argv: ["x"], capabilities: { network: "hostt" } });
-    expect(r.success).toBe(false);
-  });
-
-  it("多余字段要拒 —— 能力集是闭的", () => {
-    const r = AgentSpec.safeParse({ argv: ["x"], capabilities: { gpu: true } });
-    expect(r.success).toBe(false);
   });
 });

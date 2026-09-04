@@ -25,6 +25,7 @@ import {
   ObjectStore,
   Runtime,
   type Scheduler,
+  type ExecutionSpecValidator,
 } from "@nodeflow/kernel";
 import type { ExecutionBackend } from "@nodeflow/contracts";
 import { type LoadedPermissions, loadPermissions } from "./permissions.js";
@@ -58,6 +59,14 @@ export interface OpenOptions {
    * 注释记着"K5、E1 是同一类：实现在，路不通"，这个项目被这个形状咬过四次。
    */
   readonly scheduler?: Scheduler;
+  /**
+   * 执行面声明（`agent` 段）的注册期校验。
+   *
+   * `state` **不依赖 sandbox**，所以这个只能由调用方给（CLI 接的是
+   * sandbox 的 `checkAgentSpec`）。不给就只剩契约层那条凭据扫描 ——
+   * 于是 `workspace` 写错要等到运行期才发现，与 §1 相悖。
+   */
+  readonly validateExecutionSpec?: ExecutionSpecValidator;
 }
 
 export class RunState {
@@ -82,6 +91,7 @@ export class RunState {
   readonly authzLog: FileAuthzLog;
 
   readonly #lock: StateLock | null;
+  #validateExecutionSpec: ExecutionSpecValidator | undefined;
   #cursor: number;
 
   private constructor(
@@ -147,6 +157,7 @@ export class RunState {
 
       if (head === null) {
         self = new RunState(dir, store, registry, runtime, false, lock, 0, permissions, resources);
+        self.#validateExecutionSpec = options.validateExecutionSpec;
         return self;
       }
 
@@ -169,6 +180,7 @@ export class RunState {
         );
       }
       self = new RunState(dir, store, registry, runtime, true, lock, cursor, permissions, resources);
+        self.#validateExecutionSpec = options.validateExecutionSpec;
 
       /**
        * **认领不再在 open 时自动发生。**
@@ -226,7 +238,12 @@ export class RunState {
       this.registry,
       this.store,
       this.permissions.table,
-      this.authzLog,
+      {
+        log: this.authzLog,
+        ...(this.#validateExecutionSpec === undefined
+          ? {}
+          : { validateExecutionSpec: this.#validateExecutionSpec }),
+      },
     );
   }
 

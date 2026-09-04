@@ -26,6 +26,55 @@ const leaf = {
 };
 
 describe("hertaloy validate —— 干跑校验，不落库", () => {
+  /**
+   * `AgentSpec` 搬去 sandbox 之后，最容易出的事是"缝没通"：schema 还在，
+   * 但没人在注册期调它，于是 `workspace` 写错要等到跑 agent 才发现。
+   *
+   * 这三条钉的就是那条线真的通着 —— `instances.ts` 那句"K5、E1 是同一类：
+   * 实现在，路不通"记的是同一种失败。
+   */
+  it("★ agent 段的形状错在这里就被拒 —— 缝通到 validate", () => {
+    const r = validate({
+      nodes: {
+        a: {
+          kind: "handler",
+          agent: { argv: ["claude"], workspace: { source: "primary", from: "b" } },
+          ports: { in: { direction: "receive" } },
+        },
+      },
+    });
+    expect(r.code).not.toBe(0);
+    expect(r.text).toMatch(/nodes\.a\.agent/);
+    expect(r.text).toMatch(/要么给 source|不能都给/);
+  });
+
+  it("★ 认不得的能力策略也拒 —— 别让打错的字悄悄变成缺省", () => {
+    const r = validate({
+      nodes: {
+        a: {
+          kind: "handler",
+          agent: { argv: ["claude"], capabilities: { network: "opne" } },
+          ports: { in: { direction: "receive" } },
+        },
+      },
+    });
+    expect(r.code).not.toBe(0);
+    expect(r.text).toMatch(/nodes\.a\.agent/);
+  });
+
+  it("合法的 agent 段照旧通过", () => {
+    const r = validate({
+      nodes: {
+        a: {
+          kind: "handler",
+          agent: { argv: ["claude"], capabilities: { network: "none" } },
+          ports: { in: { direction: "receive" } },
+        },
+      },
+    });
+    expect(r.code).toBe(0);
+  });
+
   it("合法模板给出摘要", () => {
     const r = validate(leaf);
     expect(r.code).toBe(0);
