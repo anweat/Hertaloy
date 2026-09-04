@@ -291,19 +291,6 @@ export class Runtime implements Snapshotable {
   }
 
   /**
-   * 只读实例树。与 `get locks()` 同例 —— 观测方要问"还有哪些实例没终态"时，
-   * 现在只能靠调用方自己另外持有一份 registry 引用，于是同一个事实有两个来源。
-   *
-   * 加这个 getter 是为了让「未了结的义务」能在 Runtime 外面**完整派生**
-   * （见 `test/obligations.ts`）：四种义务里有一种住在 registry 里，
-   * 够不着它就只能继续维护锁表那份拷贝。
-   */
-  get registry(): InstanceRegistry {
-    return this.#registry;
-  }
-
-  /** 消息/记录都是冻结对象，浅拷贝即完整快照（§10.1）。 */
-  /**
    * 落盘形状**逐键写明，不用展开**。
    *
    * 队列与执行记录各自的快照里都有一个 `seq`，展开会互相覆盖，而且是静默的：

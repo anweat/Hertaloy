@@ -331,6 +331,20 @@ POST /api/truncate → { ..., cursor: {seq, objects, config} }
 | `layout` `proposal` `annotation` | — | kind 占着位，**目前没有任何生产者**（前端就是第一个） |
 | 用户 kind（`plan` / `spec` / …） | agent 的产出 | 汇聚 / 计数 / 择优全在版本历史里 |
 
+### E'. `authz.jsonl` —— 授权决策日志（**追加写，不在头里**）
+
+`seq`（单调，跨进程接着发）· `actor`（`kind:id`）· `op` / `opClass` ·
+`target` · `allowed` · `reason`
+
+放行和拒绝都记 —— **被拒的那次尤其要留下**，它往往就是"权限配错了"的现场。
+
+它原本挂在 `head.runtime.audit` 上。搬出来的理由与 §17.6 一致：日志是观测，
+追加写，不参与重放。留在头里会让累计写入变平方级（头每次全量重写），
+而那个 `AUDIT_KEEP = 500` 的截断正是为此打的补丁 —— 补丁本身说明存错了地方。
+搬到追加写文件之后不必截断历史，"事后答得出凭什么放行"才真的跨进程成立。
+
+**只读打开不写它**：那些命令不拿目录锁，写就成了两个进程抢一个文件（§17.8）。
+
 ### E. `permissions.json` / `resources.json`
 
 `decide(actor, opclass, target) → {allowed, reason}` —— **reason 连拒绝理由一起给**，
