@@ -8,6 +8,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionRequest } from "@nodeflow/contracts";
 import { SandboxBackend, redact, type SandboxDiagnostics } from "../src/backend.js";
@@ -228,7 +229,15 @@ describe("★ 平权自证：hertaloy agent 与外部 CLI 走同一条路", () =
    * 这条测试的意义就是这个 —— 如果我们自己的 agent 需要特殊待遇，
    * "agent 就是命令行"那条归约就是假的。
    */
-  const CLI = join(process.cwd(), "..", "cli", "src", "main.ts");
+  /**
+   * 从**本文件的位置**推 CLI 入口，不从 `process.cwd()`。
+   *
+   * 用 cwd 时，这三条只在 `vitest` 恰好从 `packages/sandbox` 启动时才通；
+   * 从仓库根跑整套（`vitest --root .`）就会去找 `D:\codeproject\cli\src\main.ts`
+   * 而报 ERR_MODULE_NOT_FOUND —— 于是"全仓一次跑完"这件事做不到，
+   * 而失败信息指向模块解析，看不出是测试自己的路径假设。
+   */
+  const CLI = fileURLToPath(new URL("../../cli/src/main.ts", import.meta.url));
   /**
    * 用 `node <tsx/cli.mjs>` 而不是 `npx tsx`。
    *

@@ -202,7 +202,7 @@ describe("强制截断（§9.6）", () => {
     expect(first.generation).toBe(1);
     expect(second.generation).toBe(1);
     expect(second.truncatedMessages).toBe(0);
-    expect(second.releasedLocks).toBe(0);
+    expect(second.cancelledExecutions).toBe(0);
   });
 });
 

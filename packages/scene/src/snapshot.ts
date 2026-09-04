@@ -69,7 +69,6 @@ export const SnapshotInstance = z.object({
   templateRef: z.string(),
   status: z.string(),
   slot: z.string().optional(),
-  nodes: z.record(z.object({ nodeId: z.string() })).default({}),
   bindings: z.array(SnapshotBinding).default([]),
 });
 

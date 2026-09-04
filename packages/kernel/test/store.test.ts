@@ -57,8 +57,8 @@ describe("lineage", () => {
   it("回溯 derived_from DAG", () => {
     const store = new ObjectStore();
     store.put("spec", "spec", { n: 1 });
-    store.put("plan", "plan", { n: 1 }, { at_seq: 0, derived_from: ["spec@1"] });
-    store.put("report", "report", { n: 1 }, { at_seq: 0, derived_from: ["plan@1"] });
+    store.put("plan", "plan", { n: 1 }, { derived_from: ["spec@1"] });
+    store.put("report", "report", { n: 1 }, { derived_from: ["plan@1"] });
     const dag = store.lineage("report@1");
     expect(dag.get("report@1")).toEqual(["plan@1"]);
     expect(dag.get("plan@1")).toEqual(["spec@1"]);

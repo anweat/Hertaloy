@@ -43,23 +43,11 @@ import {
 
 export type InstanceStatus = "OPEN" | "TERMINAL";
 
-/**
- * 节点实例。
- *
- * **没有 persistent 状态**（不变量 C5）：累加、计数、择优一律读版本历史。
- * 节点内私有状态是本项目一直在消灭的那类东西，而 ObjectStore 的版本历史
- * 已经是累加器 + 计数器 + 择优候选集，且更好——已版本化、可观测、跨实例可见。
- */
-export interface NodeInstance {
-  readonly nodeId: string;
-}
-
 export interface ContainerInstance {
   readonly traceid: TraceId;
   /** 终身 pin（C4）：创建时定版，永不迁移。要新版就创建新实例。 */
   readonly templateRef: Ref;
   readonly status: InstanceStatus;
-  readonly nodes: ReadonlyMap<string, NodeInstance>;
   /**
    * 截断栅栏（设计门 4 / 不变量 L3）。
    *
@@ -241,15 +229,10 @@ export class InstanceRegistry implements Snapshotable {
       parent === undefined
         ? rootBindings(trace, template)
         : childBindings(trace, template, parent.traceid, parent.bindings, slotBindings ?? []);
-    const nodes = new Map<string, NodeInstance>();
-    for (const nodeId of Object.keys(template.nodes)) {
-      nodes.set(nodeId, Object.freeze({ nodeId }));
-    }
     const instance: ContainerInstance = Object.freeze({
       traceid: trace,
       templateRef,
       status: "OPEN" as const,
-      nodes,
       bindings,
       generation: 0,
       seq: 0,
@@ -460,7 +443,7 @@ function materializeOverlay(store: ObjectStore, templateId: string, spec: unknow
     templateId,
     "materialized",
     outcome.merged as unknown as JsonObject,
-    { at_seq: 0, derived_from: [overlay.extends] },
+    { derived_from: [overlay.extends] },
   );
   return `${version.object_id}@${version.version}`;
 }

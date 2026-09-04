@@ -23,7 +23,7 @@ import {
 import { InvariantError } from "./errors.js";
 import type { Snapshotable } from "./tx.js";
 
-const EMPTY_PROVENANCE: Provenance = { at_seq: 0, derived_from: [] };
+const EMPTY_PROVENANCE: Provenance = { derived_from: [] };
 
 /** 规范化序列化：键排序，保证同内容跨进程逐字节相同。 */
 export function stableStringify(value: Json): string {

@@ -467,7 +467,6 @@ export function truncate(
       [
         `已截断 ${r.traceid}（generation ${r.generation}）：${r.reason}`,
         `  丢弃消息 ${r.truncatedMessages} 条`,
-        `  释放锁 ${r.releasedLocks} 把`,
         `  取消执行 ${r.cancelledExecutions} 个`,
         `  级联子实例 ${r.cascaded.length} 个${r.cascaded.length > 0 ? `：${r.cascaded.join("、")}` : ""}`,
       ].join("\n"),
@@ -476,7 +475,6 @@ export function truncate(
         generation: r.generation,
         reason: r.reason,
         truncatedMessages: r.truncatedMessages,
-        releasedLocks: r.releasedLocks,
         cancelledExecutions: r.cancelledExecutions,
         cascaded: [...r.cascaded],
       } as never,

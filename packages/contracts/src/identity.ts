@@ -130,7 +130,6 @@ export type AliasName = z.infer<typeof AliasName>;
 // ---------------------------------------------------------------------------
 
 export const PRINCIPAL_KINDS = ["human", "agent", "system", "service"] as const;
-export type PrincipalKind = (typeof PRINCIPAL_KINDS)[number];
 
 export const Principal = z.object({
   kind: z.enum(PRINCIPAL_KINDS),
