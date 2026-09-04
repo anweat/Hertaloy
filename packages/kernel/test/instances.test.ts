@@ -46,7 +46,9 @@ describe("根容器唯一（不变量 C1）", () => {
     const root = reg.createRoot(rootRef, "root");
     expect(root.traceid).toBe("root");
     expect(root.status).toBe("OPEN");
-    expect([...root.nodes.keys()]).toEqual(["plan"]);
+    // 节点表读**模板**，不读实例：实例上那份 `nodes` 是 C5 删掉节点持久状态后
+    // 留下的空壳（值就是键），已随本次清理删除
+    expect(Object.keys(reg.template(root.traceid).nodes)).toEqual(["plan"]);
     expect(reg.rootTrace).toBe("root");
   });
 
@@ -61,7 +63,7 @@ describe("子容器只能从已声明的槽创建（第一不变量）", () => {
     reg.createRoot(rootRef, "job-1");
     const child = reg.spawn("job-1", "coders", "coder-1");
     expect(child.traceid).toBe("job-1/coder-1");
-    expect([...child.nodes.keys()]).toEqual(["work"]);
+    expect(Object.keys(reg.template(child.traceid).nodes)).toEqual(["work"]);
   });
 
   it("未声明的槽被拒绝，并列出可用槽", () => {

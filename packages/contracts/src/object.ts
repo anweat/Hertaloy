@@ -40,7 +40,6 @@ export const Provenance = z
     traceid: TraceId.optional(),
     node_id: z.string().min(1).optional(),
     execution_id: z.string().min(1).optional(),
-    at_seq: z.number().int().nonnegative().default(0),
     derived_from: z.array(Ref).default([]),
   })
   .strict();

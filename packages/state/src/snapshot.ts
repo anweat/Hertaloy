@@ -67,9 +67,6 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
        * （要扫全树匹配）。物化绑定是自足的：实例自己就带着完整寻址表。
        */
       bindings: instance.bindings.map((b) => ({ ...b })),
-      nodes: Object.fromEntries(
-        [...instance.nodes.keys()].map((nodeId) => [nodeId, { nodeId }]),
-      ),
     };
     if (templates[instance.templateRef] === undefined) {
       templates[instance.templateRef] = state.store.resolve(instance.templateRef).body;

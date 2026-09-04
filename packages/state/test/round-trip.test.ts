@@ -182,6 +182,48 @@ describe("★ 目录锁（§17.8）", () => {
   });
 });
 
+describe("★ 旧盘上的对象仍读得出来（at_seq 删除之后）", () => {
+  /**
+   * `provenance.at_seq` 写过 5 处、**读过 0 处**，随这次清理删掉了。
+   * 但已经落在盘上的对象里还带着它，而 `ObjectVersion` 是 `.strict()` 的 ——
+   * 于是有一个必须当场钉死的问题：**旧文件还打得开吗？**
+   *
+   * 答案是能，因为装载走的是 `JSON.parse(...) as ObjectVersion`，不是 `.parse()`。
+   * 但"因为现在没人校验所以没事"是个**会过期的理由**：哪天有人给装载加上校验，
+   * 这批文件就会在毫无预兆的情况下被拒。
+   *
+   * 所以把它写成用例：这条一旦变红，就是在说"你刚给装载加了严格校验，
+   * 得先给旧字段一条迁移路"。**把一个潜伏的坑换成一盏灯。**
+   */
+  it("已落盘的对象带着 at_seq，换个进程照样解析得到", () => {
+    session((s) => {
+      const ref = registerContainerTemplate(s.store, "root", TEMPLATE, "root_config");
+      s.registry.createRoot(ref, "job-1");
+    });
+
+    // 把盘上已有的那份改成"旧版本写的样子"：provenance 里带上已删除的 at_seq。
+    // 不新增文件 —— 新增会被完整性检查抓住（磁盘版本数与 head 游标对不上），
+    // 而那条检查本身是对的。
+    const file = join(dir, "objects", "root", "@1.json");
+    const raw = JSON.parse(readFileSync(file, "utf8")) as {
+      provenance: Record<string, unknown>;
+    };
+    raw.provenance.at_seq = 7;
+    writeFileSync(file, `${JSON.stringify(raw, null, 2)}
+`, "utf8");
+
+    const state = RunState.open(dir);
+    try {
+      const got = state.store.resolve("root@1");
+      expect(got.kind).toBe("root_config");
+      // 旧字段原样留着，不假装它不存在 —— 只是再没人读它
+      expect((got.provenance as Record<string, unknown>).at_seq).toBe(7);
+    } finally {
+      state.close();
+    }
+  });
+});
+
 describe("★ 完整性：宁可炸，不要似是而非", () => {
   it("对象文件缺一个 → 装载当场炸，而不是等某次 read(ref)", () => {
     session((s) => {

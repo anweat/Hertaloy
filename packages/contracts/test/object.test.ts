@@ -7,7 +7,7 @@ const version = {
   kind: "plan",
   content_hash: "0123456789abcdef".repeat(4),
   body: { tasks: [] },
-  provenance: { at_seq: 0, derived_from: [] },
+  provenance: { derived_from: [] },
 };
 
 describe("ObjectVersion —— 版本层（不变量 V1–V4）", () => {
@@ -19,7 +19,6 @@ describe("ObjectVersion —— 版本层（不变量 V1–V4）", () => {
         provenance: {
           traceid: "job-1/coder-2",
           node_id: "work",
-          at_seq: 7,
           derived_from: ["plan@2", "spec@1"],
         },
       }).success,
@@ -35,12 +34,12 @@ describe("ObjectVersion —— 版本层（不变量 V1–V4）", () => {
     expect(
       ObjectVersion.safeParse({
         ...version,
-        provenance: { at_seq: 0, derived_from: ["plan"] },
+        provenance: { derived_from: ["plan"] },
       }).success,
     ).toBe(false);
   });
 
-  it("拒绝非法哈希、kind、body、序号与顶层字段", () => {
+  it("拒绝非法哈希、kind、body 与未知字段（provenance 内外都不收）", () => {
     expect(
       ObjectVersion.safeParse({ ...version, content_hash: "0123456789abcdef".repeat(3) }).success,
     ).toBe(false);
@@ -55,7 +54,8 @@ describe("ObjectVersion —— 版本层（不变量 V1–V4）", () => {
     expect(
       ObjectVersion.safeParse({
         ...version,
-        provenance: { at_seq: -1, derived_from: [] },
+        // at_seq 已随机制一起删除 —— 旧字段不再是"可选"，是**不认识**
+        provenance: { derived_from: [], at_seq: 0 },
       }).success,
     ).toBe(false);
     expect(ObjectVersion.safeParse({ ...version, extra: true }).success).toBe(false);
@@ -65,7 +65,7 @@ describe("ObjectVersion —— 版本层（不变量 V1–V4）", () => {
     expect(
       ObjectVersion.safeParse({
         ...version,
-        provenance: { at_seq: 0, derived_from: [], execution_id: "exec-1" },
+        provenance: { derived_from: [], execution_id: "exec-1" },
       }).success,
     ).toBe(true);
   });

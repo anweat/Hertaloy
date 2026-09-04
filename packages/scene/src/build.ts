@@ -137,7 +137,9 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
   for (const instance of Object.values(snapshot.instances)) {
     if (!inScope(instance.traceid)) continue;
     const template = snapshot.templates[instance.templateRef];
-    const nodeIds = Object.keys(instance.nodes);
+    // 节点表读**模板**：实例侧那份 `nodes` 是 C5 之后的空壳（值就是键），已删。
+    // 模板本来就在手上（下面 185 行取端口声明用的就是它），也是权威来源。
+    const nodeIds = Object.keys(template?.nodes ?? {});
 
     /**
      * ── 实例本身是一个 Cell（容器即实例） ──

@@ -187,7 +187,6 @@ export interface TruncationResult {
   readonly reason: string;
   readonly generation: number;
   readonly truncatedMessages: number;
-  readonly releasedLocks: number;
   readonly cancelledExecutions: number;
   readonly cascaded: readonly TraceId[];
 }
@@ -634,7 +633,7 @@ export class Runtime implements Snapshotable {
       executionId,
       traceid,
       nodeId,
-      agentSpec: (node.agent ?? {}) as never,
+      agentSpec: node.agent ?? {},
       vars: compiled.vars,
       outputContract: { allowedEmitPorts: allowedEmitPorts(node.ports) },
       limits,
@@ -797,7 +796,6 @@ export class Runtime implements Snapshotable {
         traceid: record.traceid,
         node_id: record.nodeId,
         execution_id: record.executionId,
-        at_seq: 0,
         derived_from: submission.derived_from,
       });
     }
@@ -1017,7 +1015,6 @@ export class Runtime implements Snapshotable {
         reason,
         generation: instance.generation,
         truncatedMessages: 0,
-        releasedLocks: 0,
         cancelledExecutions: 0,
         cascaded: [],
       };
@@ -1062,7 +1059,8 @@ export class Runtime implements Snapshotable {
 
     // 3 + 4. 请求的两侧，各自了结。**没有"释放锁"这一步了** ——
     //        义务是从 pending 与实例状态算出来的，改了源头就等于销了账。
-    const releasedLocks = this.locks.held(trace).length + this.locks.causedBy(trace).length;
+    //        所以结果里也不再报"释放了几把锁"：那个数是把义务换个名字数一遍，
+    //        而机制早已不存在。**删机制要连它的报表一起删**，否则留下的是错误的地图。
 
     // 3. 自己发出的请求：请求方死了，回复没人收 —— 直接销账
     for (const [requestId, req] of [...this.#pending]) {
@@ -1117,7 +1115,6 @@ export class Runtime implements Snapshotable {
       reason,
       generation: bumped.generation,
       truncatedMessages,
-      releasedLocks,
       cancelledExecutions,
       cascaded,
     };
@@ -1254,7 +1251,6 @@ export class Runtime implements Snapshotable {
         traceid: record.traceid,
         node_id: record.nodeId,
         execution_id: record.executionId,
-        at_seq: 0,
         derived_from: [],
       },
     );
@@ -1322,7 +1318,7 @@ export class Runtime implements Snapshotable {
       `${trace}/$run`,
       "run",
       { seq, node: nodeId, consumed: [...consumed], produced: [...produced], ...extra },
-      { traceid: trace, node_id: nodeId, at_seq: seq, derived_from: [] },
+      { traceid: trace, node_id: nodeId, derived_from: [] },
     );
   }
 
@@ -1399,7 +1395,6 @@ export class Runtime implements Snapshotable {
           store.put(namespacedId(traceid, name), kind, body, {
             traceid,
             node_id: nodeId,
-            at_seq: 0,
             derived_from: [],
           }),
         );

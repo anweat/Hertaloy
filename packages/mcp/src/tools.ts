@@ -307,7 +307,7 @@ const truncate: Tool = {
       const r = s.control.truncate(ctx.actor, a.traceid, a.reason ?? "经 MCP 截断");
       return ok(
         `已截断 ${r.traceid}（generation ${r.generation}）：丢弃消息 ${r.truncatedMessages} 条，` +
-          `释放锁 ${r.releasedLocks} 把，级联 ${r.cascaded.length} 个子实例。`,
+          `取消执行 ${r.cancelledExecutions} 个，级联 ${r.cascaded.length} 个子实例。`,
       );
     }),
 };
