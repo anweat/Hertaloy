@@ -435,3 +435,47 @@ describe("★ 两个 RUNNING 不能抢同一条消息（外部审核 P1-4）", (
     rt.checkInvariants();
   });
 });
+
+/**
+ * ★ `priorExecutions` 真的到了请求里。
+ *
+ * 它替换掉的是 backend 进程内的一张 Map（工作区交接靠它找上游节点）。那张 Map
+ * 不落盘、不重建，换个进程就空了；而权威 —— 执行记录 —— 一直在内核这边。
+ *
+ * 沙箱那侧的用例是**手写** priorExecutions 跑的，只证明"给对了表能用"，
+ * 不证明"内核会给"。中间这一段没人走，正是这个项目被咬过四次的形状，
+ * 所以这条必须在内核侧单独钉住。
+ */
+describe("★ priorExecutions：上游执行记录进请求", () => {
+  it("内核填，不是调用方手写", async () => {
+    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "一" });
+    await rt.drainAgents();
+    // 第一次跑：这个实例还没有别的执行记录
+    expect(backend.seen[0]?.priorExecutions).toEqual({});
+
+    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "二" });
+    await rt.drainAgents();
+    // 第二次：看得见自己上一次 —— 由内核从已落盘的记录派生，没有第二本账
+    expect(backend.seen[1]?.priorExecutions).toEqual({ coder: "exec-1" });
+  });
+
+  it("读的是持久的那一半 —— restore 之后仍算得出来", async () => {
+    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "一" });
+    await rt.drainAgents();
+
+    /**
+     * 换一个 Runtime，只带快照过来 —— 这正是那张进程内 Map 做不到的事。
+     *
+     * `ExecutionLedger` 里有两种寿命的东西：`records` 跨进程（进快照），
+     * `driving` 只活在本进程（不进快照）。这条钉的是 `latestPerNode`
+     * 读的是**前者**。字节级往返由 state 包的用例负责，这里不重复。
+     */
+    const reborn = new Runtime(store, reg, { backend, maxAttempts: 3 });
+    reborn.restore(rt.snapshot());
+    reborn.registerHandler("collect", () => ({}));
+
+    reborn.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "二" });
+    await reborn.drainAgents();
+    expect(backend.seen.at(-1)?.priorExecutions).toEqual({ coder: "exec-1" });
+  });
+});

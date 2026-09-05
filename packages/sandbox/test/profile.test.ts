@@ -19,6 +19,7 @@ const input = {
   artifactsDir: "../.hertaloy/artifacts",
   traceid: "job-1/coder-1",
   nodeId: "work",
+  priorExecutions: {},
 };
 
 describe("三个 profile 各写各家认识的文件", () => {
@@ -68,6 +69,7 @@ describe("★ 渲染发生在打基线之前 —— CLAUDE.md 不会被当成 ag
       executionId: "exec-p",
       traceid: "job-1",
       nodeId: "w",
+      priorExecutions: {},
       agentSpec: {
         argv: [
           "node",
@@ -94,6 +96,7 @@ describe("★ 渲染发生在打基线之前 —— CLAUDE.md 不会被当成 ag
       executionId: "exec-p2",
       traceid: "job-1",
       nodeId: "w",
+      priorExecutions: {},
       agentSpec: {
         argv: [
           "node",

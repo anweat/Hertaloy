@@ -126,6 +126,7 @@ describe("★ 端到端：agent 在真仓库里干活，观察只报它的改动
       executionId: "exec-1",
       traceid: "job-1",
       nodeId: "coder",
+      priorExecutions: {},
       agentSpec: {
         argv: [
           "node",
@@ -167,6 +168,7 @@ describe("★ 端到端：agent 在真仓库里干活，观察只报它的改动
       executionId: "exec-2",
       traceid: "job-1",
       nodeId: "coder",
+      priorExecutions: {},
       agentSpec: { argv: ["true"], workspace: { source: "primary" } },
       vars: {},
       outputContract: { allowedEmitPorts: [] },
@@ -260,4 +262,101 @@ describe("★ 工作区交接：子流程能成立的关键", () => {
     writeFileSync(join(plain, "a.txt"), "x", "utf8");
     expect(inheritWorkspace(plain, "edit", join(home, "out")).commit).toBe("");
   });
+});
+
+/**
+ * ★ 工作区交接跨进程 —— 这一整块**此前一条用例都没有**。
+ *
+ * `workspace.from` 靠一张 `#workspaces` Map 找上游，而那张 Map 是进程内的、
+ * 不落盘、不重建。换个进程它就空了，于是交接必然失败，而 `inheritWorkspace`
+ * 报的两个归因（"还没跑"、"沙箱被回收"）**都不是真因**：上游跑过了，沙箱也在，
+ * 是 backend 自己忘了。
+ *
+ * 没有用例，是因为单进程里那张 Map 总是热的 —— **两端各自都绿、中间没人走**
+ * 的第 N 次。所以这里每条都换一个 `SandboxBackend` 实例来跑下游：
+ * 新实例就是新进程，热缓存帮不上忙。
+ */
+describe("★ 工作区交接：换一个 backend 实例仍接得过去", () => {
+  /** 一条把文本写进工作区、再写 emit.json 收尾的 agent 命令行。 */
+  const writer = (name: string, text: string): readonly string[] => [
+    "node",
+    "-e",
+    [
+      "const fs=require('fs');",
+      `fs.writeFileSync(${JSON.stringify(name)},${JSON.stringify(text)});`,
+      "fs.writeFileSync('../.hertaloy/emit.json','{}');",
+    ].join(""),
+  ];
+
+  const base = (over: Partial<ExecutionRequest>): ExecutionRequest => ({
+    executionId: "exec-1",
+    traceid: "job-1",
+    nodeId: "build",
+    priorExecutions: {},
+    agentSpec: { argv: ["true"] } as never,
+    vars: {},
+    outputContract: { allowedEmitPorts: [] },
+    limits: {},
+    ...over,
+  });
+
+  it("上游写下的文件，下游在**新实例**里读得到", async () => {
+    // 进程一：build 节点跑一次，在工作区里留下东西
+    const first = new SandboxBackend({ runner: new LocalRunner(home), resources: registry() });
+    const up = await first.run(
+      base({
+        executionId: "exec-1",
+        nodeId: "build",
+        agentSpec: {
+          argv: writer("BUILT.txt", "上游产出"),
+          workspace: { source: "primary" },
+        } as never,
+      }),
+    );
+    expect(up.termination).toBe("DONE");
+
+    // 进程二：全新的 backend —— 那张进程内的 Map 在这里必然是空的
+    const second = new SandboxBackend({ runner: new LocalRunner(home), resources: registry() });
+    const down = await second.run(
+      base({
+        executionId: "exec-2",
+        nodeId: "test",
+        // 内核从**已落盘的执行记录**派生出来的表
+        priorExecutions: { build: "exec-1" },
+        agentSpec: {
+          argv: [
+            "node",
+            "-e",
+            [
+              "const fs=require('fs');",
+              "fs.writeFileSync('../.hertaloy/emit.json',JSON.stringify({}));",
+              "if(!fs.existsSync('BUILT.txt'))throw new Error('没接到上游的工作区');",
+            ].join(""),
+          ],
+          workspace: { from: "build" },
+        } as never,
+      }),
+    );
+
+    expect(down.termination).toBe("DONE");
+    const d = down.diagnostics as unknown as { workspace?: { source: string } };
+    expect(d.workspace?.source).toBe("build（上游工作区）");
+  }, 120_000);
+
+  it("上游没有执行记录 → 说的是「没有执行记录」，不是「沙箱不在了」", async () => {
+    const backend = new SandboxBackend({ runner: new LocalRunner(home), resources: registry() });
+    const result = await backend.run(
+      base({
+        nodeId: "test",
+        priorExecutions: {}, // 上游确实没跑过
+        agentSpec: { argv: ["true"], workspace: { from: "build" } } as never,
+      }),
+    );
+
+    expect(result.termination).toBe("FAILED");
+    const d = result.diagnostics as unknown as { stderrTail: string };
+    // 两件事两条消息：图的问题 vs 环境的问题，不能混成一条去猜
+    expect(d.stderrTail).toMatch(/还没有执行记录/);
+    expect(d.stderrTail).not.toMatch(/回收/);
+  }, 60_000);
 });

@@ -20,6 +20,7 @@ import type {
 import {
   collectArtifacts,
   createSandbox,
+  sandboxPaths,
   destroySandbox,
   readEmit,
   writeContext,
@@ -39,6 +40,7 @@ import { LocalRunner, type RunOutcome, type Runner } from "./runner.js";
 import {
   type ProvisionedWorkspace,
   type ResourceRegistry,
+  ResourceError,
   inheritWorkspace,
   provisionResources,
   provisionWorkspace,
@@ -139,15 +141,7 @@ export class SandboxBackend implements ExecutionBackend {
   readonly #runner: Runner;
   readonly #retain: RetainPolicy;
   readonly #resources: ResourceRegistry;
-  /**
-   * `<traceid>/<节点>` → 那次执行的工作区路径。
-   *
-   * backend 自己记账，不扫目录：WSL 的沙箱住在 Linux 文件系统里，
-   * 宿主机扫不到。记账对三种运行器一视同仁。
-   * 键里含 traceid ⇒ **命名空间限定是天然的**，查不到兄弟实例的。
-   */
-  readonly #workspaces = new Map<string, string>();
-  readonly #inflight = new Map<string, AbortController>();
+    readonly #inflight = new Map<string, AbortController>();
 
   constructor(options: SandboxOptions = {}) {
     this.#runner = options.runner ?? new LocalRunner(options.workRoot);
@@ -215,9 +209,19 @@ export class SandboxBackend implements ExecutionBackend {
       let placed: Readonly<Record<string, string>> = {};
       try {
         if (spec.workspace?.from !== undefined) {
-          const key = `${request.traceid}/${spec.workspace.from}`;
+          /**
+           * 上游工作区从**已落盘的执行记录**定位，不再自己记一本账。
+           *
+           * 原来这里查的是 `#workspaces` —— 一张进程内的 Map，不落盘、不重建。
+           * 换个进程它就空了，于是重启后 `workspace.from` 必然失败，
+           * 而 `inheritWorkspace` 给的两个归因（"还没跑"、"被回收"）**都不是真因**：
+           * 上游跑过了，沙箱也在，是 backend 自己忘了。第二拷贝活得比权威短。
+           *
+           * 权威是 `ExecutionRecord`，它跨进程还在；沙箱根又是 id 的确定性函数。
+           * 两者一拼就够了，不需要账。
+           */
           workspace = inheritWorkspace(
-            this.#workspaces.get(key) ?? "（上游还没跑过）",
+            this.#upstreamWorkspace(request, spec.workspace.from),
             spec.workspace.from,
             paths.workspace,
           );
@@ -329,9 +333,6 @@ export class SandboxBackend implements ExecutionBackend {
         writeSandboxFile(paths, rel, content);
       }
 
-      // 记下自己的工作区，好让下游节点接得过去
-      this.#workspaces.set(`${request.traceid}/${request.nodeId}`, paths.workspace);
-
       if (canObserve) initObserver(observer, exec);
 
       /**
@@ -424,6 +425,29 @@ export class SandboxBackend implements ExecutionBackend {
       this.#inflight.delete(request.executionId);
       if (!keeps(this.#retain, termination)) this.#runner.release(root);
     }
+  }
+
+  /**
+   * 上游节点那次执行的工作区在哪。
+   *
+   * 两段拼起来，**两段都不是新账**：
+   *   1. `request.priorExecutions[from]` —— 内核从已落盘的执行记录派生
+   *   2. `runner.locate(id)` —— 沙箱根是 id 的确定性函数（一直如此，
+   *      只是先前没有非破坏的入口）
+   *
+   * 查不到执行记录与"沙箱不在了"是**两件事，两条消息**：前者是图的问题
+   * （上游真的还没跑，或者名字写错了），后者是环境的问题（沙箱被回收、
+   * workRoot 换了）。混成一条就是先前那个"归因指向两个错误方向"的老毛病。
+   */
+  #upstreamWorkspace(request: ExecutionRequest, from: string): string {
+    const executionId = request.priorExecutions[from];
+    if (executionId === undefined) {
+      throw new ResourceError(
+        `接不到上游节点 \`${from}\` 的工作区：这个实例里它还没有执行记录。` +
+          "要么它确实还没跑（检查一下图里有没有边指向它），要么 `workspace.from` 写错了节点名。",
+      );
+    }
+    return sandboxPaths(this.#runner.locate(`${request.traceid}/${from}/${executionId}`)).workspace;
   }
 
   /** best effort —— 气密性靠 generation fence，不靠这个（不变量 L3）。 */

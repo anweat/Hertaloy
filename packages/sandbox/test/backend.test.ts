@@ -33,6 +33,7 @@ function request(
     traceid: "job-1/coder-1",
     nodeId: "work",
     agentSpec: { argv: [...argv], ...spec } as never,
+    priorExecutions: {},
     vars: { task: "写个导出功能" },
     outputContract: { allowedEmitPorts: ["out", "err"] },
     limits: {},

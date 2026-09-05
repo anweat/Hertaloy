@@ -615,6 +615,14 @@ export class Runtime implements Snapshotable {
 
     // ↓ 以下才开始改状态。到这里已经不会再拒绝了。
     const executionId = this.#ledger.nextId();
+    /**
+     * 在把**本次**记录写进账本之前取上游表。
+     *
+     * 写完再取，本次执行就会出现在自己的"上游"里 —— 于是
+     * `workspace.from: <自己这个节点>` 会指向自己那个刚建好的空沙箱，
+     * 而不是报错。用例第一次跑就抓到了这条。
+     */
+    const priorExecutions = this.#ledger.latestPerNode(traceid);
     this.#queue.setState(input.id, "CLAIMED");
 
     const record: ExecutionRecord = Object.freeze({
@@ -634,6 +642,8 @@ export class Runtime implements Snapshotable {
       traceid,
       nodeId,
       agentSpec: node.agent ?? {},
+      // 派生，不是记账 —— 见 ExecutionLedger.latestPerNode
+      priorExecutions,
       vars: compiled.vars,
       outputContract: { allowedEmitPorts: allowedEmitPorts(node.ports) },
       limits,

@@ -87,6 +87,17 @@ export interface ExecutionRequest {
   readonly traceid: TraceId;
   readonly nodeId: string;
   readonly agentSpec: JsonObject;
+  /**
+   * 本实例各节点**最近一次**执行的 id（节点名 → executionId）。
+   *
+   * 执行面用它定位上游那次执行留下的东西 —— 目前唯一的用途是工作区交接
+   * （`workspace.from`）。为什么给全表而不是给"上游那一个"：`agentSpec` 对
+   * 内核是不透明的（§17.7 之后），内核**看不懂** `workspace.from` 写的是谁，
+   * 所以挑人这一步只能由执行面自己做。表的规模是节点数，模板里静态且很小。
+   *
+   * 内核这边是纯派生（`ExecutionLedger.latestPerNode`），没有新账。
+   */
+  readonly priorExecutions: Readonly<Record<string, string>>;
   /** 编译好的调用上下文 —— bind 段 + 端口 servo 提出的变量。 */
   readonly vars: Readonly<Record<string, Json>>;
   readonly outputContract: OutputContract;

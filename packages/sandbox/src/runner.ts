@@ -76,6 +76,19 @@ export interface Runner {
    * 不给就还是随机名。
    */
   allocate(id?: string): string;
+
+  /**
+   * 同一个 id 对应的沙箱根 —— **纯函数，不建也不清**。
+   *
+   * `allocate(id)` 的确定性上面已经写着（"沙箱因此可被再次找到"），但一直
+   * 没有非破坏的入口：想知道某个 id 的沙箱在哪，只能调 `allocate`，而它会
+   * 先把那个目录清空。于是"再次找到"这句话在代码里没有对应的动作，
+   * 需要它的地方（工作区交接）只好自己另记一本账。
+   *
+   * 把纯的那一半单独露出来，`allocate` = `locate` + 清空建目录。
+   */
+  locate(id: string): string;
+
   release(hostRoot: string): void;
 
   /** 跑 agent：带超时与取消。 */
@@ -218,7 +231,11 @@ export class LocalRunner implements Runner {
 
   allocate(id?: string): string {
     if (id === undefined) return mkdtempSync(this.#prefix);
-    return freshDir(`${this.#prefix}${safeId(id)}`);
+    return freshDir(this.locate(id));
+  }
+
+  locate(id: string): string {
+    return `${this.#prefix}${safeId(id)}`;
   }
 
   release(hostRoot: string): void {

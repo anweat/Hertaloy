@@ -100,9 +100,12 @@ export class DockerRunner implements Runner {
     this.#docker = options.docker ?? "docker";
   }
 
+  locate(id: string): string {
+    return `${this.#prefix}${safeId(id)}`;
+  }
+
   allocate(id?: string): string {
-    const host =
-      id === undefined ? mkdtempSync(this.#prefix) : freshDir(`${this.#prefix}${safeId(id)}`);
+    const host = id === undefined ? mkdtempSync(this.#prefix) : freshDir(this.locate(id));
     this.#mounts.set(slash(host), `${INNER_ROOT}/${basename(host)}`);
     if (this.network === "internal") {
       ensureInternalNetwork(this.#networkName, (argv) => this.#cli(argv));

@@ -139,6 +139,32 @@ export class ExecutionLedger implements Snapshotable {
   }
 
   /**
+   * 某实例各节点**最近一次**执行的 id —— 从已落盘的记录派生。
+   *
+   * 执行面要靠它找到上游留下的东西（目前只有一处用途：工作区交接
+   * `workspace.from`）。此前那份对应关系记在 backend 进程内的一张 Map 里，
+   * 而**权威一直就在这儿**：`records` 跨进程还在，那张 Map 换个进程就空了 ——
+   * 于是 `workspace.from` 在重启后必然失败，报错还把归因指向"上游没跑"
+   * 和"沙箱被回收"，两个都不是真因。第二拷贝活得比权威短，就是这个下场。
+   *
+   * **VOIDED 不算**：那个状态的意思正是"这次不算数，结果被栅栏丢掉了"。
+   * 从它那儿接过工作树，等于把内核判定不算数的活儿传给下游。
+   * （旧的那张 Map 是"最后写的赢"，包括后来被作废的那次 —— 这是一处
+   * 有意的行为改变。）
+   *
+   * 后写的覆盖先写的：`#records` 是插入序，而 id 由本类单调发放。
+   */
+  latestPerNode(traceid: TraceId): Readonly<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const r of this.#records.values()) {
+      if (r.traceid !== traceid) continue;
+      if (r.status === "VOIDED") continue;
+      out[r.nodeId] = r.executionId;
+    }
+    return Object.freeze(out);
+  }
+
+  /**
    * 孤儿：记录还是 `RUNNING`，而**本进程没在驱动它**。
    *
    * 判定同时读两种寿命的东西，这正是它们放在一个类里的理由。

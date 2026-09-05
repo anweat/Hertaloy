@@ -63,9 +63,18 @@ export class WslRunner implements Runner {
     return this.#distro;
   }
 
+  #innerBox(suffix: string): string {
+    return `${this.#innerRoot}/hertaloy-box-${suffix}`;
+  }
+
+  locate(id: string): string {
+    return toHostPath(this.#innerBox(safeId(id)), this.#distro);
+  }
+
   allocate(id?: string): string {
-    const suffix = id === undefined ? Math.random().toString(36).slice(2, 10) : safeId(id);
-    const inner = `${this.#innerRoot}/hertaloy-box-${suffix}`;
+    const inner = this.#innerBox(
+      id === undefined ? Math.random().toString(36).slice(2, 10) : safeId(id),
+    );
     // 与 local/docker 同一条规则：确定性路径先清空再用
     this.#wsl(["rm", "-rf", inner]);
     this.#wsl(["mkdir", "-p", inner]);

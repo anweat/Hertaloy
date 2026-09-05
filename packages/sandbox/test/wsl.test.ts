@@ -85,6 +85,7 @@ describe.skipIf(!HAS_WSL)("真跑 WSL", () => {
       executionId: "exec-wsl",
       traceid: "job-1",
       nodeId: "w",
+      priorExecutions: {},
       agentSpec: {
         argv: [
           "sh",
@@ -114,6 +115,7 @@ describe.skipIf(!HAS_WSL)("真跑 WSL", () => {
       executionId: "exec-timeout",
       traceid: "job-1",
       nodeId: "w",
+      priorExecutions: {},
       agentSpec: { argv: ["sleep", "120"] } as never,
       vars: {},
       outputContract: { allowedEmitPorts: ["out"] },

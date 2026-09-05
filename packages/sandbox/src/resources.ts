@@ -84,7 +84,8 @@ export function inheritWorkspace(
   if (!existsSync(upstreamWorkspace)) {
     throw new ResourceError(
       `接不到上游节点 \`${fromNode}\` 的工作区：${upstreamWorkspace} 不存在。` +
-        "可能是它还没跑、或者沙箱已被回收（hertaloy reclaim）。",
+        "它跑过（有执行记录），但沙箱目录没了 —— 多半是被回收（hertaloy reclaim）、" +
+        "或者这个进程配的 workRoot 与跑它时的不是同一个。",
     );
   }
   cpSync(upstreamWorkspace, targetDir, { recursive: true, dereference: false });
