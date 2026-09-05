@@ -24,7 +24,14 @@ const coderSpec = {
           direction: "receive",
           servo: { vars: { task: { type: "short", from: "$.task" } } },
         },
-        ask: { direction: "emit", alias: "skill.discovery", callback: "got" },
+        ask: {
+          direction: "emit",
+          alias: "skill.discovery",
+          callback: "got",
+          // 形状照着**自己** got 端口的 servo 写（$.skill），不是照着服务方写 ——
+          // 注册期会当场校验这一点
+          unavailable: { skill: "（技能发现服务不可用）" },
+        },
         got: {
           direction: "receive",
           servo: { vars: { skill: { type: "long", from: "$.skill", max_tokens: 200 } } },

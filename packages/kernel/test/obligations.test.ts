@@ -25,7 +25,7 @@ const askerSpec = {
       handler: "ask",
       ports: {
         start: { direction: "receive", servo: { vars: { q: { type: "short", from: "$.q" } } } },
-        ask: { direction: "emit", alias: "skill.discovery", callback: "got" },
+        ask: { direction: "emit", alias: "skill.discovery", callback: "got", unavailable: { a: "（服务不可用）" } },
         got: { direction: "receive", servo: { vars: { a: { type: "short", from: "$.a" } } } },
       },
     },
@@ -212,13 +212,15 @@ describe("服务方死亡：了结走正常回复路径", () => {
 
     const notice = rt.messages().find((m) => m.state === "QUEUED");
     expect(notice?.target).toEqual({ traceid: "job-1/coder-1", node: "worker", port: "got" });
-    expect(notice?.payload).toEqual({
-      status: "UNAVAILABLE",
-      service: "job-1/discovery",
-      reason: "服务方挂了",
-    });
+    // 载荷是**请求方自己声明的**那份，不是内核自造的形状 —— 内核造的过不了
+    // 请求方 callback 端口的 servo，会在提取那一步被拒（handler 根本不会被叫醒）
+    expect(notice?.payload).toEqual({ a: "（服务不可用）" });
     // 来源是服务方实例本身，不是它某个节点的 emit
     expect(notice?.source).toEqual({ traceid: "job-1/discovery" });
+
+    // ★ 而且吃得下：消费它，handler 跑起来，消息进 CONSUMED 而不是 FAILED
+    expect(rt.step()).not.toBeNull();
+    expect(rt.messages().find((m) => m.target.port === "got")?.state).toBe("CONSUMED");
   });
 
   it("请求方已经不在了就不投递 —— 不给死实例塞消息", () => {

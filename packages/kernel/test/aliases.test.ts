@@ -36,7 +36,12 @@ function emitterSpec(alias: string, callback?: string): unknown {
         handler: "emit",
         ports: {
           start: { direction: "receive", servo: { vars: { q: { type: "short", from: "$.q" } } } },
-          out: { direction: "emit", alias, ...(callback === undefined ? {} : { callback }) },
+          out: {
+            direction: "emit",
+            alias,
+            // REQUEST 必须声明「等不到回复时当作收到什么」—— 见 port.ts
+            ...(callback === undefined ? {} : { callback, unavailable: {} }),
+          },
           ...(callback === undefined ? {} : { [callback]: { direction: "receive" } }),
         },
       },

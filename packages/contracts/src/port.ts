@@ -10,6 +10,7 @@
 
 import { z } from "zod";
 import { AliasName, Ref } from "./identity.js";
+import { Json } from "./json.js";
 import { PortVar, VarName } from "./variable.js";
 
 export const PORT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -66,6 +67,29 @@ const EmitPortShape = z
     /** 回复落回的**本节点**端口名 —— callback 只回已声明端点（不变量 M3）。 */
     callback: PortName.optional(),
     reply: z.literal(true).optional(),
+    /**
+     * **等不到回复时，当作收到了这个** —— 只对 REQUEST（`alias` + `callback`）
+     * 有意义，且**必填**。
+     *
+     * 服务方永久失败（重试耗尽 / 预算耗尽 / 被截断）时，请求方在等一个
+     * 永远不会来的回复。内核会代投一条，但**形状不能由内核定**：callback
+     * 端口的 servo 是照着回复的形状写的，内核自造一个 `{status, service, reason}`
+     * 投过去，会在变量提取那一步就被拒（实测：`路径 $.a 取不到值`），
+     * 消息进 FAILED，请求方的 handler **根本没被叫醒** —— 通知发了等于没发。
+     *
+     * ## 为什么写在请求方这边，不写在服务方的 reply 端口上
+     *
+     * 一个服务方会被**多个**请求方调用，而它们的 callback servo 各不相同。
+     * 服务方声明一份默认回复满足不了所有人 —— 那只在"恰好一个请求方"时成立。
+     *
+     * 写在这边还买到一样：**注册期本地就能校验**。载荷要过的是本节点
+     * `callback` 端口的契约与 servo，两者都在同一个模板里，不必去读服务方的
+     * 定义（租户纪律：派生只许读本地持有的事实）。
+     *
+     * **必填**，照"显式表态"的先例：不写不是"我不需要"，是"我忘了"，
+     * 而这两者不该长得一样 —— 别名时代根必须显式接线，同一条理由。
+     */
+    unavailable: Json.optional(),
   })
   .strict();
 
@@ -74,6 +98,7 @@ function checkGatewayMode(
     readonly alias?: unknown;
     readonly callback?: unknown;
     readonly reply?: unknown;
+    readonly unavailable?: unknown;
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -88,6 +113,23 @@ function checkGatewayMode(
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "声明了 `callback` 就必须声明 `alias` —— 回复落点只对 REQUEST 有意义",
+    });
+  }
+  if (v.unavailable !== undefined && v.callback === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["unavailable"],
+      message: "`unavailable` 只对 REQUEST（`alias` + `callback`）有意义 —— 它是等不到回复时的替代",
+    });
+  }
+  if (v.callback !== undefined && v.unavailable === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["unavailable"],
+      message:
+        "声明了 `callback` 就必须声明 `unavailable`：服务方永久失败时你在等一个" +
+        "永远不会来的回复。内核代投的通知形状过不了你自己 callback 端口的 servo，" +
+        "会在提取那一步被拒 —— handler 根本不会被叫醒。写清楚等不到时当作收到什么",
     });
   }
 }

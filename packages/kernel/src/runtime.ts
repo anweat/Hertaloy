@@ -1493,7 +1493,7 @@ export class Runtime implements Snapshotable {
    * 载荷一律是协议级通知，不带内容：内容在资产里，收信方自己去取
    * （C5，`#notifyParent` 那条注释里的"消息降级成通知"）。
    */
-  #signal(target: Endpoint, payload: JsonObject, from: TraceId): void {
+  #signal(target: Endpoint, payload: Json, from: TraceId): void {
     this.#queue.enqueue({ target, payload, source: { traceid: from } });
   }
 
@@ -1513,9 +1513,20 @@ export class Runtime implements Snapshotable {
     this.#pending.delete(requestId);
     if (!this.#registry.has(req.requester)) return;
     if (this.#registry.get(req.requester).status !== "OPEN") return;
+    /**
+     * 投**请求方自己声明的**那份载荷，不是内核自造的形状。
+     *
+     * 内核造过一个 `{status, service, reason}`，而 callback 端口的 servo 是
+     * 照着回复的形状写的 —— 那条通知会在变量提取那一步被拒，消息进 FAILED，
+     * 请求方的 handler 根本没被叫醒。**通知发了等于没发。**
+     *
+     * `source` 仍然是实例（没有 node）：确实没有节点跑过，这条是内核代投的。
+     * 想知道"这是不是真回复"，看的是 source 与消息记录，不是往载荷里塞标记 ——
+     * 那会让载荷时有时无一个字段，正是 servo 受不了的那种形状。
+     */
     this.#signal(
       { traceid: req.requester, node: req.node, port: req.callbackPort },
-      { status: "UNAVAILABLE", service, reason },
+      req.unavailable,
       service,
     );
   }

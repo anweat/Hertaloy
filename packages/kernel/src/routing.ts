@@ -36,6 +36,14 @@ export interface StagedMessage {
 
 export interface StagedRequest {
   readonly requestId: string;
+  /**
+   * 请求方声明的「等不到回复时当作收到什么」。
+   *
+   * 形状归**请求方**：一个服务方会被多个请求方调用，而它们的 callback servo
+   * 各不相同，服务方声明一份满足不了所有人。写在请求方这边，注册期本地就能
+   * 校验它过得了自己 callback 端口的契约与 servo。
+   */
+  readonly unavailable: Json;
   readonly requester: TraceId;
   readonly node: string;
   readonly callbackPort: string;
@@ -200,6 +208,9 @@ export function stageOutputs(
         callbackPort: port.callback,
         generation: ctx.generation,
         waitingOn: (targets[0] as Endpoint).traceid,
+        // 「等不到回复时当作收到什么」—— 排期时就钉死，与 C4 的 pin 同一条理由：
+        // 了结发生在很久以后，那时再去读模板可能已经不是同一份定义了
+        unavailable: structuredClone(port.unavailable) as Json,
       });
       messages.push({
         target: targets[0] as Endpoint,

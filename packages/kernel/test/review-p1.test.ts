@@ -150,7 +150,7 @@ describe("P1-4 REQUEST 锁必须记 waitingOn，否则服务方死亡时请求�
         handler: "ask",
         ports: {
           start: { direction: "receive", servo: { vars: { q: { type: "short", from: "$.q" } } } },
-          ask: { direction: "emit", alias: "t.disc", callback: "got" },
+          ask: { direction: "emit", alias: "t.disc", callback: "got", unavailable: { a: "（服务不可用）" } },
           got: { direction: "receive" },
         },
       },

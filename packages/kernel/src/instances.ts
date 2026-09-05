@@ -22,14 +22,19 @@ import {
   type TemplateIssue,
   applyOverlay,
   isOverlay,
+  type Json,
   type JsonObject,
+  type Port,
   type Ref,
   type TraceId,
   TRACE_SEGMENT_PATTERN,
   childTrace,
   isDescendantOf,
+  formatContractIssues,
   validateContainerTemplate,
+  validateContract,
 } from "@nodeflow/contracts";
+import { extractPortVars, formatExtractionFailures } from "./extract.js";
 import { InvariantError, invariant } from "./errors.js";
 import { ObjectStore } from "./store.js";
 import type { Snapshotable } from "./tx.js";
@@ -323,6 +328,7 @@ export function registerContainerTemplate(
     ...validateContainerTemplate(parsed.data),
     ...validateChildEntries(store, parsed.data),
     ...validateContractRefs(store, parsed.data),
+    ...validateSignalPayloads(store, parsed.data),
     /**
      * 别名的注册期判定（`aliases.ts`）。跨模板的那半与 `validateChildEntries`
      * 同一个时机、同一条路 —— 父注册时它已经持有子模板的 ref。
@@ -462,6 +468,84 @@ function materializeOverlay(store: ObjectStore, templateId: string, spec: unknow
  * **按标签判断能力**会既冤枉对的、又放过错的（kind 对而正文是垃圾的照样过）。
  * `MessageContract` 是 `.strict()` 的，容器模板正文一解析就炸，正好挡住那条。
  */
+/**
+ * `unavailable` 必须真的**吃得下** —— 注册期就判定。
+ *
+ * 声明"等不到回复时当作收到这个"只是一半；另一半是它得过得了自己 callback
+ * 端口的两道关：**契约**与 **servo 提取**。过不了就是运行期一条 FAILED 消息，
+ * 而请求方的 handler 根本不会被叫醒 —— 通知发了等于没发，而且**没有任何
+ * 红灯**：发送侧绿的，接收侧绿的，中间没人走。
+ *
+ * 这两道关的输入在同一个模板里（callback 端口是**本节点**的，M3 已保证），
+ * 所以不必读服务方的定义 —— 租户纪律不破。
+ *
+ * 顺带把子终止通知那条也一起判了：`children[slot].exit` 收的是内核造的
+ * 固定形状 `{slot, traceid, status}`，此前**没有任何东西保证它对得上**，
+ * 能通纯属模板作者猜对了字段名。
+ */
+function validateSignalPayloads(
+  store: ObjectStore,
+  tpl: ContainerTemplate,
+): readonly TemplateIssue[] {
+  const issues: TemplateIssue[] = [];
+
+  const fits = (port: Port, payload: Json, where: string, what: string): void => {
+    if (port.direction !== "receive") return;
+    if (port.contract !== undefined) {
+      try {
+        const schema = store.resolve(port.contract).body as unknown as MessageContract;
+        const bad = validateContract(schema, payload);
+        if (bad.length > 0) {
+          issues.push({ where, message: `${what}过不了该端口的契约：${formatContractIssues(bad)}` });
+          return;
+        }
+      } catch {
+        // 契约引用本身有问题，validateContractRefs 会报，这里不重复
+        return;
+      }
+    }
+    const extracted = extractPortVars(port, payload);
+    if (!extracted.ok) {
+      issues.push({
+        where,
+        message:
+          `${what}过不了该端口的 servo：${formatExtractionFailures(extracted.failures)}。` +
+          "运行期这会让消息直接进 FAILED，而 handler 根本不会被叫醒",
+      });
+    }
+  };
+
+  for (const [nodeId, node] of Object.entries(tpl.nodes)) {
+    for (const [portName, port] of Object.entries(node.ports)) {
+      if (port.direction !== "emit" || port.callback === undefined) continue;
+      const target = node.ports[port.callback];
+      // callback 落点存不存在由 validateContainerTemplate 判（M3），这里只管形状
+      if (target === undefined) continue;
+      fits(
+        target,
+        port.unavailable as Json,
+        `nodes.${nodeId}.ports.${portName}.unavailable`,
+        "声明的 `unavailable` 载荷",
+      );
+    }
+  }
+
+  // 子终止通知：内核造的固定形状，落在父声明的 exit 端点上
+  for (const [slot, child] of Object.entries(tpl.children)) {
+    if (child.exit === undefined) continue;
+    const port = tpl.nodes[child.exit.node]?.ports[child.exit.port];
+    if (port === undefined) continue; // 端点存在性由别处判
+    fits(
+      port,
+      { slot, traceid: `${slot}-示例`, status: "TERMINAL" },
+      `children.${slot}.exit`,
+      "子实例终止通知（内核形状 `{slot, traceid, status}`）",
+    );
+  }
+
+  return issues;
+}
+
 function validateContractRefs(
   store: ObjectStore,
   tpl: ContainerTemplate,

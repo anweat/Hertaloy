@@ -12,7 +12,7 @@ const askerSpec = {
       handler: "ask",
       ports: {
         start: { direction: "receive", servo: { vars: { q: { type: "short", from: "$.q" } } } },
-        ask: { direction: "emit", alias: "skill.discovery", callback: "got" },
+        ask: { direction: "emit", alias: "skill.discovery", callback: "got", unavailable: { a: "（服务不可用）" } },
         got: { direction: "receive", servo: { vars: { a: { type: "short", from: "$.a" } } } },
         report: { direction: "emit", alias: "progress" },
       },
@@ -446,7 +446,12 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
       async cancel() {},
     };
     const runtime = new Runtime(s, r, { backend, maxAttempts });
-    runtime.registerHandler("ask", (vars) => ({ ask: { q: vars.q ?? null } }));
+    const woken: { port: string; vars: Record<string, unknown> }[] = [];
+    runtime.registerHandler("ask", (vars, ctx) => {
+      woken.push({ port: ctx.port, vars: { ...vars } });
+      return ctx.port === "got" ? {} : { ask: { q: vars.q ?? null } };
+    });
+    (runtime as unknown as { woken: typeof woken }).woken = woken;
     runtime.registerHandler("noop", () => ({}));
 
     runtime.spawn("job-1", "askers", "coder-1");
@@ -466,13 +471,37 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
     expect(dead).toHaveLength(1);
   });
 
-  it("★ 请求方的 callback 收到了了结通知 —— 与截断同例", async () => {
+  /**
+   * ★ 这条测的是**路**，不是账。
+   *
+   * 上一版只断言"通知投出来了"，而它其实吃不下：callback 端口的 servo 照着
+   * 回复的形状写（`$.a`），内核自造的 `{status, service, reason}` 在变量提取
+   * 那一步就被拒，消息进 FAILED，**handler 根本没被叫醒**。两端各自都绿、
+   * 中间没人走 —— 而那一版是绿的。
+   *
+   * 所以现在断言的是"请求方的 handler 真的跑了，并拿到了自己声明的那份"。
+   */
+  it("★ 请求方的 handler 真的被叫醒，拿到自己声明的 unavailable", async () => {
     const runtime = await runToFailure();
+    const woken = (runtime as unknown as { woken: { port: string; vars: Record<string, unknown> }[] })
+      .woken;
+
+    // 通知投出来了
     const inbox = runtime
       .messages()
       .filter((m) => m.target.traceid === "job-1/coder-1" && m.target.port === "got");
     expect(inbox).toHaveLength(1);
-    expect(inbox[0]?.payload).toMatchObject({ status: "UNAVAILABLE" });
+    expect(inbox[0]?.payload).toEqual({ a: "（服务不可用）" });
+
+    // ★ 而且吃得下 —— 消费它，handler 跑起来，servo 提得出变量
+    const out = runtime.step();
+    expect(out).not.toBeNull();
+    expect(woken.map((w) => w.port)).toEqual(["start", "got"]);
+    expect(woken[1]?.vars).toEqual({ a: "（服务不可用）" });
+    // 消息进的是 CONSUMED，不是 FAILED
+    expect(
+      runtime.messages().find((m) => m.target.port === "got")?.state,
+    ).toBe("CONSUMED");
   });
 
   it("★ 请求方因此不再永远欠着一条请求", async () => {
@@ -492,7 +521,10 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
       .messages()
       .filter((m) => m.target.traceid === "job-1/coder-1" && m.target.port === "got");
     expect(inbox).toHaveLength(1);
-    expect(inbox[0]?.payload).toMatchObject({ status: "UNAVAILABLE" });
+    expect(inbox[0]?.payload).toEqual({ a: "（服务不可用）" });
+    // 同样要吃得下
+    expect(runtime.step()).not.toBeNull();
+    expect(runtime.messages().find((m) => m.target.port === "got")?.state).toBe("CONSUMED");
     expect(runtime.obligations("job-1/coder-1").map((o) => o.kind)).not.toContain("request");
   });
 
@@ -512,5 +544,116 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
     // maxAttempts 3、只跑了一步 → 消息回到 QUEUED，请求方不该收到任何东西
     expect(inbox).toHaveLength(0);
     expect(runtime.obligations("job-1/coder-1").map((o) => o.kind)).toContain("request");
+  });
+});
+
+/**
+ * ★ 注册期就判定"信号吃不吃得下"。
+ *
+ * 声明"等不到回复时当作收到这个"只是一半；另一半是它得过得了自己 callback
+ * 端口的**契约**与 **servo**。过不了的后果是运行期一条 FAILED 消息，而请求方的
+ * handler 根本不会被叫醒 —— 通知发了等于没发，**而且没有任何红灯**：
+ * 发送侧绿的，接收侧绿的，中间没人走。
+ *
+ * 这一组就是那盏红灯，而且亮在注册期，不是等到某次真失败才发现。
+ */
+describe("★ 信号载荷的注册期校验", () => {
+  const askerWith = (unavailable: unknown) => ({
+    nodes: {
+      worker: {
+        kind: "handler",
+        handler: "ask",
+        ports: {
+          start: { direction: "receive", servo: { vars: {} } },
+          ask: { direction: "emit", alias: "svc", callback: "got", unavailable },
+          got: {
+            direction: "receive",
+            servo: { vars: { a: { type: "short", from: "$.a" } } },
+          },
+        },
+      },
+    },
+    edges: {},
+    children: {},
+  });
+
+  it("形状对得上 → 通过", () => {
+    const s = new ObjectStore();
+    expect(() => registerContainerTemplate(s, "ok", askerWith({ a: "占位" }))).not.toThrow();
+  });
+
+  it("★ 形状对不上 → 注册期就拒，并说清是 servo 那一关", () => {
+    const s = new ObjectStore();
+    expect(() => registerContainerTemplate(s, "bad", askerWith({ status: "没了" }))).toThrow(
+      /unavailable.*servo.*路径 \$\.a/s,
+    );
+  });
+
+  it("★ 不声明 → 注册期就拒（「我不需要」与「我忘了」不该长得一样）", () => {
+    const s = new ObjectStore();
+    const spec = askerWith(undefined) as { nodes: Record<string, { ports: Record<string, Record<string, unknown>> }> };
+    delete spec.nodes.worker!.ports.ask!.unavailable;
+    expect(() => registerContainerTemplate(s, "missing", spec)).toThrow(/必须声明 `unavailable`/);
+  });
+
+  /**
+   * 子终止通知是**内核造的固定形状** `{slot, traceid, status}`。此前没有任何
+   * 东西保证父的 exit 端点对得上 —— 现有用例能通纯属模板作者猜对了字段名
+   * （`fanout-merge` 里那个 servo 恰好提 `$.slot`）。
+   */
+  it("★ exit 端点的 servo 提不到内核形状里的字段 → 注册期就拒", () => {
+    const s = new ObjectStore();
+    const child = registerContainerTemplate(s, "child", {
+      nodes: { w: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } } },
+      edges: {},
+      children: {},
+    });
+    const parent = {
+      nodes: {
+        merge: {
+          kind: "handler",
+          handler: "noop",
+          ports: {
+            done: {
+              direction: "receive",
+              // 内核投的是 {slot, traceid, status}，这里却提 $.result
+              servo: { vars: { result: { type: "short", from: "$.result" } } },
+            },
+          },
+        },
+      },
+      edges: {},
+      children: { kids: { template: child, exit: { node: "merge", port: "done" } } },
+    };
+    expect(() => registerContainerTemplate(s, "parent", parent)).toThrow(
+      /children\.kids\.exit.*servo.*路径 \$\.result/s,
+    );
+  });
+
+  it("exit 端点提得到就通过", () => {
+    const s = new ObjectStore();
+    const child = registerContainerTemplate(s, "child2", {
+      nodes: { w: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } } },
+      edges: {},
+      children: {},
+    });
+    expect(() =>
+      registerContainerTemplate(s, "parent2", {
+        nodes: {
+          merge: {
+            kind: "handler",
+            handler: "noop",
+            ports: {
+              done: {
+                direction: "receive",
+                servo: { vars: { slot: { type: "short", from: "$.slot" } } },
+              },
+            },
+          },
+        },
+        edges: {},
+        children: { kids: { template: child, exit: { node: "merge", port: "done" } } },
+      }),
+    ).not.toThrow();
   });
 });
