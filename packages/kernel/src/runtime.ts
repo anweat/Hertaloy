@@ -856,7 +856,7 @@ export class Runtime implements Snapshotable {
     });
 
     if (NON_RETRYABLE.includes(termination)) {
-      this.#queue.setState(input.id, "DISCARDED", reason);
+      this.#terminateMessage(input, "DISCARDED", reason);
       return {
         consumed: input.id,
         traceid: record.traceid,
@@ -879,7 +879,7 @@ export class Runtime implements Snapshotable {
         retrying: true,
       };
     }
-    this.#queue.replace(input.id, { state: "FAILED", attempts, failure: reason });
+    this.#terminateMessage(input, "FAILED", reason, attempts);
     return {
       consumed: input.id,
       traceid: record.traceid,
@@ -972,12 +972,11 @@ export class Runtime implements Snapshotable {
     const exit = this.#registry.template(parentTrace).children[child.slot]?.exit;
     if (exit === undefined) return;
 
-    this.#queue.enqueue({
-      target: { traceid: parentTrace, node: exit.node, port: exit.port },
-      payload: { slot: child.slot, traceid: child.traceid, status: "TERMINAL" },
-      // 来源是子**实例**，不是某个节点的 emit —— 所以只有 traceid
-      source: { traceid: child.traceid },
-    });
+    this.#signal(
+      { traceid: parentTrace, node: exit.node, port: exit.port },
+      { slot: child.slot, traceid: child.traceid, status: "TERMINAL" },
+      child.traceid,
+    );
   }
 
   /**
@@ -1097,15 +1096,7 @@ export class Runtime implements Snapshotable {
      */
     for (const [requestId, req] of [...this.#pending]) {
       if (req.waitingOn !== trace) continue;
-      this.#pending.delete(requestId);
-      if (!this.#registry.has(req.requester)) continue;
-      if (this.#registry.get(req.requester).status !== "OPEN") continue;
-      this.#queue.enqueue({
-        target: { traceid: req.requester, node: req.node, port: req.callbackPort },
-        payload: { status: "UNAVAILABLE", service: trace, reason },
-        // 来源是服务方**实例**，不是它某个节点的 emit —— 与终止通知同例
-        source: { traceid: trace },
-      });
+      this.#settleRequest(requestId, trace, reason);
     }
 
     // 5. 子实例级联
@@ -1487,6 +1478,76 @@ export class Runtime implements Snapshotable {
     return issues.length === 0 ? null : formatContractIssues(issues);
   }
 
+  /**
+   * 内核自己发的**信号** —— 唯一入口。
+   *
+   * 信号与数据流的分界早就是结构性的（见 `MessageSource` 的注释）：
+   *
+   *     {traceid, node, port}   某节点的 emit 端口发出   → 数据流，走边
+   *     {traceid}               实例自身的生命周期通知   → 信号
+   *
+   * 但此前没有对应的动作 —— 两处信号各自手写 `source: { traceid }`，
+   * 而"别忘了不写 node"只靠注释提醒。收成一处之后这条由**签名**保证：
+   * 调用方给的是实例，写不出 node 来。
+   *
+   * 载荷一律是协议级通知，不带内容：内容在资产里，收信方自己去取
+   * （C5，`#notifyParent` 那条注释里的"消息降级成通知"）。
+   */
+  #signal(target: Endpoint, payload: JsonObject, from: TraceId): void {
+    this.#queue.enqueue({ target, payload, source: { traceid: from } });
+  }
+
+  /**
+   * 了结一条请求，并**告诉请求方**。
+   *
+   * 请求方已经消费掉自己的输入、发出了请求，然后在等回复。没有这一步，
+   * 它就永远等下去：`#pending` 里那条记录是它的义务，而义务不空就不能终止。
+   * 静默放弃比报错更难查 —— 两端各自都绿，中间没人走。
+   *
+   * 走的是**正常回复路径**：请求方的 callback 端口照常收到一条消息，
+   * handler 自己决定重试、降级还是失败。
+   */
+  #settleRequest(requestId: string, service: TraceId, reason: string): void {
+    const req = this.#pending.get(requestId);
+    if (req === undefined) return;
+    this.#pending.delete(requestId);
+    if (!this.#registry.has(req.requester)) return;
+    if (this.#registry.get(req.requester).status !== "OPEN") return;
+    this.#signal(
+      { traceid: req.requester, node: req.node, port: req.callbackPort },
+      { status: "UNAVAILABLE", service, reason },
+      service,
+    );
+  }
+
+  /**
+   * 把一条消息送进终态 —— **并了结它所服务的请求**。
+   *
+   * 这两件事必须绑在一起，因为它们是同一条不变量的两半：
+   *
+   *   **一条请求的义务，要么等到回复，要么等到服务它的那条消息死掉。**
+   *
+   * 此前消息进终态有三个出口（校验失败 → FAILED、不可重试 → DISCARDED、
+   * 重试耗尽 → FAILED），**三个都只改消息状态**。于是服务方永久失败时，
+   * 请求方什么都收不到，而且永远欠着一条 request 义务 —— 用例已经复现：
+   * `expected [] to have a length of 1`、`expected ['request'] to not include 'request'`。
+   *
+   * 截断那条路早就修好了（代服务方发一条 UNAVAILABLE 通知），但**只修了截断**。
+   * 收成一处，第二次不会发生。
+   */
+  #terminateMessage(
+    input: Message,
+    state: "FAILED" | "DISCARDED",
+    reason: string,
+    attempts?: number,
+  ): void {
+    if (attempts === undefined) this.#queue.setState(input.id, state, reason);
+    else this.#queue.replace(input.id, { state, attempts, failure: reason });
+    if (input.requestId !== undefined) {
+      this.#settleRequest(input.requestId, input.target.traceid, reason);
+    }
+  }
+
   #fail(input: Message, reason: string): StepFailure {
     this.#failMessage(input, reason);
     return {
@@ -1498,7 +1559,7 @@ export class Runtime implements Snapshotable {
   }
 
   #failMessage(input: Message, reason: string): void {
-    this.#queue.setState(input.id, "FAILED", reason);
+    this.#terminateMessage(input, "FAILED", reason);
   }
 
   #resolvePort(target: Endpoint, where: string): Port {

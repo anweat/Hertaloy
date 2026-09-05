@@ -351,4 +351,166 @@ describe("死锁检测只报警不裁决", () => {
     ]);
     expect(cycles).toEqual([]);
   });
+
+  /**
+   * ★ 死锁**不发信号** —— 这是决定，不是遗漏。
+   *
+   * 服务方失败、服务方被截断、子实例进终态，三样都发信号，因为它们都有一个
+   * **确定的收信人**和一个确定的事实（"这条请求不会有回复了"）。死锁没有：
+   *
+   *   1. A 等 B、B 等 A，**通知谁？**通知任一方等于替它决定"你先放弃" ——
+   *      而哪边放弃更便宜，内核不知道，那是策略。
+   *   2. 更要紧的是：自动通知会**把环解开**。环几乎一定是图写错了，
+   *      自动恢复等于把一个建模错误悄悄抹平，下次还犯。
+   *
+   * 所以分工是：**内核检测，主体决定**。`hertaloy status` 把环报给人，
+   * 人调 `truncate` —— 而 truncate 是发信号的，等待方照常收到 UNAVAILABLE。
+   * 信号仍然只从"有确定收信人的事实"里产生。
+   *
+   * 这条用例钉的是这个决定本身。谁哪天想"顺手补上死锁通知"，先来改这段注释。
+   */
+  it("★ 检测到环也不往图里投消息 —— 内核检测，主体决定", () => {
+    setupPair();
+    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "在吗" });
+    // 只推一步：这个 fixture 的 ask handler 不看进来的端口，回复落回 got 会再发
+    // 一次请求 —— drain 在这儿不收敛（§6.4 那个坑），既有用例也都是逐步推的
+    rt.step();
+
+    const before = rt.messages().length;
+    // 反复问同一件事不产生任何消息 —— 它是纯查询
+    rt.locks.deadlocks();
+    rt.obligations();
+    expect(rt.messages()).toHaveLength(before);
+  });
+});
+
+/**
+ * ★ 服务方**永久失败**时，请求方会怎样？
+ *
+ * 截断那条路已经修好了：服务方被 truncate → 代它发一条 `UNAVAILABLE` 通知回
+ * 请求方的 callback，请求方 handler 自己决定重试还是降级。
+ *
+ * 但**失败**这条路没修 —— `#applyFailure` 耗尽重试后只把消息置 `FAILED`，
+ * 没有任何人被告知。这一组就是去问：请求方是不是就这么永远等下去。
+ */
+describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
+  /** 服务节点改成 agent，好让它走三段式的失败通道（同步 handler 抛异常是编程错误）。 */
+  const failingService = {
+    nodes: {
+      serve: {
+        kind: "handler",
+        agent: { argv: ["boom"] },
+        ports: {
+          inbox: { direction: "receive", servo: { vars: { q: { type: "short", from: "$.q" } } } },
+          answer: { direction: "emit", reply: true },
+        },
+      },
+    },
+    edges: {},
+    children: {},
+  };
+
+  async function runToFailure(
+    termination: "FAILED" | "BUDGET" = "FAILED",
+    maxAttempts = 1,
+  ): Promise<Runtime> {
+    const s = new ObjectStore();
+    const askerRef = registerContainerTemplate(s, "asker", askerSpec);
+    const serviceRef = registerContainerTemplate(s, "service", failingService);
+    const rootRef = registerContainerTemplate(
+      s,
+      "root",
+      {
+        nodes: {
+          sink: { kind: "handler", handler: "noop", ports: { in: { direction: "receive" } } },
+        },
+        edges: {},
+        children: { askers: { template: askerRef }, services: { template: serviceRef } },
+        bindings: [
+          { alias: "skill.discovery", slot: "services", node: "serve", port: "inbox" },
+          { alias: "progress", node: "sink", port: "in" },
+        ],
+      },
+      "root_config",
+    );
+    const r = new InstanceRegistry(s);
+    r.createRoot(rootRef, "job-1");
+    const backend = {
+      async run(req: { executionId: string }) {
+        return {
+          executionId: req.executionId,
+          emissions: {},
+          termination,
+        };
+      },
+      async cancel() {},
+    };
+    const runtime = new Runtime(s, r, { backend, maxAttempts });
+    runtime.registerHandler("ask", (vars) => ({ ask: { q: vars.q ?? null } }));
+    runtime.registerHandler("noop", () => ({}));
+
+    runtime.spawn("job-1", "askers", "coder-1");
+    runtime.spawn("job-1", "services", "discovery");
+    runtime.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "在吗" });
+    runtime.drain(); // 请求发出
+    // 只推一步：maxAttempts > 1 时消息会回到 QUEUED，drainAgents 会一直重试到耗尽
+    await runtime.stepAgent(); // 服务方失败
+    return runtime;
+  }
+
+  it("服务方的消息确实进了 FAILED（前提）", async () => {
+    const runtime = await runToFailure();
+    const dead = runtime
+      .messages()
+      .filter((m) => m.target.traceid === "job-1/discovery" && m.state === "FAILED");
+    expect(dead).toHaveLength(1);
+  });
+
+  it("★ 请求方的 callback 收到了了结通知 —— 与截断同例", async () => {
+    const runtime = await runToFailure();
+    const inbox = runtime
+      .messages()
+      .filter((m) => m.target.traceid === "job-1/coder-1" && m.target.port === "got");
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]?.payload).toMatchObject({ status: "UNAVAILABLE" });
+  });
+
+  it("★ 请求方因此不再永远欠着一条请求", async () => {
+    const runtime = await runToFailure();
+    const kinds = runtime.obligations("job-1/coder-1").map((o) => o.kind);
+    expect(kinds).not.toContain("request");
+  });
+
+  /**
+   * BUDGET / CANCELLED 走的是另一条出口（不可重试 → 消息 DISCARDED），
+   * 与"重试耗尽 → FAILED"是**两个分支**。分开写过一次的东西就会分开漏一次，
+   * 所以这条单独钉住：两个分支现在共用同一处终态处理。
+   */
+  it("★ 预算耗尽（不可重试的那条出口）同样告知请求方", async () => {
+    const runtime = await runToFailure("BUDGET");
+    const inbox = runtime
+      .messages()
+      .filter((m) => m.target.traceid === "job-1/coder-1" && m.target.port === "got");
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]?.payload).toMatchObject({ status: "UNAVAILABLE" });
+    expect(runtime.obligations("job-1/coder-1").map((o) => o.kind)).not.toContain("request");
+  });
+
+  /**
+   * ★ 重试**中**不发通知 —— 请求还活着。
+   *
+   * 这条是上面那条的反面。终态处理挂在"消息进终态"上，而重试分支并不进终态；
+   * 要是挂错地方（比如挂在 `#applyFailure` 入口），第一次失败就会给请求方
+   * 发一条 UNAVAILABLE，然后重试成功又发一条真回复 —— 请求方收到两条，
+   * 而 M3 说 callback 只该落一次。
+   */
+  it("★ 还在重试时不发通知 —— 请求还活着", async () => {
+    const runtime = await runToFailure("FAILED", 3);
+    const inbox = runtime
+      .messages()
+      .filter((m) => m.target.traceid === "job-1/coder-1" && m.target.port === "got");
+    // maxAttempts 3、只跑了一步 → 消息回到 QUEUED，请求方不该收到任何东西
+    expect(inbox).toHaveLength(0);
+    expect(runtime.obligations("job-1/coder-1").map((o) => o.kind)).toContain("request");
+  });
 });
