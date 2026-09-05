@@ -233,6 +233,21 @@ export interface RuntimeOptions {
   readonly scheduler?: Scheduler;
 }
 
+/**
+ * 入站校验的结果。**没有 StepFailure，只有 reason** —— 两条路径把同一个理由
+ * 包成各自的失败形状（同步是 `StepFailure`，三段式是 `{kind:"rejected"}`），
+ * 而这里不该知道调用方要哪一种。
+ */
+type PrepareOutcome =
+  | {
+      readonly ok: true;
+      /** 完整变量袋：bind 段 + 端口 servo。交给 handler / agent 的就是它。 */
+      readonly vars: VarBag;
+      /** 只从本条消息提取的那部分 —— StepResult 里报的是这个。 */
+      readonly portVars: VarBag;
+    }
+  | { readonly ok: false; readonly reason: string };
+
 type ClaimOutcome =
   | { readonly kind: "idle" }
   | { readonly kind: "rejected"; readonly failure: StepFailure }
@@ -578,21 +593,6 @@ export class Runtime implements Snapshotable {
     invariant(node !== undefined, `实例 ${traceid} 无节点 ${nodeId}`);
     const port = node.ports[input.target.port] as Port;
 
-    const inboundIssue = this.#checkContract(port, input.payload);
-    if (inboundIssue !== null) {
-      return { kind: "rejected", failure: this.#fail(input, `入站契约不符：${inboundIssue}`) };
-    }
-    const extraction = extractPortVars(port, input.payload);
-    if (!extraction.ok) {
-      return {
-        kind: "rejected",
-        failure: this.#fail(
-          input,
-          `变量提取失败：${formatExtractionFailures(extraction.failures)}`,
-        ),
-      };
-    }
-
     /**
      * **全部校验做完，才动任何状态。**
      *
@@ -602,15 +602,14 @@ export class Runtime implements Snapshotable {
      * `checkInvariants` 当场判自己违规（RUNNING 记录引用了一条 FAILED 消息）。
      *
      * 我曾在这里写过"外层 transact 会一并撤销"，那句话是错的。
-     * 与其修回滚，不如让**拒绝路径根本不产生要回滚的东西** ——
-     * 把 `compileContext` 提到 mutation 之前，问题就不存在了。
+     * 与其修回滚，不如让**拒绝路径根本不产生要回滚的东西**。
+     *
+     * `#prepare` 是纯的，所以这个性质现在由**位置**保证：它排在下面那行
+     * `// ↓ 以下才开始改状态` 之前，而它自己一个字节都不改。
      */
-    const compiled = compileContext(this.#store, node, extraction.vars);
-    if (!compiled.ok) {
-      return {
-        kind: "rejected",
-        failure: this.#fail(input, `上下文编译失败：${formatContextFailures(compiled.failures)}`),
-      };
+    const prepared = this.#prepare(input, node, port);
+    if (!prepared.ok) {
+      return { kind: "rejected", failure: this.#fail(input, prepared.reason) };
     }
 
     // ↓ 以下才开始改状态。到这里已经不会再拒绝了。
@@ -644,7 +643,7 @@ export class Runtime implements Snapshotable {
       agentSpec: node.agent ?? {},
       // 派生，不是记账 —— 见 ExecutionLedger.latestPerNode
       priorExecutions,
-      vars: compiled.vars,
+      vars: prepared.vars,
       outputContract: { allowedEmitPorts: allowedEmitPorts(node.ports) },
       limits,
     };
@@ -1162,21 +1161,30 @@ export class Runtime implements Snapshotable {
     return eligible[picked.position] as Message;
   }
 
-  #commitSync(input: Message): StepResult | StepFailure {
-    const { traceid, node: nodeId } = input.target;
-    const instance = this.#registry.get(traceid);
-    const template = this.#registry.template(traceid);
-    const node = template.nodes[nodeId];
-    invariant(node !== undefined, `实例 ${traceid} 无节点 ${nodeId}`);
-    const port = node.ports[input.target.port];
-    invariant(port !== undefined, `节点 ${nodeId} 无端口 ${input.target.port}`);
-
+  /**
+   * 入站三件事：**契约 → 提取 → 编上下文**。两条路径走同一处。
+   *
+   * 此前它在 `#commitSync` 与 `#claim` 里各写了一遍。同一批不变量守两遍，
+   * 代价已经付过：三段式那边曾经是「校验一半 → 置 CLAIMED、写 RUNNING 记录
+   * → 再校验 → 拒绝」，而拒绝走正常 return、`transact` 只在 throw 时回滚，
+   * 于是被拒的 claim 留下一条永久 RUNNING 记录。修法是把编上下文提到 mutation
+   * 之前 —— 而那个修法**只在一条路径上做过**。抽成一处，第二次就不会发生。
+   *
+   * **纯函数式：一个字节的状态都不改。** 这正是它能排在两条路径各自的
+   * mutation 之前的原因，也是"拒绝路径根本不产生要回滚的东西"的落点。
+   */
+  #prepare(input: Message, node: NodeDefinition, port: Port): PrepareOutcome {
     const inboundIssue = this.#checkContract(port, input.payload);
-    if (inboundIssue !== null) return this.#fail(input, `入站契约不符：${inboundIssue}`);
+    if (inboundIssue !== null) {
+      return { ok: false, reason: `入站契约不符：${inboundIssue}` };
+    }
 
     const extraction = extractPortVars(port, input.payload);
     if (!extraction.ok) {
-      return this.#fail(input, `变量提取失败：${formatExtractionFailures(extraction.failures)}`);
+      return {
+        ok: false,
+        reason: `变量提取失败：${formatExtractionFailures(extraction.failures)}`,
+      };
     }
 
     /**
@@ -1186,22 +1194,39 @@ export class Runtime implements Snapshotable {
      *
      *   1. B1 的运行期上界**对同步节点根本没查** —— 一个声明
      *      `max_tokens: 1` 的 `long` 变量收到几千 token 照样消费成功。
-     *      §16 表里"B1 ✅ 代码 + 测试"只钉住了 agent 路径。
      *   2. §7.1 说"普通 handler 也能通过 bind 引入长变量"，
      *      而 handler 拿到的变量袋里**根本没有 bind 段** —— literal / card
-     *      完全不可达。实测 handler 只拿到端口变量。
+     *      完全不可达。
      *
      * 走同一个 `compileContext`，两件事一起真。ref 解引用也随之对同步节点生效。
      */
     const compiled = compileContext(this.#store, node, extraction.vars);
     if (!compiled.ok) {
-      return this.#fail(input, `上下文编译失败：${formatContextFailures(compiled.failures)}`);
+      return {
+        ok: false,
+        reason: `上下文编译失败：${formatContextFailures(compiled.failures)}`,
+      };
     }
+
+    return { ok: true, vars: compiled.vars, portVars: extraction.vars };
+  }
+
+  #commitSync(input: Message): StepResult | StepFailure {
+    const { traceid, node: nodeId } = input.target;
+    const instance = this.#registry.get(traceid);
+    const template = this.#registry.template(traceid);
+    const node = template.nodes[nodeId];
+    invariant(node !== undefined, `实例 ${traceid} 无节点 ${nodeId}`);
+    const port = node.ports[input.target.port];
+    invariant(port !== undefined, `节点 ${nodeId} 无端口 ${input.target.port}`);
+
+    const prepared = this.#prepare(input, node, port);
+    if (!prepared.ok) return this.#fail(input, prepared.reason);
 
     invariant(node.handler !== undefined, `节点 ${nodeId} 声明了 agent 段，走三段式而非同步路径`);
     const fn = this.#handlers.get(node.handler);
     invariant(fn !== undefined, `未注册的内置 handler：${node.handler}`);
-    const outputs = fn(compiled.vars, this.#handlerContext(traceid, nodeId, input));
+    const outputs = fn(prepared.vars, this.#handlerContext(traceid, nodeId, input));
 
     assertDeclaredPorts(node, nodeId, outputs);
     for (const [portName, value] of Object.entries(outputs)) {
@@ -1226,7 +1251,7 @@ export class Runtime implements Snapshotable {
       nodeId,
       delivered,
       dangling: outcome.plan.dangling,
-      vars: extraction.vars,
+      vars: prepared.portVars,
     };
   }
 

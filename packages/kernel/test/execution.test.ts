@@ -479,3 +479,105 @@ describe("★ priorExecutions：上游执行记录进请求", () => {
     expect(backend.seen.at(-1)?.priorExecutions).toEqual({ coder: "exec-1" });
   });
 });
+
+/**
+ * ★ 入站校验对两条路径是**同一处实现**。
+ *
+ * 契约 → 提取 → 编上下文，此前在 `#commitSync` 与 `#claim` 里各写了一遍。
+ * 代价已经付过：三段式那边曾经「校验一半 → 写 RUNNING 记录 → 再校验 → 拒绝」，
+ * 而拒绝走正常 return、`transact` 只在 throw 时回滚，于是留下永久 RUNNING 记录。
+ * 修法（把编上下文提到 mutation 之前）当时**只在一条路径上做过**。
+ *
+ * 这一组钉的不是"能拒绝"，是**两条路径拒绝得一模一样**。谁把它们再拆成
+ * 两份实现，这里就会红 —— 而单看任何一条路径都是绿的，那正是要防的东西。
+ */
+describe("★ 入站校验：两条路径同一处实现", () => {
+  /** 同一个节点定义，只有"跑法"不同：`agent` 走三段式，`handler` 走同步。 */
+  const overBudget = (exec: Record<string, unknown>) => ({
+    nodes: {
+      w: {
+        kind: "handler",
+        ...exec,
+        bind: { big: { type: "long", max_tokens: 1, literal: "远超一个 token 上界的一段文字" } },
+        budget: { tokens: 100 },
+        ports: { in: { direction: "receive", servo: { vars: {} } }, out: { direction: "emit" } },
+      },
+    },
+    edges: {},
+    children: {},
+  });
+
+  function build(exec: Record<string, unknown>): Runtime {
+    const s = new ObjectStore();
+    const ref = registerContainerTemplate(s, "root", overBudget(exec), "root_config");
+    const r = new InstanceRegistry(s);
+    r.createRoot(ref, "job-1");
+    const rt = new Runtime(s, r, { backend, maxAttempts: 3 });
+    rt.registerHandler("noop", () => ({}));
+    rt.send({ traceid: "job-1", node: "w", port: "in" }, {});
+    return rt;
+  }
+
+  it("同一条违规，两条路径给同一个理由", async () => {
+    const async_ = build({ agent: { argv: ["x"] } });
+    const sync = build({ handler: "noop" });
+
+    const a = (await async_.stepAgent()) as StepFailure;
+    const b = sync.step() as StepFailure;
+
+    expect(isFailure(a)).toBe(true);
+    expect(isFailure(b)).toBe(true);
+    // 逐字相同 —— 同一处实现产生的同一句话
+    expect(b.reason).toBe(a.reason);
+    expect(a.reason).toMatch(/上下文编译失败/);
+  });
+
+  it("两条路径都不留残骸", async () => {
+    const async_ = build({ agent: { argv: ["x"] } });
+    const sync = build({ handler: "noop" });
+
+    await async_.stepAgent();
+    sync.step();
+
+    for (const rt of [async_, sync]) {
+      // 拒绝路径根本不产生要回滚的东西 —— 由 #prepare 是纯的、且排在
+      // 所有 mutation 之前来保证，不靠"记得回滚"
+      expect(rt.records()).toHaveLength(0);
+      expect(rt.terminationBlockers("job-1")).not.toContain("1 个在途 execution");
+      rt.checkInvariants();
+    }
+  });
+
+  it("★ bind 段对两条路径都到得了 —— 同步路径不是「只拿端口变量」", () => {
+    const s = new ObjectStore();
+    const ref = registerContainerTemplate(
+      s,
+      "root",
+      {
+        nodes: {
+          w: {
+            kind: "handler",
+            handler: "echo",
+            bind: { greeting: { type: "short", literal: "你好" } },
+            ports: { in: { direction: "receive", servo: { vars: {} } } },
+          },
+        },
+        edges: {},
+        children: {},
+      },
+      "root_config",
+    );
+    const r = new InstanceRegistry(s);
+    r.createRoot(ref, "job-1");
+    const rt = new Runtime(s, r, {});
+    let seen: Record<string, unknown> = {};
+    rt.registerHandler("echo", (vars) => {
+      seen = { ...vars };
+      return {};
+    });
+
+    rt.send({ traceid: "job-1", node: "w", port: "in" }, {});
+    rt.step();
+    expect(seen).toEqual({ greeting: "你好" });
+  });
+});
