@@ -87,7 +87,9 @@ function writable(ctx: ToolContext, fn: (s: RunState) => ToolResult): ToolResult
     const state = RunState.open(ctx.dir, { validateExecutionSpec: checkAgentSpec });
     try {
       const result = fn(state);
-      if (!result.isError) state.persist();
+      // 正常返回也可能报告已发生的执行失败；失败消息和 attempts 同样需要耐久。
+      // 授权/结构校验等抛异常的路径不会走到这里。
+      state.persist();
       return result;
     } finally {
       state.close();

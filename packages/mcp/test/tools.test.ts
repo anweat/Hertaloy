@@ -101,6 +101,26 @@ it("define 与 validate 对非法 agent 的判断一致，拒绝不写版本", (
   try { expect(state.store.history("invalid-agent")).toHaveLength(0); }
   finally { state.close(); }
 });
+
+it("advance 返回失败也保存失败消息，重开目录后不再把它当成未执行", () => {
+  expect(call("create_run", { scenario: {
+    templates: [{ id: "root", kind: "root_config", spec: { nodes: {
+      a: { kind: "handler", handler: "collect", ports: { in: { direction: "receive", servo: {
+        vars: { required: { type: "short", from: "$.missing" } },
+      } } } },
+    } } }],
+    root: { id: "job", template: "root" },
+    send: [{ traceid: "job", node: "a", port: "in", payload: {} }],
+  } }).isError).toBe(false);
+  expect(call("advance", {}).isError).toBe(true);
+  const state = RunState.open(dir, { readOnly: true });
+  try {
+    expect(state.runtime.message("msg-1")).toMatchObject({ state: "FAILED" });
+    expect(state.runtime.message("msg-1").failure).toContain("missing");
+    state.runtime.checkInvariants();
+  } finally { state.close(); }
+  expect(call("advance", {}).text).toContain("提交 0 次");
+});
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("★ 纪律一：actor 由服务端注入，客户端伪造不了", () => {
