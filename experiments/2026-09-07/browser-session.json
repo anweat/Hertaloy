@@ -1,0 +1,17 @@
+{
+  "root": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-ui-audit-Ut2V9e",
+  "dir": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-ui-audit-Ut2V9e\\run",
+  "base": "http://127.0.0.1:35170",
+  "channels": {
+    "/scene": 200,
+    "/templates": 200,
+    "/authz": 200,
+    "/status": 404,
+    "/objects": 404,
+    "/runs": 404,
+    "POST_scene": 405,
+    "no_token_scene": 401,
+    "page_contains_current_token": true,
+    "token_from_public_page_can_read_scene": 200
+  }
+}

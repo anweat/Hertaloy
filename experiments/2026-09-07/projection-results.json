@@ -1,0 +1,137 @@
+{
+  "root": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-projection-audit-3nOIP6",
+  "progress": {
+    "expected": {
+      "a": 1,
+      "b": 9
+    },
+    "projected": [
+      {
+        "traceid": "job",
+        "nodeId": "a",
+        "status": "SETTLED",
+        "termination": "DONE",
+        "progress": {
+          "done": 9,
+          "total": 10,
+          "note": "b"
+        }
+      },
+      {
+        "traceid": "job",
+        "nodeId": "b",
+        "status": "SETTLED",
+        "termination": "DONE",
+        "progress": {
+          "done": 9,
+          "total": 10,
+          "note": "b"
+        }
+      }
+    ],
+    "evidence": [
+      {
+        "object_id": "job/$exec",
+        "version": 1,
+        "kind": "execution",
+        "content_hash": "1371e371ace8dcf37dddbaf18d0fc728c67a2ad229987ad7a2f73da767ed6f18",
+        "body": {
+          "execution_id": "exec-1",
+          "node": "a",
+          "termination": "DONE",
+          "diagnostics": {
+            "progress": {
+              "done": 1,
+              "total": 10,
+              "note": "a"
+            }
+          }
+        },
+        "provenance": {
+          "traceid": "job",
+          "node_id": "a",
+          "execution_id": "exec-1",
+          "derived_from": []
+        }
+      },
+      {
+        "object_id": "job/$exec",
+        "version": 2,
+        "kind": "execution",
+        "content_hash": "4beac9fbdbba46f3b5a4358eaadcdb13b0c5cd9ad6f092da7796c6ebb73f993c",
+        "body": {
+          "execution_id": "exec-2",
+          "node": "b",
+          "termination": "DONE",
+          "diagnostics": {
+            "progress": {
+              "done": 9,
+              "total": 10,
+              "note": "b"
+            }
+          }
+        },
+        "provenance": {
+          "traceid": "job",
+          "node_id": "b",
+          "execution_id": "exec-2",
+          "derived_from": []
+        }
+      }
+    ]
+  },
+  "templates": {
+    "before": {
+      "root@1": {
+        "nodes": {},
+        "edges": {},
+        "children": {
+          "workers": {
+            "template": "worker@1",
+            "entry": {
+              "node": "work",
+              "port": "in"
+            }
+          }
+        },
+        "bindings": [],
+        "selfBindings": []
+      }
+    },
+    "after": {
+      "root@1": {
+        "nodes": {},
+        "edges": {},
+        "children": {
+          "workers": {
+            "template": "worker@1",
+            "entry": {
+              "node": "work",
+              "port": "in"
+            }
+          }
+        },
+        "bindings": [],
+        "selfBindings": []
+      },
+      "worker@1": {
+        "nodes": {
+          "work": {
+            "kind": "handler",
+            "handler": "noop",
+            "ports": {
+              "in": {
+                "direction": "receive"
+              }
+            }
+          }
+        },
+        "edges": {},
+        "children": {},
+        "bindings": [],
+        "selfBindings": []
+      }
+    },
+    "pageBehavior": "page.html fetches /templates once before opening /scene/stream"
+  }
+}

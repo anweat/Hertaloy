@@ -1,0 +1,173 @@
+{
+  "base": "75b8a8985252213b8d28518a217f0bf89a106d4d",
+  "root": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-kernel-audit-AcnrOB",
+  "signal": {
+    "exitCode": 130,
+    "driverLockPresent": false,
+    "originalExecution": "exec-1",
+    "retryExecution": "exec-2",
+    "originalAliveAtRetry": false,
+    "childCompletedAfterDriverExit": false,
+    "retryCode": 0,
+    "state": {
+      "records": [
+        {
+          "executionId": "exec-1",
+          "traceid": "job",
+          "nodeId": "work",
+          "status": "SETTLED",
+          "claimed": [
+            "msg-1"
+          ],
+          "generation": 0,
+          "termination": "FAILED"
+        },
+        {
+          "executionId": "exec-2",
+          "traceid": "job",
+          "nodeId": "work",
+          "status": "SETTLED",
+          "claimed": [
+            "msg-1"
+          ],
+          "generation": 0,
+          "termination": "DONE"
+        }
+      ],
+      "objects": []
+    }
+  },
+  "dotfile": {
+    "outcome": {
+      "text": "提交 3 次，失败 1 次（另有 2 次重试后恢复），终结 1 个实例。\n可用内置 handler：branch, collect, echo, loop, noop, route\n失败：\n  job/work：backend 返回值形状非法：artifacts.0.object_id String must contain at least 1 character(s)（已重试 3 次，放弃）",
+      "code": 1,
+      "data": {
+        "converged": true,
+        "committed": 3,
+        "failed": 1,
+        "retried": 2,
+        "settled": [
+          "job"
+        ],
+        "failures": [
+          {
+            "traceid": "job",
+            "node": "work",
+            "reason": "backend 返回值形状非法：artifacts.0.object_id String must contain at least 1 character(s)（已重试 3 次，放弃）"
+          }
+        ],
+        "executionFace": "configured"
+      }
+    },
+    "state": {
+      "records": [
+        {
+          "executionId": "exec-1",
+          "traceid": "job",
+          "nodeId": "work",
+          "status": "SETTLED",
+          "claimed": [
+            "msg-1"
+          ],
+          "generation": 0,
+          "termination": "INVALID_OUTPUT"
+        },
+        {
+          "executionId": "exec-2",
+          "traceid": "job",
+          "nodeId": "work",
+          "status": "SETTLED",
+          "claimed": [
+            "msg-1"
+          ],
+          "generation": 0,
+          "termination": "INVALID_OUTPUT"
+        },
+        {
+          "executionId": "exec-3",
+          "traceid": "job",
+          "nodeId": "work",
+          "status": "SETTLED",
+          "claimed": [
+            "msg-1"
+          ],
+          "generation": 0,
+          "termination": "INVALID_OUTPUT"
+        }
+      ],
+      "objects": []
+    }
+  },
+  "duplicate_stems": {
+    "outcome": {
+      "text": "提交 1 次，失败 0 次，终结 1 个实例。\n可用内置 handler：branch, collect, echo, loop, noop, route",
+      "code": 0,
+      "data": {
+        "converged": true,
+        "committed": 1,
+        "failed": 0,
+        "retried": 0,
+        "settled": [
+          "job"
+        ],
+        "failures": [],
+        "executionFace": "configured"
+      }
+    },
+    "state": {
+      "records": [
+        {
+          "executionId": "exec-1",
+          "traceid": "job",
+          "nodeId": "work",
+          "status": "SETTLED",
+          "claimed": [
+            "msg-1"
+          ],
+          "generation": 0,
+          "termination": "DONE",
+          "usage": {
+            "inTokens": 0,
+            "outTokens": 0,
+            "costUsd": 0,
+            "wallClockSeconds": 0.127,
+            "toolCalls": 0,
+            "compactions": 0
+          }
+        }
+      ],
+      "objects": [
+        {
+          "object_id": "job/answer",
+          "version": 1,
+          "kind": "artifact",
+          "content_hash": "fa6e0614bf628b0034fa2b112b08d09e4533fdf558b94c6587c68b3069e33102",
+          "body": {
+            "text": "markdown"
+          },
+          "provenance": {
+            "traceid": "job",
+            "node_id": "work",
+            "execution_id": "exec-1",
+            "derived_from": []
+          }
+        },
+        {
+          "object_id": "job/answer",
+          "version": 2,
+          "kind": "artifact",
+          "content_hash": "832cb5683bf7f26fbeadca3081eb173f2e74c38aece8341bbfb566c39d1fcc3f",
+          "body": {
+            "text": "text"
+          },
+          "provenance": {
+            "traceid": "job",
+            "node_id": "work",
+            "execution_id": "exec-1",
+            "derived_from": []
+          }
+        }
+      ]
+    }
+  }
+}
