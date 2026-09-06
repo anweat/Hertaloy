@@ -193,3 +193,21 @@
 - 复审修正：profile 的两条旧测试使用固定全局临时路径，第二次跑时被新的排他规则拒绝。改为测试私有临时工作根并清理；再跑 profile、身份与 Docker 生命周期 34/34，通过类型检查。
 - 边界：同一工作根中完全相同的执行身份仍是冲突，只做保护性拒绝；尤其多个 CLI WSL run 仍可能共用 `/tmp`。全局 run 身份和 WSL 按状态目录命名空间需连同旧运行兼容单独设计。
 - 全仓首轮发现一个旧 CLI 断言仍要求目录名包含完整 exec-1，而新名字只保留短前缀。改为核对完整身份标记，并由新 runner 定位同一目录；目录归属保证未放宽。CLI agent-run 18/18、typecheck 通过，测试调整单独提交。
+
+### 第三轮收尾（2026-09-06）
+
+| 步骤 | 提交 |
+|---|---|
+| H08a 内网属性校验 | `0be7fbf` |
+| H08b 实际策略与运行组网络 | `dec289e` |
+| H09 每次调用的容器身份 | `0a2249d` |
+| H10 目录身份、旧布局兼容与排他创建 | `4458f10` |
+| CLI 身份读取与定位断言 | `43e0dde` |
+
+每步均在相关测试及类型检查通过后提交。最终完整验证：
+
+- `corepack pnpm test` 退出 0：864 passed / 0 failed / 7 skipped，共 871 条，本轮新增 34 条。contracts 68、kernel 305、sandbox 188 passed + 7 skipped、state 81、CLI 153、MCP 17、scene 52。
+- `corepack pnpm typecheck`：全部 7 个包通过。
+- `corepack pnpm reachability`：194 个导出符号，无孤儿。
+
+最终日志：本机 `%TEMP%/hertaloy-bugfix-third-verified.log`。真实 WSL、Node 执行、旧工作区继承和 CLI 场景均通过；Docker daemon 未运行的 7 个集成用例保持跳过，网络与容器行为仅验证到 CLI/进程调用边界。用户原有三个文件改动及未跟踪文档、实验、配置保持原样。
