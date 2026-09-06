@@ -29,6 +29,8 @@ import {
 import {
   RunState,
   StateLock,
+  lockHolders,
+  releaseHeldLocks,
   addResource,
   exportSnapshot,
   loadResources,
@@ -207,6 +209,25 @@ export function status(dir: string, actor: Principal): CommandResult {
       for (const r of running) lines.push(`  ${r.executionId}  ${r.traceid}/${r.nodeId}`);
     }
 
+    /**
+     * 目录锁 —— **一把残留的 `driver.lock` 会让整个 run 推不动**，
+     * 而在此之前它在任何输出里都看不见，只能靠人想起来去 ls 目录。
+     * 它不是内核的锁（那些是义务的投影），是操作系统层面的进程排他。
+     */
+    const dirLocks = lockHolders(s.dir);
+    if (dirLocks.length > 0) {
+      lines.push("", "目录锁（进程排他，不是容器的阻塞态）：");
+      for (const l of dirLocks) {
+        lines.push(
+          `  ${l.name}  持有者 ${l.pid === null ? "（读不出）" : `pid ${String(l.pid)}`}` +
+            (l.since === null ? "" : `，自 ${l.since}`) +
+            (l.name === "driver.lock"
+              ? "\n    ↳ 推进权被它占着。确认那个进程确实没了，再删这个文件"
+              : ""),
+        );
+      }
+    }
+
     const deadlocks = s.runtime.locks.deadlocks();
     if (deadlocks.length > 0) {
       lines.push("", "★ 死锁环：");
@@ -215,6 +236,7 @@ export function status(dir: string, actor: Principal): CommandResult {
     return ok(lines.join("\n"), {
       root,
       permissions: s.permissions.source,
+      dirLocks: dirLocks.map((l) => ({ name: l.name, pid: l.pid, since: l.since })),
       instances: subtree.map((i) => ({
         traceid: i.traceid,
         status: i.status,
@@ -499,9 +521,29 @@ export async function drain(
     }
   };
 
+  /**
+   * 被信号打断时也要把锁放掉。
+   *
+   * `finally` 挡得住异常与正常返回，**挡不住信号** —— Node 收到没有监听器的
+   * SIGINT 会直接终止进程，`finally` 不跑。而 `driver.lock` 跨越整个 agent 执行
+   * （分钟级），Ctrl-C 恰好最可能发生在那段时间：残留的锁会让之后每次 drain
+   * 都失败，而且**没有内建的清理出路**。
+   *
+   * 放完照常按信号的约定退出（130 / 143），不改变 Ctrl-C 的语义。
+   * 处理器只在持锁期间挂着，`finally` 里摘掉 —— 不给进程留全局副作用。
+   */
+  const onSignal = (code: number) => () => {
+    releaseHeldLocks();
+    process.exit(code);
+  };
+  const sigint = onSignal(130);
+  const sigterm = onSignal(143);
+
   try {
     mkdirSync(dir, { recursive: true });
     driver.acquire();
+    process.once("SIGINT", sigint);
+    process.once("SIGTERM", sigterm);
     const root = withState((s) => {
       for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) {
         s.runtime.registerHandler(name, fn);
@@ -578,6 +620,8 @@ export async function drain(
     if (error instanceof AuthorizationError) return fail(`拒绝：${error.message}`);
     return fail(`推进失败：${(error as Error).message}`);
   } finally {
+    process.off("SIGINT", sigint);
+    process.off("SIGTERM", sigterm);
     driver.release();
   }
 

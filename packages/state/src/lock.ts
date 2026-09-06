@@ -19,6 +19,63 @@ export interface LockInfo {
   readonly since: string;
 }
 
+/** 目录里可能出现的锁。两把寿命完全不同 —— 见 `StateLock` 的说明。 */
+const LOCK_NAMES = ["head.lock", "driver.lock"] as const;
+export type LockName = (typeof LOCK_NAMES)[number];
+
+export interface HeldLock {
+  readonly name: LockName;
+  /** 锁文件内容坏掉时为 null —— 报"有锁但读不出是谁"，好过假装没有。 */
+  readonly pid: number | null;
+  readonly since: string | null;
+}
+
+/**
+ * **本进程**当前持有的锁。
+ *
+ * 只给一件事用：进程被信号打断时把它们放掉（见 `releaseHeldLocks`）。
+ * 这不是第二本账 —— `held` 是每个 `StateLock` 自己的字段，这里只是它们的索引，
+ * `acquire` / `release` 是唯一的增删点。
+ */
+const heldHere = new Set<StateLock>();
+
+/**
+ * 放掉本进程持有的全部锁。
+ *
+ * `finally` 挡得住异常与正常返回，**挡不住信号** —— Node 收到没有监听器的
+ * SIGINT 会直接终止，`finally` 不跑。而 `driver.lock` 现在跨越整个 agent 执行
+ * （分钟级），Ctrl-C 恰好最可能发生在那段时间里：留下的锁会让之后每次 drain
+ * 都失败，而且没有内建的清理出路。
+ *
+ * 这个函数只负责"放掉"；**要不要退出、退出码是多少，由进程的主人决定** ——
+ * 库不替应用定进程策略。
+ */
+export function releaseHeldLocks(): void {
+  for (const lock of [...heldHere]) lock.release();
+}
+
+/**
+ * 目录里现在有哪几把锁，各自是谁。
+ *
+ * 给 `status` 用：一把残留的 `driver.lock` 会让整个 run 推不动，而在此之前
+ * 它在任何输出里都看不见 —— 只能靠人想起来去 ls 目录。
+ */
+export function lockHolders(root: string): readonly HeldLock[] {
+  const out: HeldLock[] = [];
+  for (const name of LOCK_NAMES) {
+    const path = join(root, name);
+    if (!existsSync(path)) continue;
+    let info: LockInfo | null = null;
+    try {
+      info = JSON.parse(readFileSync(path, "utf8")) as LockInfo;
+    } catch {
+      info = null;
+    }
+    out.push({ name, pid: info?.pid ?? null, since: info?.since ?? null });
+  }
+  return out;
+}
+
 export function lockPath(root: string): string {
   return join(root, "head.lock");
 }
@@ -43,6 +100,7 @@ export class StateLock {
       writeSync(fd, JSON.stringify(info));
       closeSync(fd);
       this.#held = true;
+      heldHere.add(this);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       throw new Error(
@@ -56,6 +114,7 @@ export class StateLock {
     if (!this.#held) return;
     rmSync(this.#path, { force: true });
     this.#held = false;
+    heldHere.delete(this);
   }
 }
 
