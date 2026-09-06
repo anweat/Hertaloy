@@ -31,6 +31,13 @@ hertaloy status ./run
 才清理报错指向的锁文件。直接嵌入 Runtime/RunState 的宿主同样需要保证独占驱动权，
 尤其不能仅凭拿到了 `head.lock` 就把 RUNNING 执行认作孤儿。
 
+持久化现在写 `head.json` 格式 2：`objectHeads` 记录每个对象已提交到哪一版，
+只有清单内的版本可见。对象写入和 head 发布之间进程中断，可以读取上一份提交并继续执行；
+留下的未提交文件不会自动成为历史。格式 1 仍可读取，首次保存先建立旧状态的提交清单再升级。
+已损坏、无法判定提交集合的旧目录仍拒绝装载；升级后的目录不能交给只识别格式 1 的旧程序写入。
+`RunState.persist()` 必须持有写锁，只读或已关闭的实例不能保存。这些保证针对进程中断，
+不包含断电刷盘保证，也不替代上述遗留锁检查。升级前需要保留旧程序回退能力时，请保留完整目录副本。
+
 ControlPlane 的 `run`、`runAgents`、`settleAll`、`reconcile`、`causesOf` 目前
 作用于整棵运行树，只接受真实根 traceid 并检查根权限。传子树会被明确拒绝；
 `subtree`、`messages` 等查询与定点 `send`、`truncate` 仍按目标授权。

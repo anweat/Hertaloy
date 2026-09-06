@@ -163,7 +163,7 @@ export class RunState {
 
       // 顺序要紧：对象先装，因为实例树里存的是指向对象的 Ref，
       // 恢复实例时会去解析模板
-      const cursor = loadObjects(dir, store);
+      const cursor = loadObjects(dir, store, head.format === 1 ? undefined : head.objectHeads);
       const parts = decodeHeadParts(head);
       registry.restore(parts.registry);
       /**
@@ -208,21 +208,33 @@ export class RunState {
   /**
    * 落盘。**先对象后 head** —— 顺序不能反。
    *
-   * head 里记着"已刷了多少个对象版本"。先写 head 再刷对象的话，中间崩溃会留下
-   * 一个引用了不存在对象的 head，恢复时解析 Ref 直接失败。反过来则最坏是多刷了
-   * 几个对象、head 还是旧的 —— 那些对象是写一次的，内容寻址，重跑会原样重写，
-   * 无害。**多余的不可变数据无害，悬空的引用致命。**
+   * head 的对象版本清单决定可见性；刷盘成功而 head 未提交时，旧清单之外的
+   * 文件保持不可见。重放允许替换未提交文件，但不重写已提交版本。
    */
   persist(): void {
-    this.#cursor = flushObjects(this.dir, this.store, this.#cursor);
+    if (this.#lock?.held !== true) throw new Error("persist 需要当前实例持有写锁；只读或已关闭的状态不能保存");
+    // 旧格式没有逐对象边界：先为旧状态发布清单，再开始可能中断的新增写入。
+    const previous = readHead(this.dir);
+    if (previous?.format === 1) {
+      const parts = decodeHeadParts(previous);
+      writeHead(this.dir, {
+        ...parts,
+        root: previous.root,
+        objectCursor: previous.objectCursor,
+        objectHeads: headsAt(this.store, this.#cursor),
+      });
+    }
+    const cursor = flushObjects(this.dir, this.store, this.#cursor);
     writeHead(this.dir, {
       root: this.registry.rootTrace,
-      objectCursor: this.#cursor,
+      objectCursor: cursor,
+      objectHeads: headsAt(this.store, cursor),
       registry: this.registry.snapshot(),
       // 锁已归约成派生投影，这里只为格式兼容留个空位（见装载侧的说明）
       ledger: {},
       runtime: this.runtime.snapshot(),
     });
+    this.#cursor = cursor;
   }
 
   /**
@@ -264,4 +276,9 @@ export class RunState {
   close(): void {
     this.#lock?.release();
   }
+}
+
+/** Object.fromEntries 保留特殊对象名为自有键；同一对象最后一版覆盖前面的计数。 */
+function headsAt(store: ObjectStore, cursor: number): Readonly<Record<string, number>> {
+  return Object.fromEntries(store.appended(0).slice(0, cursor).map((v) => [v.object_id, v.version]));
 }

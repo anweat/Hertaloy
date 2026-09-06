@@ -247,7 +247,7 @@ describe("★ 完整性：宁可炸，不要似是而非", () => {
   });
 
   it("格式版本不认识 → 拒绝，不猜着读", () => {
-    writeFileSync(join(dir, "head.json"), JSON.stringify({ format: 2 }), "utf8");
+    writeFileSync(join(dir, "head.json"), JSON.stringify({ format: 3 }), "utf8");
     expect(() => RunState.open(dir)).toThrow(/只认 1/);
   });
 });

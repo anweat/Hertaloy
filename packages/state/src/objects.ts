@@ -1,13 +1,11 @@
 /**
  * 对象库落盘 —— 写一次的那一半（§17.2 / §17.3）。
  *
- * 每个版本一个文件，文件名就是版本号。写一次之后永不重写，所以：
- *   - 不需要加锁，不需要事务
- *   - 崩溃时最坏留下一个半截文件，读的时候 JSON 解析失败即发现
- *   - 增量刷盘只写 `store.appended(cursor)` 那一段
+ * 每个版本一个文件。已提交版本不重写；head 清单之外的文件只是未提交的候选。
+ * 写者须持有状态锁，增量写入后由 head 的原子替换发布整个提交。
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ObjectVersion } from "@nodeflow/contracts";
 import type { ObjectStore } from "@nodeflow/kernel";
@@ -32,10 +30,12 @@ export function flushObjects(root: string, store: ObjectStore, cursor: number): 
             `${file}。state-root 必须放在区分大小写的文件系统上（§17.3）。`,
         );
       }
-      continue; // 同一个对象的同一版，已经写过了
+      // cursor 之后的版本尚未提交；重放可能产生不同正文，不能跳过旧候选文件。
     }
     mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(version, null, 2)}\n`, "utf8");
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(version, null, 2)}\n`, "utf8");
+    renameSync(tmp, file);
   }
   return store.appendCount;
 }
@@ -46,8 +46,29 @@ export function flushObjects(root: string, store: ObjectStore, cursor: number): 
  * 每个对象的版本按号升序装 —— `ObjectStore.load` 会校验连续性，
  * 缺文件当场炸而不是等到某次 `read(ref)`。
  */
-export function loadObjects(root: string, store: ObjectStore): number {
+export function loadObjects(
+  root: string,
+  store: ObjectStore,
+  heads?: Readonly<Record<string, number>>,
+): number {
   const base = join(root, "objects");
+  if (heads !== undefined) {
+    // 直接按清单读取，不枚举后来刷入的文件；并发读者只看自己读到的那一版 head。
+    for (const [objectId, last] of Object.entries(heads)) {
+      const versions: ObjectVersion[] = [];
+      for (let n = 1; n <= last; n++) {
+        const file = join(base, objectPath(objectId, n));
+        if (!existsSync(file)) throw new Error(`对象 ${objectId} 的版本不连续：缺少已提交的 @${n}`);
+        const v = JSON.parse(readFileSync(file, "utf8")) as ObjectVersion;
+        if (v.object_id !== objectId || v.version !== n) {
+          throw new Error(`${file} 的对象标识或版本号与提交清单不符`);
+        }
+        versions.push(v);
+      }
+      store.load(versions);
+    }
+    return store.appendCount;
+  }
   if (!existsSync(base)) return 0;
 
   for (const [objectId, dir] of walk(base, "")) {
