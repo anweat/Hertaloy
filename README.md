@@ -24,10 +24,10 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 | 资源别名与工作区交接 | ✅ | ✅ | ✅ | — | ✅ |
 | `hertaloy agent`（含 `--exec`） | ✅ | ✅ | ✅ | — | ✅ |
 | MCP 工具层 | ✅ | ✅ | ✅ | — | ✅ |
-| 画布 / 服务端 | 部分 | — | — | — | — |
+| 画布 / 只读观测服务 | 实验 | 原型 | ✅ | — | 部分 |
 
-**"崩溃验证"只标部分**：claim 落盘、孤儿执行会被认领并重跑，都有跨进程用例；
-但**没有真的 `kill -9` 子进程再恢复**的测试，用例都在一个进程内 open/close。
+**"崩溃验证"只标部分**：已有真实双进程的驱动排他测试；claim 落盘与孤儿恢复
+仍主要通过 open/close 模拟，**没有真的 `kill -9` 子进程再恢复**的测试。
 
 **已知边界**（不是 bug，是当前设计的边）：
 
@@ -46,15 +46,18 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 - **帧 14（上下文不随轮次膨胀）有测量但没有强制**，见 §21.6。
 
 ```
-packages/contracts    71 条   身份/路径/变量/端口/消息/契约/模板/执行面/权限/资源
-packages/kernel      203 条   store · tx · instances · obligations · aliases · context · extract · routing · runtime · control
-packages/sandbox     135 条   契约目录 · runner(local/wsl/docker) · 出网 · git 观察 · profile · 资源
-packages/state        55 条   对象落盘 · 可变头 · 目录锁 · 权限/资源文件 · claim 耐久性
-packages/cli         114 条   16 条命令 · 内置 handler · 模板构造器 · agent · JSON 契约
-packages/mcp          15 条   11 个工具 · 三条纪律（过控制面 / 身份不可伪造 / 不常驻持锁）
-packages/scene        39 条   层积渲染的纯函数投影
-合计                 632 条   pnpm -r test · typecheck · reachability 三个退出码均为 0
+packages/contracts    68 条   身份/路径/变量/端口/消息/契约/模板/执行面/权限/资源
+packages/kernel      305 条   store · tx · instances · obligations · aliases · context · extract · routing · runtime · control
+packages/sandbox     153 条   契约目录 · runner(local/wsl/docker) · 出网 · git 观察 · profile · 资源
+packages/state        65 条   对象落盘 · 可变头 · 目录锁 · 权限/资源文件 · claim 耐久性
+packages/cli         153 条   状态命令 · 内置 handler · 模板构造器 · agent · JSON 契约 · 驱动排他
+packages/mcp          17 条   11 个工具 · 授权 · 注册校验 · 失败持久化
+packages/scene        52 条   层积渲染的纯函数投影
+合计                 813 条   806 passed / 7 skipped（Docker daemon 未运行）
 ```
+
+以上为 2026-09-06 Windows + WSL 环境实测；test、typecheck、reachability 均退出 0。
+批次证据和未完成项见 [ITERATION.md](./ITERATION.md)。
 
 **上手看 [DEVELOPING.md](./DEVELOPING.md)** —— 每一条都对应一次真踩过的坑。
 

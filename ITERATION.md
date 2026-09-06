@@ -89,3 +89,26 @@
 - 反例先红：advance 返回失败后重开目录，msg-1 仍为 QUEUED。修复后 FAILED 与失败原因均保存，再次 advance 提交 0 次。
 - 修法：正常返回表示操作已完成处理，应落盘；抛异常的路径仍不提交。`isError` 是呈现给调用方的业务结果，不是事务回滚标志。
 - 验证：MCP 17/17、typecheck 通过，原有权限拒绝和非法模板不落版本的断言继续通过。
+
+## 本轮收尾（2026-09-06）
+
+| 批次 | 提交 |
+|---|---|
+| H01 Windows 观察器 | `a6259db` |
+| H02 注册校验 | `c9b64fc` |
+| H03a 迟到结果 | `83d93b0` |
+| H03b 驱动排他 | `b2f95eb` |
+| H04 根作用域授权 | `212002f` |
+| H05 MCP 失败持久化 | `045472b` |
+
+完整验证在以上六批修复之后运行，三个命令均退出 0：
+
+- `corepack pnpm test`：806 passed / 0 failed / 7 skipped，共 813 条（新增 34 条）。contracts 68、kernel 305、sandbox 146 passed + 7 skipped、state 65、CLI 153、MCP 17、scene 52。
+- `corepack pnpm typecheck`：全部 7 个包通过。
+- `corepack pnpm reachability`：193 个导出符号，无孤儿。
+
+测试包括真实 WSL 执行与真实双进程的 CLI 排他；Docker daemon 未运行的 7 条测试未宣称通过。原始输出在本机 `%TEMP%/hertaloy-bugfix-full.log`，旧实验结果保留，不用修复后数据覆盖历史复现。
+
+本轮结论限定为 H01–H05 的修复，不代表旧文档漂移表全部清零。后续建议先核实对象/head 崩溃窗口与执行面配置条目，再设计执行归属、物理取消和子树调度；模板目录、人工回复和完整溯源保持独立议题。
+
+工作区原有的 `package.json` 覆盖率依赖、`pnpm-lock.yaml` 对应改动、sandbox 测试入口路径修正，以及未跟踪的 ONESHOT/vitest workspace 配置均保留。MCP 新增 sandbox 依赖的三行锁文件变动单独入提交。

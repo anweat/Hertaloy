@@ -10,7 +10,7 @@
 ```bash
 pnpm install
 pnpm hertaloy doctor            # 环境自检
-pnpm -r test                    # 493 条
+pnpm -r test                    # 当前测试数量与环境边界见 ITERATION.md
 ```
 
 建一个 run 并跑完：
