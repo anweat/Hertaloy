@@ -193,3 +193,120 @@ describe("★ 帧 14：第二轮的上下文不该比第一轮大", () => {
     expect(backend.rounds[0]!.tokens).toBeLessThan(3000);
   });
 });
+
+/**
+ * ★ 地址模型端到端 —— **这条链此前没有任何用例走过**。
+ *
+ * 上面那几条是直接调 `compileContext` 的单元用例：解引用本身是绿的。
+ * `ctx.put` 也有自己的用例：落对象是绿的。但**中间没人走** ——
+ * 「上游落对象 → emit 出去的是地址 → 下游声明 ref 变量 → 拿到正文」
+ * 这条完整的链，一次都没被端到端跑过。
+ *
+ * 它要紧，是因为"消息只带地址、内容进对象库"这件事**如果今天就成立**，
+ * 那么地址那一轮要做的就只剩跨进程传输，而不是新建机制。这条用例就是去
+ * 问这个问题的。
+ */
+describe("★ 地址模型：消息只带地址，内容走对象库", () => {
+  it("上游 ctx.put 落对象 → emit 地址 → 下游 ref 变量拿到正文", () => {
+    const spec = {
+      nodes: {
+        writer: {
+          kind: "handler",
+          handler: "write",
+          ports: {
+            in: { direction: "receive", servo: { vars: { task: { type: "short", from: "$.task" } } } },
+            out: { direction: "emit" },
+          },
+        },
+        reader: {
+          kind: "handler",
+          handler: "read",
+          budget: { tokens: 10_000 },
+          ports: {
+            in: {
+              direction: "receive",
+              // 载荷里只有一个地址，正文从对象库解出来
+              servo: { vars: { doc: { type: "ref", from: "$.doc", max_tokens: 500 } } },
+            },
+          },
+        },
+      },
+      edges: { e1: { from: { node: "writer", port: "out" }, to: { node: "reader", port: "in" } } },
+      children: {},
+    };
+    const ref = registerContainerTemplate(store, "flow", spec, "root_config");
+    const reg = new InstanceRegistry(store);
+    reg.createRoot(ref, "job-1");
+    const rt = new Runtime(store, reg);
+
+    let emitted: unknown;
+    rt.registerHandler("write", (vars, ctx) => {
+      // 内容进对象库，emit 出去的只是地址
+      const at = ctx.put("plan", "plan", { text: `为「${String(vars.task)}」写的计划` });
+      emitted = at;
+      return { out: { doc: at } };
+    });
+
+    let received: unknown;
+    rt.registerHandler("read", (vars) => {
+      received = vars.doc;
+      return {};
+    });
+
+    rt.send({ traceid: "job-1", node: "writer", port: "in" }, { task: "导出功能" });
+    const results = rt.drain();
+
+    expect(results).toHaveLength(2);
+    // 在途消息带的确实只是一个地址，不是内容
+    expect(typeof emitted).toBe("string");
+    expect(emitted).toMatch(/^job-1\/plan@\d+$/);
+    // ★ 而下游拿到的是**正文**
+    expect(received).toBe("为「导出功能」写的计划");
+  });
+
+  it("★ 载荷里不含内容 —— 可变头不因为内容变大", () => {
+    const spec = {
+      nodes: {
+        writer: {
+          kind: "handler",
+          handler: "write",
+          ports: {
+            in: { direction: "receive", servo: { vars: {} } },
+            out: { direction: "emit" },
+          },
+        },
+        reader: {
+          kind: "handler",
+          handler: "read",
+          budget: { tokens: 100_000 },
+          ports: {
+            in: {
+              direction: "receive",
+              servo: { vars: { doc: { type: "ref", from: "$.doc", max_tokens: 50_000 } } },
+            },
+          },
+        },
+      },
+      edges: { e1: { from: { node: "writer", port: "out" }, to: { node: "reader", port: "in" } } },
+      children: {},
+    };
+    const ref = registerContainerTemplate(store, "flow2", spec, "root_config");
+    const reg = new InstanceRegistry(store);
+    reg.createRoot(ref, "job-1");
+    const rt = new Runtime(store, reg);
+
+    const big = "很长的一段内容".repeat(2000);
+    rt.registerHandler("write", (_vars, ctx) => ({
+      out: { doc: ctx.put("big", "artifact", { text: big }) },
+    }));
+    rt.registerHandler("read", () => ({}));
+
+    rt.send({ traceid: "job-1", node: "writer", port: "in" }, {});
+    rt.drain();
+
+    // 队列里那条消息的载荷是个地址，几十字节；内容在对象库里
+    const carried = JSON.stringify(rt.messages().map((m) => m.payload));
+    expect(carried.length).toBeLessThan(200);
+    expect(carried).not.toContain("很长的一段内容");
+  });
+});
