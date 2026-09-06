@@ -11,7 +11,17 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState, writePermissions } from "@nodeflow/state";
-import { drain, history, permissions, resources, send, show, status, truncate } from "../src/state-commands.js";
+import {
+  drain,
+  history,
+  permissions,
+  resources,
+  scene,
+  send,
+  show,
+  status,
+  truncate,
+} from "../src/state-commands.js";
 
 /** 缺省权限表下的人类主体 —— 全权。 */
 const HUMAN = { kind: "human", id: "local" } as const;
@@ -268,5 +278,71 @@ describe("★ 绕过 ControlPlane 的两条路收回来了", () => {
   it("人照旧 —— 缺省授权是人类全权", () => {
     expect(resources(dir, HUMAN, "list", []).code).toBe(0);
     expect(permissions(dir, HUMAN, false).code).toBe(0);
+  });
+});
+
+/**
+ * ★ 观测这条链的出口 —— 此前**根本不存在**。
+ *
+ * `exportSnapshot`（state）零个调用方，`buildScene`（scene）只被自己的测试
+ * 调用、输入还是一份定格夹具。两端各自都绿，中间没人走。前端要开工，
+ * 第一件事恰恰是从这个不存在的出口拿数据。
+ *
+ * 所以这一组测的是**整条链**：真跑一段 → 导出 → 场景里确实有该有的东西。
+ */
+describe("★ scene：观测链的出口", () => {
+  it("真跑一段之后，场景里有实例、有节点、有流", () => {
+    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    drain(dir, HUMAN, undefined);
+
+    const r = scene(dir, HUMAN);
+    expect(r.code).toBe(0);
+
+    const built = JSON.parse(r.text) as {
+      viewport: string;
+      cells: { id: string; kind: string }[];
+      tethers: unknown[];
+      range: { from: number; to: number };
+    };
+    expect(built.viewport).toBe("job-1");
+    // 容器即实例，节点也是单元 —— 两种 kind 都该在
+    expect(built.cells.some((c) => c.kind === "instance" && c.id === "job-1")).toBe(true);
+    expect(built.cells.map((c) => c.id)).toContain("job-1#gate");
+    // 实例包着节点，这条关系要出来
+    expect(built.tethers.length).toBeGreaterThan(0);
+    // 序号轴：真跑过一次提交，range 不是空的
+    expect(built.range.to).toBeGreaterThanOrEqual(1);
+  });
+
+  it("--scope 就是前缀裁剪 —— 视口即前缀", () => {
+    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    drain(dir, HUMAN, undefined);
+
+    const r = scene(dir, HUMAN, "job-1");
+    expect(r.code).toBe(0);
+    expect((JSON.parse(r.text) as { viewport: string }).viewport).toBe("job-1");
+  });
+
+  /**
+   * ★ 它此前是全仓**权限最高、检查最少**的读路径：`exportSnapshot` 不收 actor，
+   * 一次授权都不做，而返回的比任何一个已授权查询都多。现在走 ControlPlane。
+   */
+  it("★ 无权的主体被拒 —— 不再是绕过授权的那条路", () => {
+    const r = scene(dir, AGENT);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/拒绝/);
+  });
+
+  /**
+   * `parseSnapshot` 在命令里拿 zod 验我们自己刚导出的东西。导出端的形状一旦
+   * 和 scene 收的形状分家，这条命令当场炸 —— 而在此之前那种漂移是静默的
+   * （夹具定格之后两端各自演化，谁也不知道）。
+   */
+  it("★ 导出端与 scene 收的形状必须对得上，对不上当场炸", () => {
+    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    drain(dir, HUMAN, undefined);
+    // 这条命令内部就是 exportSnapshot → parseSnapshot → buildScene，
+    // 能跑通本身就是那条接缝的红灯
+    expect(scene(dir, HUMAN).code).toBe(0);
   });
 });

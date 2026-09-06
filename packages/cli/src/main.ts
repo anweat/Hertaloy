@@ -31,6 +31,7 @@ import {
   reclaim,
   resources,
   send,
+  scene as sceneCmd,
   show,
   status,
   truncate,
@@ -52,6 +53,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy init    <dir> <scenario.json>        从场景文件建一个持久化的 run
   hertaloy status  <dir>                        实例树 / 阻塞原因 / 在途消息 / 死锁
   hertaloy show    <dir> <object-id[@n]>        读一个对象版本
+  hertaloy scene   <dir> [--scope <traceid>]    导出渲染用的场景 JSON
   hertaloy history <dir> <object-id>            某对象的版本历史
   hertaloy send    <dir> <traceid> <node> <port> [json]   投一条消息（人的放行走这条）
   hertaloy drain   <dir> [--runner local|wsl|docker]  推进到静止
@@ -94,6 +96,11 @@ ${USAGE}`, code: 2 } : null;
   switch (command) {
     case "status":
       return need(1) ?? status(dir as string, actor);
+    case "scene": {
+      const at = args.indexOf("--scope");
+      const scope = at === -1 ? undefined : args[at + 1];
+      return need(1) ?? sceneCmd(dir as string, actor, scope);
+    }
     case "show":
       return need(2) ?? show(dir as string, actor, a as string);
     case "history":

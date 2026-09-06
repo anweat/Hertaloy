@@ -23,6 +23,9 @@ importers:
       '@nodeflow/sandbox':
         specifier: workspace:*
         version: link:../sandbox
+      '@nodeflow/scene':
+        specifier: workspace:*
+        version: link:../scene
       '@nodeflow/state':
         specifier: workspace:*
         version: link:../state

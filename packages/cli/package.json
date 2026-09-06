@@ -15,7 +15,8 @@
     "@nodeflow/kernel": "workspace:*",
     "zod": "^3.24.1",
     "@nodeflow/sandbox": "workspace:*",
-    "@nodeflow/state": "workspace:*"
+    "@nodeflow/state": "workspace:*",
+    "@nodeflow/scene": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

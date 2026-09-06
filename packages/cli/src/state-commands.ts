@@ -17,9 +17,11 @@
 import { checkAgentSpec } from "@nodeflow/sandbox";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { buildScene, parseSnapshot } from "@nodeflow/scene";
 import {
   RunState,
   addResource,
+  exportSnapshot,
   loadResources,
   permissionsPath,
   removeResource,
@@ -240,6 +242,29 @@ export function show(dir: string, actor: Principal, ref: string): CommandResult 
     } catch (error) {
       return fail((error as Error).message);
     }
+  });
+}
+
+/**
+ * 场景导出 —— **观测这条链此前唯一缺的那一段**。
+ *
+ * `exportSnapshot`（state）与 `buildScene`（scene）都早就写好了，但：
+ * 前者**零个调用方**，后者只被自己的测试调用，输入还是一份定格夹具。
+ * 于是整条链两端各自都绿，中间没人走 —— 前端要开工，第一件事恰恰是从这个
+ * 不存在的出口拿数据。
+ *
+ * 输出的是 `Scene` 而不是 `RunSnapshot`：快照是中间步骤，渲染器要的是场景。
+ * 只给一种，不给"UI 格式 / API 格式"两套（那是明确不学的做法）。
+ *
+ * `parseSnapshot` 在这里**不是多余的一步**：它拿 zod 去验我们自己刚导出的东西。
+ * 导出端的形状一旦和 scene 收的形状分家，这条命令当场炸 —— 而在此之前，
+ * 那种漂移是静默的（夹具是定格的，两端各自演化谁也不知道）。
+ */
+export function scene(dir: string, actor: Principal, scope?: string): CommandResult {
+  return readOnly(dir, (s) => {
+    const snapshot = exportSnapshot(s, actor, scope);
+    const built = buildScene(parseSnapshot(snapshot), scope);
+    return ok(JSON.stringify(built, null, 2), built as never);
   });
 }
 
