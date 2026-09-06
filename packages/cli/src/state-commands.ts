@@ -340,6 +340,39 @@ export async function watchScene(
   }
 }
 
+/**
+ * 授权决策流水 —— **人在这个 run 里做过什么**。
+ *
+ * `authz.jsonl` 一直在写（每次 ControlPlane 决策，放行与拒绝都记），但
+ * **没有任何出口**：文件在长，没人读得出来。又一条两端各自都绿、中间没人走。
+ *
+ * 它是画布外那块"人的操作"面板要吃的东西。为什么不进场景：内核是纯引擎，
+ * **它不知道谁在调它**（§11 —— Principal 由可信边界注入）。"谁投的这条消息"
+ * 根本不在编排状态里，只在这份决策流水里。硬塞进 `RunSnapshot` 就是让
+ * 观测格式去承担它答不出的问题（上一轮已经把那个 `audit` 字段删掉了）。
+ *
+ * 授权：按**根实例**判定 DQL。这份流水横跨整个 run，读得了它就等于读得了
+ * 全局，所以门槛该是根，不是某个子树。`ControlPlane.check` 是公开的，
+ * 注释里写着就是给"操作不在内核里、但决策必须在这儿做"的调用方用的。
+ */
+export function authz(dir: string, actor: Principal, limit = 50): CommandResult {
+  return readOnly(dir, (s) => {
+    const root = s.registry.rootTrace;
+    if (root === null) return fail("这个目录里还没有根实例");
+    s.control.check(actor, "DQL", root, "query");
+
+    const entries = s.authzLog.recent(limit);
+    if (entries.length === 0) return ok("（还没有决策记录）", [] as never);
+    const lines = entries.map(
+      (e) =>
+        `${String(e.seq).padStart(4)}  ${e.allowed ? "放行" : "拒绝"}  ` +
+        `${e.actor.padEnd(16)} ${e.op.padEnd(9)} ${e.target}` +
+        (e.allowed ? "" : `\n        ${e.reason}`),
+    );
+    return ok(lines.join("\n"), entries as never);
+  });
+}
+
 /** 一个对象的版本历史 —— C5 下这就是"这个东西经历了什么"。 */
 export function history(dir: string, actor: Principal, objectId: string): CommandResult {
   return readOnly(dir, (s) => {

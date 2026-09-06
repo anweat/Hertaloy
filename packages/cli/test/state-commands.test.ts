@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState, writePermissions } from "@nodeflow/state";
 import {
+  authz,
   drain,
   history,
   permissions,
@@ -344,5 +345,47 @@ describe("★ scene：观测链的出口", () => {
     // 这条命令内部就是 exportSnapshot → parseSnapshot → buildScene，
     // 能跑通本身就是那条接缝的红灯
     expect(scene(dir, HUMAN).code).toBe(0);
+  });
+});
+
+/**
+ * ★ 授权流水的出口 —— 画布外那块「人的操作」面板要吃的东西。
+ *
+ * `authz.jsonl` 一直在写，但**没有任何出口**：文件在长，没人读得出来。
+ * 又一条两端各自都绿、中间没人走。
+ *
+ * 它不进场景，是因为**内核不知道谁在调它**（§11：Principal 由可信边界注入）。
+ * "谁投的这条消息"不在编排状态里，只在这份决策流水里 —— 硬塞进 RunSnapshot
+ * 就是让观测格式去承担它答不出的问题。
+ */
+describe("★ authz：谁做了什么", () => {
+  it("放行与拒绝都在里面，被拒的带理由", () => {
+    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    send(dir, AGENT, "job-1", "gate", "in", "{}"); // 无权，会被拒
+
+    const r = authz(dir, HUMAN);
+    expect(r.code).toBe(0);
+    expect(r.text).toContain("human:local");
+    expect(r.text).toContain("放行");
+    expect(r.text).toContain("agent:coder-1");
+    expect(r.text).toContain("拒绝");
+    // 被拒的那条要说清缺什么 —— 它往往就是"权限配错了"的现场
+    expect(r.text).toMatch(/无权/);
+  });
+
+  it("★ 读流水本身也要授权 —— 按根实例判定", () => {
+    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    const r = authz(dir, AGENT);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/拒绝/);
+  });
+
+  it("序号单调，读流水这件事本身也留痕", () => {
+    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    const first = authz(dir, HUMAN).data as { seq: number }[];
+    const second = authz(dir, HUMAN).data as { seq: number }[];
+    expect(first.map((e) => e.seq)).toEqual([...first.keys()].map((i) => i + 1));
+    // 只读打开不写日志（§17.8 单写者）—— 所以看两次，条数不变
+    expect(second).toHaveLength(first.length);
   });
 });

@@ -31,6 +31,7 @@ import {
   reclaim,
   resources,
   send,
+  authz,
   scene as sceneCmd,
   watchScene,
   show,
@@ -54,6 +55,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy init    <dir> <scenario.json>        从场景文件建一个持久化的 run
   hertaloy status  <dir>                        实例树 / 阻塞原因 / 在途消息 / 死锁
   hertaloy show    <dir> <object-id[@n]>        读一个对象版本
+  hertaloy authz   <dir> [条数]                 授权决策流水（谁做了什么，含被拒的）
   hertaloy scene   <dir> [--scope <traceid>]    导出渲染用的场景 JSON
        加 --watch [--interval 毫秒] 持续输出**场景差量**（NDJSON，一行一帧）
        第一帧是与空场景的差量，所以流上只有一种形状；没变化的轮次不输出
@@ -99,6 +101,8 @@ ${USAGE}`, code: 2 } : null;
   switch (command) {
     case "status":
       return need(1) ?? status(dir as string, actor);
+    case "authz":
+      return need(1) ?? authz(dir as string, actor, a === undefined ? undefined : Number(a));
     case "scene": {
       const at = args.indexOf("--scope");
       const scope = at === -1 ? undefined : args[at + 1];
