@@ -320,7 +320,7 @@ POST /api/truncate → { ..., cursor: {seq, objects, config} }
 ### D. `objects/` —— 版本层
 
 每个版本：`object_id` · `version` · `kind` · `content_hash` ·
-`provenance{traceid,node_id,execution_id,at_seq,derived_from[]}` · `body`（**L2**）
+`provenance{traceid,node_id,execution_id,derived_from[]}` · `body`（**L2**）
 
 | 内核对象 | body 里有什么 | 值钱在哪 |
 |---|---|---|

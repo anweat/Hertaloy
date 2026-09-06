@@ -130,7 +130,7 @@ POST /api/define | validate           → DDL（validate 干跑，不落库）
 | `deadlocks[][]` | `locks.deadlocks()` | 环，红色，最高优先级提示 |
 | `generation`（按实例） | `ContainerInstance` | 截断后的第二代，必须与第一代区分 |
 | `records[].executionId` / `termination` | `ExecutionRecord` | 五种终止不能混成一种（`CANCELLED`/`BUDGET` 是意图，不是故障） |
-| `objects[].provenance`（`derived_from` / `at_seq`） | `ObjectVersion` | 血缘 |
+| `objects[].provenance`（`derived_from`） | `ObjectVersion` | 血缘 |
 | `can{}`：每个地址上七个操作的 `{allowed, reason}` | `PermissionTable.decide` | **禁用按钮的理由不由前端编** |
 
 ### 快照的收口规则
