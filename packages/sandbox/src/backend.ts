@@ -166,6 +166,7 @@ export class SandboxBackend implements ExecutionBackend {
       });
     }
     const spec = parsed.data;
+    const retain = spec.capabilities?.retain ?? this.#retain;
 
     /**
      * 沙箱住哪归 runner 管；**叫什么由这里定**。
@@ -386,7 +387,7 @@ export class SandboxBackend implements ExecutionBackend {
         stderrTail: redact(tail(outcome.stderr), env),
         sandbox: {
           path: root,
-          retained: keeps(caps?.retain ?? this.#retain, classify(outcome, emitted)),
+          retained: keeps(retain, classify(outcome, emitted)),
         },
         ...(journal.length === 0 ? {} : { journal: journal as unknown as JournalEntry[] }),
         ...(progressFromJournal(journal) === null
@@ -423,7 +424,7 @@ export class SandboxBackend implements ExecutionBackend {
       };
     } finally {
       this.#inflight.delete(request.executionId);
-      if (!keeps(this.#retain, termination)) this.#runner.release(root);
+      if (!keeps(retain, termination)) this.#runner.release(root);
     }
   }
 
