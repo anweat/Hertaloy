@@ -177,3 +177,9 @@
 - 修法：allocate 只登记挂载与网络归属，run 根据最终策略准备并验证内网。默认网络名由工作根、原始根 trace 的完整 SHA-256 摘要生成；未给身份的分配各自组网。显式 networkName 保留主动共享语义。
 - 验证：新增 6 个 runner 用例，相关测试 26 passed / 7 skipped，sandbox typecheck 通过。通过模拟 Docker CLI/进程观察真实 runner 的准备顺序、启动参数和拒绝路径，不宣称实际隔离已测。
 - 兼容：默认不再连接旧的共享 `hertaloy-default`，不自动删除旧网络；同工作根且同根 trace 仍视为同一组。跨宿主/多租户全局运行身份需另行设计。
+
+### H09：容器身份属于一次 run 调用
+
+- 两条反例先红：不同沙箱的 box 目录并行运行、同一目录连续运行，原容器名都为 `hertaloy-box`。
+- 修法：由实际分配根的名字加每次调用的 UUID 生成容器名；启动与该调用的超时/取消继续共用同一个局部 name。
+- 验证：Docker 生命周期与现有 Docker 用例 20 passed / 7 skipped，sandbox typecheck 通过。取消第一个模拟执行只发对应的 docker kill，第二个仍挂起并可正常完成；不把它描述成跨进程物理取消。

@@ -19,6 +19,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -168,7 +169,8 @@ export class DockerRunner implements Runner {
     const host = slash(spec.root);
     const inner = this.toInner(spec.root);
 
-    const name = `hertaloy-${basename(host)}`;
+    // spec.root 通常只是名为 box 的子目录；容器身份属于本次调用，不能取该 basename。
+    const name = `hertaloy-${basename(this.#hostRootOf(inner))}-${randomUUID()}`;
     const envArgs = Object.entries(spec.env ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
     const { flag, rest } = splitArgv(spec.argv);
     const network = spec.network ?? this.network;

@@ -103,3 +103,31 @@ it("同名外网在实际 run 边界被拒绝，不启动 agent", async () => {
   await expect(pending).rejects.toThrow(/内网/);
   expect(fake.children).toHaveLength(0);
 });
+
+it("两个 box 子目录并行执行，容器名独立，取消只指向对应容器", async () => {
+  const runner = new DockerRunner({ workRoot: workRoot() });
+  const a = createSandbox(runner.allocate("job/a/exec-1"));
+  const b = createSandbox(runner.allocate("job/b/exec-2"));
+  const abort = new AbortController();
+  const first = runner.run({ root: a.box, argv: ["sleep", "60"], signal: abort.signal });
+  let secondFinished = false;
+  const second = runner.run({ root: b.box, argv: ["sleep", "60"] }).then((out) => {
+    secondFinished = true;
+    return out;
+  });
+  const names = fake.calls.filter((args) => args[0] === "run").map((args) => args[args.indexOf("--name") + 1]);
+  expect(names[0]).not.toBe(names[1]);
+  abort.abort();
+  expect((await first).cancelled).toBe(true);
+  expect(fake.calls.filter((args) => args[0] === "kill")).toEqual([["kill", names[0]]]);
+  expect(secondFinished).toBe(false);
+  fake.children[1]!.emit("close", 0);
+  expect((await second).cancelled).toBe(false);
+});
+
+it("即使同一挂载目录再次执行，也分配独立容器身份", async () => {
+  const runner = new DockerRunner({ workRoot: workRoot() });
+  const a = await run(runner, "job/a/exec-1");
+  const b = await run(runner, "job/a/exec-1");
+  expect(a[a.indexOf("--name") + 1]).not.toBe(b[b.indexOf("--name") + 1]);
+});
