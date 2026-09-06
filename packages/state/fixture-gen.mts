@@ -167,6 +167,6 @@ s.runtime.send({ traceid: a3.traceid, node: "scan", port: "in" }, {});
 s.runtime.settleAll();
 s.persist();
 
-process.stdout.write(`${JSON.stringify(exportSnapshot(s), null, 1)}
+process.stdout.write(`${JSON.stringify(exportSnapshot(s, { kind: "human", id: "local" }), null, 1)}
 `);
 s.close();

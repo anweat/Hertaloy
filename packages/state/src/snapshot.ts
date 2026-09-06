@@ -12,7 +12,7 @@
  * 形状仍是 head 的形状，只是去掉了外衣和用不上的字段。
  */
 
-import type { Runtime } from "@nodeflow/kernel";
+import type { Principal } from "@nodeflow/contracts";
 import type { RunState } from "./run-state.js";
 
 export interface RunSnapshot {
@@ -31,30 +31,45 @@ export interface RunSnapshot {
    * `runtime.locks` 本来就是公开 getter —— 缺的从来只是这一行导出。
    */
   readonly locks: readonly unknown[];
-  /**
-   * 授权决策日志 —— 放行与拒绝都在里面。
-   *
-   * 不按 scope 过滤：它记的是"谁对什么做了什么判断"，本身就是全局审计，
-   * 而且被拒的那些 target 可能根本不在任何 scope 里。
-   */
-  readonly audit: readonly unknown[];
 }
 
 /**
  * 导出一份快照。`scope` 给了就只导那个前缀的子树 —— 视口就是前缀，
  * 裁剪就是前缀查询（那套前缀机制的又一次复用）。
+ *
+ * ## 走 ControlPlane，不绕过它
+ *
+ * 此前这个函数**不收 actor，一次授权检查都不做**，直接读 `runtime.*` /
+ * `registry.*` / `store.*`。而 CLI 里其他所有读命令走的都是
+ * `control.xxx(actor, …)`。于是它一旦有出口，就会成为全仓**权限最高、
+ * 检查最少**的那条读路径 —— 而它返回的比任何一个已授权查询都多。
+ *
+ * 现在两处授权，各自对得上被读的东西：
+ *
+ *   `control.subtree(actor, scope ?? root)`   run 侧的一切（实例 / 消息 / 记录 /
+ *                                             对象 / 义务）都在这个前缀内，
+ *                                             一次判定覆盖，也只留一条审计
+ *   `control.read(actor, templateRef)`        模板不在那个前缀里（`root@1`），
+ *                                             按对象身份单独判
+ *
+ * ## 不再导出授权日志
+ *
+ * 原来有个 `audit` 字段。它**零消费者** —— `@nodeflow/scene` 的 schema 根本
+ * 不收它；而它偏偏是最敏感的那份（"谁被拒了"），注释里还写着**不按 scope 过滤**。
+ * 既是化石又是泄漏点。要看审计有 `authz.jsonl`，那是它该在的地方（§17.6）。
  */
-export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
-  const runtime: Runtime = state.runtime;
+export function exportSnapshot(state: RunState, actor: Principal, scope?: string): RunSnapshot {
+  const runtime = state.runtime;
   const root = state.registry.rootTrace;
+  const viewport = scope ?? root;
   const inScope = (traceid: string): boolean =>
-    scope === undefined || traceid === scope || traceid.startsWith(`${scope}/`);
+    viewport === null || traceid === viewport || traceid.startsWith(`${viewport}/`);
 
   const instances: Record<string, unknown> = {};
   const templates: Record<string, unknown> = {};
-  const roots = root === null ? [] : state.registry.subtree(root);
+  // ★ 唯一一次 run 侧授权 —— 之后读到的东西都在这个前缀内
+  const roots = viewport === null ? [] : state.control.subtree(actor, viewport);
   for (const instance of roots) {
-    if (!inScope(instance.traceid)) continue;
     instances[instance.traceid] = {
       traceid: instance.traceid,
       templateRef: instance.templateRef,
@@ -69,7 +84,8 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
       bindings: instance.bindings.map((b) => ({ ...b })),
     };
     if (templates[instance.templateRef] === undefined) {
-      templates[instance.templateRef] = state.store.resolve(instance.templateRef).body;
+      // 模板不在 viewport 前缀里，按对象身份单独授权
+      templates[instance.templateRef] = state.control.read(actor, instance.templateRef).body;
     }
   }
 
@@ -124,5 +140,5 @@ export function exportSnapshot(state: RunState, scope?: string): RunSnapshot {
       ...(l.originNode === undefined ? {} : { originNode: l.originNode }),
     }));
 
-  return { root, instances, templates, messages, records, objects, locks, audit: state.authzLog.recent() };
+  return { root, instances, templates, messages, records, objects, locks };
 }
