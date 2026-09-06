@@ -1307,8 +1307,8 @@ export class Runtime implements Snapshotable {
    * "有没有进程在跑"根本不是持久状态，它是**进程本地事实**（`#busy`）。
    * 把进程本地事实写进持久状态，才需要状态机去对齐两边；不写就不需要。
    *
-   * 判据靠状态目录锁给出：单写者模型下，**拿到锁时看到的 RUNNING 必然是孤儿** ——
-   * 能写这个 run 的进程只有一个，而它就是我们自己。
+   * 这里只知道本 Runtime 没在驱动，不能证明其他进程没有在跑。
+   * 持久化宿主必须先取得独占驱动权（CLI 用 driver.lock），才能据此恢复。
    */
   orphanedExecutions(): readonly ExecutionRecord[] {
     return this.#ledger.orphans();

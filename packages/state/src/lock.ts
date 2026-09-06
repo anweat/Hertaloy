@@ -27,8 +27,8 @@ export class StateLock {
   readonly #path: string;
   #held = false;
 
-  constructor(root: string) {
-    this.#path = lockPath(root);
+  constructor(root: string, name: "head.lock" | "driver.lock" = "head.lock") {
+    this.#path = join(root, name);
   }
 
   get held(): boolean {
@@ -47,7 +47,7 @@ export class StateLock {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       throw new Error(
         `状态目录已被占用：${this.#path}（持有者 ${describe(this.#path)}）。` +
-          "同一个 run 不支持多进程并发写（§17.11）。确认那个进程已经死了就删掉这个文件。",
+          "该锁保护的操作不可并发。确认持有进程已经结束且没有后继持有者，再清理这个锁文件。",
       );
     }
   }

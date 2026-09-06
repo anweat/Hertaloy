@@ -25,6 +25,12 @@ hertaloy status ./run
 要跑 agent 节点得显式给执行面：`hertaloy drain ./run --runner local|wsl|docker`。
 **不给就不跑 agent** ——起进程、可能出网、可能花钱，不该是某个 flag 忘写就悄悄发生的。
 
+同一状态目录一次只允许一个 `drain`。`driver.lock` 覆盖整个推进过程，
+`head.lock` 只保护读改写，因此等待 agent 时仍可 `status`、`send`、`truncate`。
+遇到占用错误，先按报错中的 PID 检查持有进程；确认其已结束且没有后继持有者后
+才清理报错指向的锁文件。直接嵌入 Runtime/RunState 的宿主同样需要保证独占驱动权，
+尤其不能仅凭拿到了 `head.lock` 就把 RUNNING 执行认作孤儿。
+
 ---
 
 ## 1. 写 handler

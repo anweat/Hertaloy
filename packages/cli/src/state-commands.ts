@@ -15,7 +15,7 @@
  */
 
 import { checkAgentSpec } from "@nodeflow/sandbox";
-import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { headPath } from "@nodeflow/state";
 import { join } from "node:path";
 import {
@@ -28,6 +28,7 @@ import {
 } from "@nodeflow/scene";
 import {
   RunState,
+  StateLock,
   addResource,
   exportSnapshot,
   loadResources,
@@ -471,6 +472,8 @@ export async function drain(
   const results: Step[] = [];
   let settled: readonly string[] = [];
   let converged = false;
+  // 驱动权跨越锁外执行阶段；head.lock 仍只保护短暂的读改写。
+  const driver = new StateLock(dir, "driver.lock");
 
   /**
    * 每一步都**重新开关状态目录**。
@@ -497,6 +500,8 @@ export async function drain(
   };
 
   try {
+    mkdirSync(dir, { recursive: true });
+    driver.acquire();
     const root = withState((s) => {
       for (const [name, fn] of Object.entries(BUILTIN_HANDLERS)) {
         s.runtime.registerHandler(name, fn);
@@ -504,14 +509,15 @@ export async function drain(
       /**
        * **认领孤儿只在这里做一次** —— 推进开始之前。
        *
-       * 此刻我们确实是唯一在跑的：还没有任何 claim 被放出去。
+       * driver.lock 证明本 CLI 驱动拥有独占推进权，head.lock 本身不能证明。
        * 循环里每步重开状态目录时不能再认领，否则会把自己刚落盘的 claim
        * 当成孤儿，agent 还在外面跑就被派了第二个。
        */
-      for (const f of s.reconcile()) {
-        results.push(f as Step);
+      const trace = s.registry.rootTrace;
+      if (trace !== null) {
+        for (const f of s.control.reconcile(actor, trace)) results.push(f as Step);
       }
-      return s.registry.rootTrace;
+      return trace;
     });
     if (root === null) return fail("空状态：没有根容器可推进。");
 
@@ -538,7 +544,7 @@ export async function drain(
           }
           const { executionId } = claimed.record;
 
-          // ← 这里没有锁。agent 爱跑多久跑多久，truncate 随时能进来。
+          // ← 这里只持有驱动锁；send/truncate 需要的 head.lock 已释放。
           let raw: unknown;
           let failure: string | null = null;
           try {
@@ -571,6 +577,8 @@ export async function drain(
   } catch (error) {
     if (error instanceof AuthorizationError) return fail(`拒绝：${error.message}`);
     return fail(`推进失败：${(error as Error).message}`);
+  } finally {
+    driver.release();
   }
 
   /**

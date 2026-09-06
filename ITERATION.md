@@ -67,3 +67,10 @@
 - 修法：apply/fail 的共同前置条件是 attempt 仍为 RUNNING，检查早于读消息、清 driving、写观测。仅检查 generation 和 CLAIMED 不能区分同一消息的两次 attempt。
 - 兼容变化：迟到结果仍返回作废失败，但已结算记录保留原来的 SETTLED / termination，不再被迟到结果改成 VOIDED；三条旧测试同步改为检查这个更严格的保持性质。
 - 验证：kernel 294/294、state 65/65，两个包 typecheck 通过。新 attempt 的 driving 和 CLAIMED 不变，合法新结果仍能消费消息。
+
+### H03b：CLI 独占驱动权
+
+- 真实双进程反例先红：子进程已 claim、等待屏障期间，父进程的第二次 drain 仍成功。修复后第二次被拒，同一条消息只启动一次。
+- 修法：复用文件原子排他的 StateLock，新增固定用途 `driver.lock`，覆盖整个 drain；`head.lock` 仍按每步释放。恢复前改走 `control.reconcile`，先授权再操作。
+- 验证：包含并发、挂起 agent、状态命令及工作流的 56 条测试通过；state/CLI typecheck 通过。跨进程 send/truncate 可提交、完成及授权失败都释放驱动锁，无权恢复不改遗留记录。
+- 复审边界：这是本地 CLI 的单驱动约束，不是执行租约。崩溃后与既有 head.lock 一样保守拒绝，需确认旧持有者已结束再清理；不自动抢锁。直接嵌入内核的宿主仍负责驱动归属。两个锁保护不同寿命的事实，合用 head.lock 会重新阻断截断命令。
