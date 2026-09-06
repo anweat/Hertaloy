@@ -3,79 +3,156 @@
 <title>Hertaloy 观测</title>
 <style>
   :root {
-    --bg: #14161a; --panel: #1c1f26; --line: #2b303b; --dim: #7c8595;
-    --text: #dfe4ee; --accent: #6ea8fe; --warn: #e0a458; --bad: #e06c75; --ok: #7fb069;
+    --bg: #0e1013;
+    --bg-2: #12151a;
+    --panel: #171b22;
+    --panel-2: #1d222b;
+    --line: #262c37;
+    --line-soft: #1f242d;
+    --dim: #6b7688;
+    --text: #d8dee9;
+    --text-hi: #f0f4fa;
+
+    /* 流的四种来路各一个色，与线型一起构成判别 —— 但判别来自字段，不来自枚举 */
+    --edge: #5b8dd9;     /* 内网边：注册期证实 */
+    --gw: #d9a05b;       /* 网关：别名解析 */
+    --signal: #9b7fd4;   /* 信号：容器自己发的 */
+    --outside: #4fb3a5;  /* 图外：人 / CLI */
+
+    --run: #5b8dd9;
+    --fail: #d9636c;
+    --ok: #6fae7d;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  #app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
-  #canvas { position: relative; overflow: auto; padding: 20px; }
-  #side { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
-  .side-sec { border-bottom: 1px solid var(--line); padding: 10px 12px; overflow: auto; }
-  .side-sec h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: .1em; color: var(--dim);
-                 text-transform: uppercase; font-weight: 600; }
-  #detail { flex: 1 1 55%; }
-  #outside, #authz { flex: 1 1 22%; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 800px at 20% -10%, #171b22 0%, var(--bg) 60%);
+    color: var(--text);
+    font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app { display: grid; grid-template-columns: 1fr minmax(300px, 380px); height: 100vh; }
 
-  .inst, .slot { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 8px 10px;
-                 background: var(--panel); }
-  .slot { border-style: dashed; background: transparent; }
-  .slot.empty { opacity: .45; }
-  .hd { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
-  .hd .name { font-weight: 600; }
-  .hd .meta { color: var(--dim); font-size: 11px; }
-  .open { color: var(--ok); } .terminal { color: var(--dim); }
-  .nodes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .node { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; cursor: pointer;
-          background: #20242c; }
-  .node:hover, .hd:hover .name { outline: 1px solid var(--accent); outline-offset: 2px; }
-  .node .ports { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
-  .p { font-size: 10px; padding: 0 4px; border-radius: 3px; border: 1px solid var(--line);
-       color: var(--dim); }
-  .p.recv { border-color: #35507a; } .p.emit { border-color: #4a5a35; }
-  .p.gw { border-color: var(--warn); color: var(--warn); }
-  .p.servo::after { content: "\00b7"; color: var(--accent); }
-  .running { border-color: var(--accent); } .failed { border-color: var(--bad); }
-  .done { opacity: .7; }
-  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px; }
-  .row { display: flex; gap: 8px; font-size: 11px; padding: 1px 0; }
-  .row .who { color: var(--accent); } .row .no { color: var(--bad); }
-  #status { padding: 6px 12px; color: var(--dim); font-size: 11px; border-bottom: 1px solid var(--line); }
-  .waits { color: var(--warn); }
+  /* ── 画布 ───────────────────────────────────────────── */
+  #canvas { position: relative; overflow: auto; padding: 28px 28px 28px 76px; }
+  /* 线画在盒子**上层** —— 盒子背景不透明，压在下面等于没画。
+     交叉是节点图的常态，靠低不透明度 + 圆头细线让它不抢戏。 */
+  #wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 5; }
+  #tree { position: relative; z-index: 1; }
+
+  /** 外部入口带：人投的消息从这条带子进来。它在画布**边缘**，不是图里的节点。 */
+  #gutter {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 48px;
+    border-right: 1px dashed var(--line);
+    background: linear-gradient(90deg, rgba(79,179,165,.06), transparent);
+  }
+  #gutter span {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) rotate(-90deg);
+    white-space: nowrap; color: var(--outside); opacity: .7;
+    font-size: 10px; letter-spacing: .28em;
+  }
+
+  .box {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin: 10px 0;
+    padding: 9px 11px 11px;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    box-shadow: 0 1px 0 rgba(255,255,255,.02) inset, 0 6px 18px -12px #000;
+  }
+  .box.slot {
+    border-style: dashed; background: none; box-shadow: none;
+    border-color: var(--line-soft);
+  }
+  .box.slot.empty { opacity: .4; }
+  .box.terminal { opacity: .78; }
+
+  .hd { display: flex; gap: 9px; align-items: baseline; cursor: pointer; user-select: none; }
+  .hd:hover .name { color: var(--text-hi); }
+  .name { font-weight: 600; letter-spacing: .01em; }
+  .meta { color: var(--dim); font-size: 10.5px; }
+  .meta.open { color: var(--ok); }
+  .meta.waits { color: var(--gw); }
+  .bar { flex: 1; height: 2px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--ok); opacity: .55; }
+
+  .nodes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .node {
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px 7px;
+    background: #1a1f27; cursor: pointer; min-width: 92px;
+    transition: border-color .12s, transform .12s;
+  }
+  .node:hover { border-color: #3d475a; transform: translateY(-1px); }
+  .node.running { border-color: var(--run); box-shadow: 0 0 0 1px rgba(91,141,217,.18); }
+  .node.failed  { border-color: var(--fail); box-shadow: 0 0 0 1px rgba(217,99,108,.18); }
+  .node.done { opacity: .72; }
+  .node .label { font-weight: 600; font-size: 12px; margin-bottom: 5px; }
+  .ports { display: flex; flex-wrap: wrap; gap: 4px; }
+  .p {
+    font-size: 9.5px; line-height: 1.5; padding: 0 5px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+  .p.recv { border-color: #2f4463; }
+  .p.emit { border-color: #3f4a30; }
+  .p.gw   { border-color: var(--gw); color: var(--gw); }
+  .p.servo { box-shadow: 0 0 0 1px rgba(91,141,217,.25) inset; }
+
+  /* ── 侧栏 ───────────────────────────────────────────── */
+  #side { border-left: 1px solid var(--line); display: flex; flex-direction: column;
+          background: var(--bg-2); min-width: 0; }
+  #status { padding: 9px 14px; color: var(--dim); font-size: 10.5px;
+            border-bottom: 1px solid var(--line); display: flex; gap: 10px; }
+  #status b { color: var(--text); font-weight: 600; }
+  .sec { border-bottom: 1px solid var(--line); padding: 11px 14px; overflow: auto; min-height: 0; }
+  .sec h2 { margin: 0 0 9px; font-size: 10px; letter-spacing: .16em; color: var(--dim);
+            text-transform: uppercase; font-weight: 600; }
+  #detail { flex: 1 1 52%; }
+  #legend { flex: 0 0 auto; }
+  #outside, #authz { flex: 1 1 24%; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px;
+        color: #c6cfdd; }
+  .row { display: flex; gap: 8px; font-size: 10.5px; padding: 1.5px 0; align-items: baseline; }
+  .row .seq { color: var(--outside); }
+  .row .yes { color: var(--ok); } .row .no { color: var(--fail); }
+  .row .who { color: var(--text); }
+  .lg { display: flex; align-items: center; gap: 7px; font-size: 10.5px; padding: 2px 0;
+        color: var(--dim); }
+  .lg svg { flex: 0 0 34px; }
 </style>
+
 <div id="app">
-  <div id="canvas"><div id="tree"></div></div>
+  <div id="canvas">
+    <div id="gutter"><span>外部注入</span></div>
+    <svg id="wires"></svg>
+    <div id="tree"></div>
+  </div>
   <div id="side">
     <div id="status">连接中…</div>
-    <div class="side-sec" id="detail"><h2>配置</h2><pre id="detail-body">点左边任意一个容器 / 子槽 / 节点</pre></div>
-    <div class="side-sec" id="outside"><h2>图外来的（人 / CLI 投的）</h2><div id="outside-body"></div></div>
-    <div class="side-sec" id="authz"><h2>授权流水</h2><div id="authz-body"></div></div>
+    <div class="sec" id="detail"><h2>配置</h2><pre id="detail-body">点任意一个容器 / 子槽 / 节点</pre></div>
+    <div class="sec" id="legend"><h2>线型</h2><div id="legend-body"></div></div>
+    <div class="sec" id="outside"><h2>图外来的（人 / CLI 投的）</h2><div id="outside-body"></div></div>
+    <div class="sec" id="authz"><h2>授权流水</h2><div id="authz-body"></div></div>
   </div>
 </div>
+
 <script type="module">
 const TOKEN = "__HERTALOY_TOKEN__";
+const SVGNS = "http://www.w3.org/2000/svg";
 const api = (p) => fetch(p, { headers: { "x-hertaloy-token": TOKEN } }).then((r) => r.json());
 
-/**
- * 配置流：不可变、按版本寻址（C4 pin + C5 内容寻址）⇒ 拉一次，缓存永不失效。
- * 它**不在每帧的场景里**，否则等于每帧重传永远不变的东西。
- */
+/** 配置流：不可变、按版本寻址 ⇒ 拉一次，缓存永不失效。不在每帧的场景里。 */
 let templates = {};
-
-/** 当前场景。差量按身份合并进来 —— 键规则必须与后端 diff 一致。 */
 let scene = { cells: [], flows: [], tethers: [], cards: [], range: { from: 1, to: 1 }, viewport: "" };
 
-const keyOfTether = (t) => t.from + "|" + t.to + "|" + t.relation;
+const tetherKey = (t) => t.from + "|" + t.to + "|" + t.relation;
 
 function apply(delta) {
-  const colls = [
-    ["cells", (x) => x.id],
-    ["flows", (x) => x.id],
-    ["cards", (x) => x.id],
-    ["tethers", keyOfTether],
-  ];
+  const colls = [["cells", (x) => x.id], ["flows", (x) => x.id],
+                 ["cards", (x) => x.id], ["tethers", tetherKey]];
   for (const [coll, keyer] of colls) {
     const d = delta[coll];
     if (d === undefined) continue;
@@ -88,11 +165,12 @@ function apply(delta) {
   if (delta.viewport !== undefined) scene.viewport = delta.viewport;
 }
 
-/**
- * 端口模式靠**字段有无**判，不认任何枚举 —— 与内核 MessageSource 同一条规则。
- * 第五种网关模式出现时这里不用改：它只问"有没有 alias / callback / reply"。
+/* ── 判别：全部来自**字段有无**，没有任何枚举 ───────────────────────
+ *
+ * 这与内核判信封 source 是同一条规则（见 MessageSource：「三种情形，靠字段
+ * 有无区分，不需要标签」）。第五种网关模式出现时这里一行都不用改。
  */
-function portClass(decl) {
+function portKind(decl) {
   const c = ["p", decl.direction === "receive" ? "recv" : "emit"];
   if (decl.alias !== undefined || decl.callback !== undefined || decl.reply !== undefined) c.push("gw");
   const vars = decl.servo && decl.servo.vars ? Object.keys(decl.servo.vars).length : 0;
@@ -100,154 +178,281 @@ function portClass(decl) {
   return c.join(" ");
 }
 
-/** 节点的模板 = 它所在实例 pin 的那份。`cell.identity` 存的就是 templateRef。 */
+/** 流的样式：四个字段的组合，不是一个 kind 字段。 */
+function wireStyle(f) {
+  if (f.at.length === 0) {
+    return { color: "var(--dim)", dash: "3 5", width: 1, glow: 0, name: "声明了，没走过" };
+  }
+  if (f.from === null) {
+    return { color: "var(--outside)", dash: "0", width: 1.4, glow: 1, name: "图外来的" };
+  }
+  if (f.from.port === undefined) {
+    return { color: "var(--signal)", dash: "7 3 2 3", width: 1.4, glow: 1, name: "信号" };
+  }
+  if (f.alias !== undefined) {
+    // 确定度越高越粗越实 —— 边和隧道是同一元素的两个确定度
+    return { color: "var(--gw)", dash: f.certainty > 0.7 ? "0" : "6 4",
+             width: 1 + f.certainty * 1.6, glow: 1, name: "网关（别名）" };
+  }
+  return { color: "var(--edge)", dash: "0", width: 1.6, glow: 1, name: "内网边" };
+}
+
+/* ── 模板关联：cell.identity 存的就是 templateRef ──────────────────── */
 function templateOf(cell) {
   if (cell.kind !== "node") return templates[cell.identity];
   const owner = scene.cells.find((c) => c.id === cell.parent);
   return owner ? templates[owner.identity] : undefined;
 }
-
 function portsOf(cell) {
   const tpl = templateOf(cell);
   const nodeId = cell.id.split("#").pop();
   return (tpl && tpl.nodes && tpl.nodes[nodeId] && tpl.nodes[nodeId].ports) || {};
 }
-
 function detailOf(cell) {
-  if (cell.kind === "instance") {
+  if (cell.kind === "instance")
     return { 实例: cell.id, 模板: cell.identity, 相位: cell.phase,
-      生存期: cell.span, 进度: cell.progress, 定义: templates[cell.identity] };
-  }
-  if (cell.kind === "slot") {
+             生存期: cell.span, 进度: cell.progress, 定义: templates[cell.identity] };
+  if (cell.kind === "slot")
     return { 子槽: cell.label, 所属: cell.parent, 子模板: cell.identity,
-      锚点: cell.ports, 定义: templates[cell.identity] };
-  }
+             锚点: cell.ports, 定义: templates[cell.identity] };
   const nodeId = cell.id.split("#").pop();
   const tpl = templateOf(cell);
   return { 节点: nodeId, 所属实例: cell.parent, 身份: cell.identity, 相位: cell.phase,
-    定义: tpl && tpl.nodes ? tpl.nodes[nodeId] : undefined };
+           定义: tpl && tpl.nodes ? tpl.nodes[nodeId] : undefined };
 }
-
-function show(cell) {
+const show = (cell) => {
   document.getElementById("detail-body").textContent = JSON.stringify(detailOf(cell), null, 2);
-}
+};
 
+/* ── 渲染：CSS 管嵌套，SVG 管连线 ─────────────────────────────────── */
 const childrenOf = (id) => scene.cells.filter((c) => c.parent === id);
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
 
 function renderNode(cell) {
-  const el = document.createElement("div");
-  el.className = "node " + cell.phase;
-  const name = document.createElement("div");
-  name.textContent = cell.label;
-  el.append(name);
-  const pr = document.createElement("div");
-  pr.className = "ports";
-  for (const [pname, decl] of Object.entries(portsOf(cell))) {
-    const s = document.createElement("span");
-    s.className = portClass(decl);
-    s.textContent = pname;
+  const n = el("div", "node " + cell.phase);
+  n.dataset.cell = cell.id;
+  n.append(el("div", "label", cell.label));
+  const pr = el("div", "ports");
+  for (const [name, decl] of Object.entries(portsOf(cell))) {
+    const s = el("span", portKind(decl), name);
+    s.dataset.anchor = cell.id + "::" + name;
     s.title = JSON.stringify(decl, null, 2);
     pr.append(s);
   }
-  el.append(pr);
-  el.onclick = (e) => { e.stopPropagation(); show(cell); };
-  return el;
+  n.append(pr);
+  n.onclick = (e) => { e.stopPropagation(); show(cell); };
+  return n;
 }
 
 function renderBox(cell) {
   const kids = childrenOf(cell.id);
-  const isSlot = cell.kind === "slot";
-  const el = document.createElement("div");
-  el.className = isSlot ? "slot" + (kids.length === 0 ? " empty" : "") : "inst";
+  const slot = cell.kind === "slot";
+  const box = el("div", "box" + (slot ? " slot" + (kids.length === 0 ? " empty" : "") : "") +
+                        (cell.phase === "done" ? " terminal" : ""));
+  box.dataset.cell = cell.id;
 
-  const waiting = scene.tethers.filter((t) => t.relation === "waits" && t.from === cell.id);
-  const hd = document.createElement("div");
-  hd.className = "hd";
-  const nm = document.createElement("span");
-  nm.className = "name";
-  nm.textContent = isSlot ? "▢ " + cell.label : cell.label;
-  hd.append(nm);
-  const meta = document.createElement("span");
-  meta.className = "meta " + (cell.phase === "idle" ? "open" : "terminal");
-  meta.textContent = isSlot ? "子槽" : cell.phase;
-  hd.append(meta);
+  const hd = el("div", "hd");
+  hd.append(el("span", "name", slot ? "▢ " + cell.label : cell.label));
+  hd.append(el("span", "meta" + (cell.phase === "idle" ? " open" : ""), slot ? "子槽" : cell.phase));
   if (cell.progress) {
-    const p = document.createElement("span");
-    p.className = "meta";
-    p.textContent = cell.progress.done + "/" + cell.progress.total;
-    hd.append(p);
+    const bar = el("div", "bar");
+    const fill = el("i");
+    fill.style.width = Math.round((cell.progress.done / Math.max(1, cell.progress.total)) * 100) + "%";
+    bar.append(fill);
+    hd.append(bar, el("span", "meta", cell.progress.done + "/" + cell.progress.total));
   }
+  const waiting = scene.tethers.filter((t) => t.relation === "waits" && t.from === cell.id);
   if (waiting.length > 0) {
-    const w = document.createElement("span");
-    w.className = "meta waits";
-    w.textContent = "等 " + waiting.map((x) => x.to.split("/").pop()).join("、");
-    hd.append(w);
+    hd.append(el("span", "meta waits", "等 " + waiting.map((w) => w.to.split("/").pop()).join("、")));
   }
   hd.onclick = (e) => { e.stopPropagation(); show(cell); };
-  el.append(hd);
+  box.append(hd);
 
   const nodeKids = kids.filter((k) => k.kind === "node");
   if (nodeKids.length > 0) {
-    const box = document.createElement("div");
-    box.className = "nodes";
-    for (const k of nodeKids) box.append(renderNode(k));
-    el.append(box);
+    const wrap = el("div", "nodes");
+    for (const k of nodeKids) wrap.append(renderNode(k));
+    box.append(wrap);
   }
-  for (const k of kids) if (k.kind !== "node") el.append(renderBox(k));
-  return el;
+  for (const k of kids) if (k.kind !== "node") box.append(renderBox(k));
+  return box;
+}
+
+/** 锚点 → 画布坐标。端口缺席时落在**盒子边缘**（信号就是这样出来的）。 */
+function anchorAt(canvas, ref, side) {
+  const base = canvas.getBoundingClientRect();
+  const dx = canvas.scrollLeft - base.left;
+  const dy = canvas.scrollTop - base.top;
+  if (ref !== null && ref.port !== undefined) {
+    const node = canvas.querySelector('[data-anchor="' + CSS.escape(ref.cell + "::" + ref.port) + '"]');
+    if (node !== null) {
+      const r = node.getBoundingClientRect();
+      return { x: r.left + dx + (side === "out" ? r.width : 0), y: r.top + dy + r.height / 2 };
+    }
+  }
+  const cellId = ref === null ? null : ref.cell;
+  if (cellId !== null) {
+    const boxEl = canvas.querySelector('[data-cell="' + CSS.escape(cellId) + '"]');
+    if (boxEl !== null) {
+      const r = boxEl.getBoundingClientRect();
+      return { x: r.left + dx + (side === "out" ? r.width : 0), y: r.top + dy + r.height / 2 };
+    }
+  }
+  return null; // 图外：由调用方落到入口带上
+}
+
+function drawWires() {
+  const canvas = document.getElementById("canvas");
+  const svg = document.getElementById("wires");
+  svg.setAttribute("width", String(canvas.scrollWidth));
+  svg.setAttribute("height", String(canvas.scrollHeight));
+  svg.replaceChildren();
+
+  const defs = document.createElementNS(SVGNS, "defs");
+  svg.append(defs);
+
+  let n = 0;
+  for (const f of scene.flows) {
+    const to = anchorAt(canvas, f.to, "in");
+    if (to === null) continue;
+    // 图外来的：从左侧入口带出发 —— 画布边缘的固定位置，不是图里的假节点
+    const from = f.from === null ? { x: 24, y: to.y } : anchorAt(canvas, f.from, "out");
+    if (from === null) continue;
+
+    const st = wireStyle(f);
+    const mid = (from.x + to.x) / 2;
+    const d = "M " + from.x + " " + from.y +
+              " C " + mid + " " + from.y + ", " + mid + " " + to.y + ", " + to.x + " " + to.y;
+
+    const id = "w" + n++;
+
+    /**
+     * 先描一道暗边再画线 —— 线要从盒子上方穿过去，没有这道边它会和下面的
+     * 文字糊在一起。比"绕开盒子"便宜得多，效果也够。
+     */
+    const halo = document.createElementNS(SVGNS, "path");
+    halo.setAttribute("d", d);
+    halo.setAttribute("fill", "none");
+    halo.setAttribute("stroke", "#0e1013");
+    halo.setAttribute("stroke-width", String(st.width + 2.4));
+    halo.setAttribute("stroke-linecap", "round");
+    halo.setAttribute("opacity", "0.42");
+    svg.append(halo);
+
+    const path = document.createElementNS(SVGNS, "path");
+    path.setAttribute("id", id);
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", st.color);
+    path.setAttribute("stroke-width", String(st.width));
+    path.setAttribute("stroke-linecap", "round");
+    if (st.dash !== "0") path.setAttribute("stroke-dasharray", st.dash);
+    path.setAttribute("opacity", String(0.34 + 0.5 * Math.min(1, f.certainty)));
+    svg.append(path);
+
+    // 落点上一个小圆 —— 一眼看出这条线接在哪个端口上
+    const cap = document.createElementNS(SVGNS, "circle");
+    cap.setAttribute("cx", String(to.x));
+    cap.setAttribute("cy", String(to.y));
+    cap.setAttribute("r", "2");
+    cap.setAttribute("fill", st.color);
+    cap.setAttribute("opacity", st.glow === 1 ? "0.85" : "0.4");
+    svg.append(cap);
+
+    /**
+     * 光点：一条流上跑几颗、跑多快，由它自己的活跃度决定 —— 不另设参数。
+     * 没走过的流（`at` 为空）不跑光点，静止的图就是静止的。
+     */
+    if (st.glow === 1) {
+      const count = Math.min(3, 1 + Math.floor(f.activity * 6));
+      const dur = (2.6 - Math.min(1.6, f.activity * 4)).toFixed(2) + "s";
+      for (let i = 0; i < count; i++) {
+        const dot = document.createElementNS(SVGNS, "circle");
+        dot.setAttribute("r", String(1.6 + st.width * 0.35));
+        dot.setAttribute("fill", st.color);
+        dot.setAttribute("opacity", "0.9");
+        const motion = document.createElementNS(SVGNS, "animateMotion");
+        motion.setAttribute("dur", dur);
+        motion.setAttribute("repeatCount", "indefinite");
+        motion.setAttribute("begin", (i * (parseFloat(dur) / count)).toFixed(2) + "s");
+        motion.setAttribute("rotate", "auto");
+        const mp = document.createElementNS(SVGNS, "mpath");
+        mp.setAttribute("href", "#" + id);
+        motion.append(mp);
+        dot.append(motion);
+        svg.append(dot);
+      }
+    }
+  }
+}
+
+function renderLegend() {
+  const seen = new Map();
+  for (const f of scene.flows) {
+    const st = wireStyle(f);
+    if (!seen.has(st.name)) seen.set(st.name, st);
+  }
+  const rows = [...seen.values()].map((st) => {
+    const row = el("div", "lg");
+    const svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("width", "34"); svg.setAttribute("height", "10");
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", "M 1 5 L 33 5");
+    p.setAttribute("stroke", st.color);
+    p.setAttribute("stroke-width", String(st.width));
+    if (st.dash !== "0") p.setAttribute("stroke-dasharray", st.dash);
+    svg.append(p);
+    row.append(svg, el("span", "", st.name));
+    return row;
+  });
+  document.getElementById("legend-body").replaceChildren(...rows);
 }
 
 function render() {
   const roots = scene.cells.filter((c) => c.parent === null);
   document.getElementById("tree").replaceChildren(...roots.map(renderBox));
 
-  /**
-   * 图外来的**不进画布** —— 人的干预不是图里的一个假节点，它显示在画布外
-   * 的固定位置。判别式是 `from === null && at.length > 0`（声明了但从没命中
-   * 的那种 `at` 是空的）。
-   */
   const outside = scene.flows.filter((f) => f.from === null && f.at.length > 0);
   const rows = [];
   for (const f of outside) {
     for (const seq of f.at) {
-      const d = document.createElement("div");
-      d.className = "row";
-      const s = document.createElement("span");
-      s.className = "who";
-      s.textContent = "#" + seq;
-      const t = document.createElement("span");
-      t.textContent = "→ " + f.to.cell + "." + f.to.port;
-      d.append(s, t);
-      rows.push(d);
+      const r = el("div", "row");
+      r.append(el("span", "seq", "#" + seq), el("span", "", "→ " + f.to.cell + "." + f.to.port));
+      rows.push(r);
     }
   }
+  rows.sort((a, b) => Number(a.textContent.slice(1)) - Number(b.textContent.slice(1)));
   document.getElementById("outside-body").replaceChildren(...rows);
 
-  document.getElementById("status").textContent =
-    "视口 " + scene.viewport + " · 序号 " + scene.range.from + "–" + scene.range.to +
-    " · " + scene.cells.length + " 单元 / " + scene.flows.length + " 流";
+  const st = document.getElementById("status");
+  st.replaceChildren();
+  st.append(el("span", "", "视口 "), el("b", "", scene.viewport || "—"),
+            el("span", "", " 序号 " + scene.range.from + "–" + scene.range.to),
+            el("span", "", " · " + scene.cells.length + " 单元"),
+            el("span", "", " · " + scene.flows.length + " 流"));
+
+  renderLegend();
+  requestAnimationFrame(drawWires);
 }
 
 async function renderAuthz() {
   const list = await api("/authz?limit=30");
   const rows = list.slice().reverse().map((e) => {
-    const d = document.createElement("div");
-    d.className = "row";
-    const mark = document.createElement("span");
-    mark.className = e.allowed ? "who" : "no";
-    mark.textContent = e.allowed ? "✓" : "✗";
-    const who = document.createElement("span");
-    who.textContent = e.actor;
-    const op = document.createElement("span");
-    op.className = "meta";
-    op.textContent = e.op;
-    const target = document.createElement("span");
-    target.textContent = e.target;
-    d.append(mark, who, op, target);
-    return d;
+    const r = el("div", "row");
+    r.append(el("span", e.allowed ? "yes" : "no", e.allowed ? "✓" : "✗"),
+             el("span", "who", e.actor), el("span", "meta", e.op), el("span", "", e.target));
+    return r;
   });
   document.getElementById("authz-body").replaceChildren(...rows);
 }
+
+addEventListener("resize", () => requestAnimationFrame(drawWires));
+document.getElementById("canvas").addEventListener("scroll", () => requestAnimationFrame(drawWires));
 
 async function main() {
   templates = await api("/templates");
@@ -271,8 +476,5 @@ async function main() {
   }
   document.getElementById("status").textContent = "流已结束";
 }
-
-main().catch((e) => {
-  document.getElementById("status").textContent = "出错：" + e.message;
-});
+main().catch((e) => { document.getElementById("status").textContent = "出错：" + e.message; });
 </script>
