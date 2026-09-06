@@ -88,6 +88,19 @@ const FLOW = {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "hertaloy-mcp-"));
 });
+
+it("define 与 validate 对非法 agent 的判断一致，拒绝不写版本", () => {
+  const spec = { nodes: { a: { kind: "handler", ports: {},
+    agent: { argv: ["node"], workspace: { source: 42 } },
+  } } };
+  expect(call("validate_template", { spec }).isError).toBe(true);
+  const result = call("define_template", { id: "invalid-agent", spec });
+  expect(result.isError).toBe(true);
+  expect(result.text).toContain("nodes.a.agent");
+  const state = RunState.open(dir, { readOnly: true });
+  try { expect(state.store.history("invalid-agent")).toHaveLength(0); }
+  finally { state.close(); }
+});
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("★ 纪律一：actor 由服务端注入，客户端伪造不了", () => {

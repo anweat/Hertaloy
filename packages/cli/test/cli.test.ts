@@ -26,6 +26,16 @@ const leaf = {
 };
 
 describe("hertaloy validate —— 干跑校验，不落库", () => {
+  it.each([{ extends: 42 }, { extends: "base@1", override: [] }])("覆盖层先检查自身结构：%j", (spec) => {
+    expect(validate(spec).code).toBe(1);
+  });
+
+  it("合法覆盖层明确提示合并校验尚需基定义", () => {
+    const result = validate({ extends: "base@1", override: {} });
+    expect(result.code).toBe(0);
+    expect(result.text).toContain("需要基定义");
+  });
+
   /**
    * `AgentSpec` 搬去 sandbox 之后，最容易出的事是"缝没通"：schema 还在，
    * 但没人在注册期调它，于是 `workspace` 写错要等到跑 agent 才发现。

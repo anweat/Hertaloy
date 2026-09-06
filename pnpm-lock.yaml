@@ -89,6 +89,9 @@ importers:
       '@nodeflow/kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@nodeflow/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
       '@nodeflow/state':
         specifier: workspace:*
         version: link:../state

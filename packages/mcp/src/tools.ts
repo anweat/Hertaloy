@@ -21,6 +21,7 @@ import { z } from "zod";
 import type { Json, Principal } from "@nodeflow/contracts";
 import { AuthorizationError } from "@nodeflow/kernel";
 import { RunState } from "@nodeflow/state";
+import { checkAgentSpec } from "@nodeflow/sandbox";
 import {
   BUILTIN_HANDLERS,
   BUILTIN_NAMES,
@@ -83,7 +84,7 @@ function readOnly(ctx: ToolContext, fn: (s: RunState) => ToolResult): ToolResult
 
 function writable(ctx: ToolContext, fn: (s: RunState) => ToolResult): ToolResult {
   return guard(() => {
-    const state = RunState.open(ctx.dir);
+    const state = RunState.open(ctx.dir, { validateExecutionSpec: checkAgentSpec });
     try {
       const result = fn(state);
       if (!result.isError) state.persist();

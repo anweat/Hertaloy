@@ -53,3 +53,10 @@
 - 最终修法：`git init --bare --quiet <记录仓路径>` 创建目录，后续继续显式传 `--work-tree`，不往 workspace 留 .git。
 - 验证：观察器 15/15，sandbox 146 passed / 7 skipped（含真实 WSL），CLI 148/148，sandbox typecheck 通过。
 - 复审：没有改变 LocalRunner 的无 shell 执行策略；本地与 WSL 共用原 runner，未硬编码宿主机路径。Docker daemon 未运行，7 条测试维持跳过。
+
+### H02：注册校验闭合
+
+- 反例先红：kernel 5 条、CLI 2 条、MCP 1 条明确复现；另有普通根模板拒绝与合法 overlay 的对照。
+- 修法：overlay 只物化正文，回到普通注册路径执行全部校验后一次落库；没有 entry 的子槽也检查引用。MCP writable 注入 `checkAgentSpec`；CLI validate 先解析覆盖层自身结构，仍明确提示基定义校验尚未完成。
+- 验证：kernel 285/285、MCP 16/16、CLI 命令测试 13/13，三个包 typecheck 通过。
+- 复审：内核继续接受宿主自定义执行规格；没有把 sandbox 的具体 schema 移回 contracts/kernel。物化对象的 kind、基定义 provenance 与实例 pin 语义保持不变；拒绝不追加模板版本。

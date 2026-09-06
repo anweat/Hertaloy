@@ -12,6 +12,7 @@
     "@nodeflow/cli": "workspace:*",
     "@nodeflow/contracts": "workspace:*",
     "@nodeflow/kernel": "workspace:*",
+    "@nodeflow/sandbox": "workspace:*",
     "@nodeflow/state": "workspace:*",
     "zod": "^3.24.1"
   },

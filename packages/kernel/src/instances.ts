@@ -314,9 +314,9 @@ export function registerContainerTemplate(
   }
 
   // 覆盖层：解析继承链 → 施加 → 校验合并结果 → 存成物化定义（§5.1）
-  if (isOverlay(spec)) return materializeOverlay(store, templateId, spec);
+  const overlay = isOverlay(spec) ? materializeOverlay(store, templateId, spec) : undefined;
 
-  const parsed = ContainerTemplate.safeParse(spec);
+  const parsed = ContainerTemplate.safeParse(overlay?.merged ?? spec);
   if (!parsed.success) {
     throw new InvariantError(
       `模板 ${templateId} 结构非法：${parsed.error.issues
@@ -347,7 +347,12 @@ export function registerContainerTemplate(
         .join("\n  "),
     );
   }
-  const version = store.put(templateId, kind, parsed.data as unknown as JsonObject);
+  const version = store.put(
+    templateId,
+    overlay === undefined ? kind : "materialized",
+    parsed.data as unknown as JsonObject,
+    overlay === undefined ? undefined : { derived_from: [overlay.base] },
+  );
   return `${version.object_id}@${version.version}`;
 }
 
@@ -392,7 +397,11 @@ export function namespacedId(trace: TraceId, name: string): string {
  * 在注册时物化（而不是等到实例化）比设计稿更严一格：它让"注册即完整校验"
  * 这条继续成立，实例化只负责 pin 一个已经验证过的 ref。
  */
-function materializeOverlay(store: ObjectStore, templateId: string, spec: unknown): Ref {
+function materializeOverlay(
+  store: ObjectStore,
+  templateId: string,
+  spec: unknown,
+): { readonly merged: ContainerTemplate; readonly base: Ref } {
   const parsedOverlay = TemplateOverlay.safeParse(spec);
   if (!parsedOverlay.success) {
     throw new InvariantError(
@@ -425,33 +434,8 @@ function materializeOverlay(store: ObjectStore, templateId: string, spec: unknow
     );
   }
 
-  /**
-   * 合并结果必须过与基定义**同一套**连接期校验 —— 覆盖不是逃生舱。
-   *
-   * 而它此前恰恰**不是同一套**：普通路径跑 `validateContainerTemplate` 加
-   * `validateChildEntries`，覆盖路径只跑前者。于是绕一层覆盖就能塞进一个
-   * `entry` 指向子模板不存在节点的子槽 —— 注册成功、spawn 成功，运行期才炸。
-   * **"同一套"少了一半就不是同一套**；注释宣称的与代码强制的对不上，
-   * 是这个项目被咬过最多次的那一种。
-   */
-  const issues = [
-    ...validateContainerTemplate(outcome.merged),
-    ...validateChildEntries(store, outcome.merged),
-    ...validateContractRefs(store, outcome.merged),
-  ];
-  if (issues.length > 0) {
-    throw new InvariantError(
-      [`覆盖层 ${templateId} 的合并结果连接期校验失败：`, ...issues.map((i) => `${i.where}：${i.message}`)].join("\n  "),
-    );
-  }
-
-  const version = store.put(
-    templateId,
-    "materialized",
-    outcome.merged as unknown as JsonObject,
-    { derived_from: [overlay.extends] },
-  );
-  return `${version.object_id}@${version.version}`;
+  // 只负责物化；完整校验与落库回到注册入口，避免两条校验路径漂移。
+  return { merged: outcome.merged, base: overlay.extends };
 }
 
 /**
@@ -576,7 +560,7 @@ function validateContractRefs(
 }
 
 /**
- * 跨模板校验：子槽的 `entry` 必须是子模板里已声明的 receive 端口。
+ * 跨模板校验：子模板必须存在；声明的 `entry` 必须是其中的 receive 端口。
  *
  * 纯结构校验留在 contracts（无依赖、可单测）；**需要解析引用的校验放这里**，
  * 因为只有内核持有 store。这条边界值得守住 —— 一旦 contracts 依赖 store，
@@ -588,7 +572,6 @@ function validateChildEntries(
 ): readonly TemplateIssue[] {
   const issues: TemplateIssue[] = [];
   for (const [slotId, slot] of Object.entries(tpl.children)) {
-    if (slot.entry === undefined) continue;
     let childTpl;
     try {
       childTpl = ContainerTemplate.parse(store.resolve(slot.template).body);
@@ -599,6 +582,7 @@ function validateChildEntries(
       });
       continue;
     }
+    if (slot.entry === undefined) continue;
     const node = childTpl.nodes[slot.entry.node];
     if (node === undefined) {
       issues.push({

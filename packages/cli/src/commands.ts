@@ -5,6 +5,7 @@
 
 import {
   ContainerTemplate,
+  TemplateOverlay,
   isOverlay,
   validateContainerTemplate,
 } from "@nodeflow/contracts";
@@ -37,6 +38,12 @@ const fail = (text: string): CommandResult => ({ text, code: 1 });
  */
 export function validate(raw: unknown): CommandResult {
   if (isOverlay(raw)) {
+    const parsed = TemplateOverlay.safeParse(raw);
+    if (!parsed.success) {
+      return fail(["覆盖层结构非法：", ...parsed.error.issues.map(
+        (i) => `${i.path.join(".") || "(根)"}：${i.message}`,
+      )].join("\n  "));
+    }
     return ok("覆盖层：结构合法。合并结果需要基定义才能校验，请用 `run` 或 `define`。");
   }
   const parsed = ContainerTemplate.safeParse(raw);
