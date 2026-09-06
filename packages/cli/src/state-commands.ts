@@ -341,6 +341,39 @@ export async function watchScene(
 }
 
 /**
+ * 模板全文 —— **配置那一条流**。
+ *
+ * ## 为什么与场景分成两条
+ *
+ * 配置是**不可变**的（C4：实例创建时 pin 一份定义，永不迁移），而场景**每帧变**。
+ * 把 servo、端口声明、agent 规格塞进场景，等于每帧重传永远不变的东西 ——
+ * 正好毁掉 `--watch` 差量省下的那部分。
+ *
+ * 分开之后，C5 的两条性质直接兑现成一句话：**拉一次就够，缓存永不失效**。
+ * `worker@1` 永远是那份内容（内容寻址 + 引用永远精确，V3/V4）。
+ *
+ * ## 不做二次编码
+ *
+ * 给的是模板**原样的正文**，不挑字段、不编枚举。端口是内网边还是网关、
+ * 是 PUBLISH 还是 REQUEST，靠 `alias` / `callback` / `reply` 有没有来判 ——
+ * 这是内核自己那条规则（见 `MessageSource`：「三种情形，靠字段有无区分，
+ * 不需要标签」）。渲染器照抄同一条判定，而不是我们在中间再发明一套 `mode`
+ * 枚举：那样第五种网关模式出现时要改三处，而且两处判定必然漂移。
+ *
+ * ## 授权
+ *
+ * 与场景同一条：模板**跟着实例走**（`exportSnapshot` 里 `control.subtree`
+ * 已经判过）。模板住在 traceid 树之外的扁平命名空间，单独按对象名授权会把
+ * `mid@1` 算成 `mid` 而误拒 —— 那个坑深度用例抓到过一次。
+ */
+export function templates(dir: string, actor: Principal, scope?: string): CommandResult {
+  return readOnly(dir, (s) => {
+    const all = exportSnapshot(s, actor, scope).templates;
+    return ok(JSON.stringify(all, null, 2), all as never);
+  });
+}
+
+/**
  * 授权决策流水 —— **人在这个 run 里做过什么**。
  *
  * `authz.jsonl` 一直在写（每次 ControlPlane 决策，放行与拒绝都记），但

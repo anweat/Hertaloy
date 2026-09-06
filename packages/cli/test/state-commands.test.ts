@@ -21,6 +21,7 @@ import {
   send,
   show,
   status,
+  templates,
   truncate,
 } from "../src/state-commands.js";
 
@@ -387,5 +388,50 @@ describe("★ authz：谁做了什么", () => {
     expect(first.map((e) => e.seq)).toEqual([...first.keys()].map((i) => i + 1));
     // 只读打开不写日志（§17.8 单写者）—— 所以看两次，条数不变
     expect(second).toHaveLength(first.length);
+  });
+});
+
+/**
+ * ★ 配置那一条流 —— 与场景分开走。
+ *
+ * 配置**不可变**（C4：实例 pin 一份定义，永不迁移），场景**每帧变**。
+ * 塞进场景等于每帧重传不变的东西，正好毁掉 `--watch` 差量省下的那部分。
+ * 分开之后 C5 的性质直接兑现成"拉一次就够，缓存永不失效"。
+ */
+describe("★ templates：配置流", () => {
+  it("★ 带得出 servo —— 这正是场景筛掉、而点击要看的那部分", () => {
+    const r = templates(dir, HUMAN);
+    expect(r.code).toBe(0);
+    const all = JSON.parse(r.text) as Record<string, { nodes: Record<string, unknown> }>;
+    const one = Object.values(all)[0];
+    const gate = one?.nodes.gate as { ports: Record<string, { servo?: { vars: unknown } }> };
+    // 端口的 servo 声明原样在这儿：变量名、类型、取值路径
+    expect(gate.ports.in?.servo?.vars).toEqual({
+      value: { type: "short", from: "$.value" },
+      expect: { type: "short", from: "$.expect" },
+    });
+  });
+
+  it("★ 原样给，不二次编码 —— 端口模式靠字段有无判，不发明 mode 枚举", () => {
+    const all = JSON.parse(templates(dir, HUMAN).text) as Record<
+      string,
+      { nodes: Record<string, { ports: Record<string, Record<string, unknown>> }> }
+    >;
+    const port = Object.values(all)[0]?.nodes.gate?.ports.done as Record<string, unknown>;
+    // 没有 alias / callback / reply ⇒ 内网边。判定与内核同一条规则
+    // （见 MessageSource：「三种情形，靠字段有无区分，不需要标签」）
+    expect(port).toEqual({ direction: "emit" });
+    expect(Object.keys(port)).not.toContain("mode");
+  });
+
+  it("键就是 templateRef —— 与 cell.identity 对得上，可当缓存键", () => {
+    const all = JSON.parse(templates(dir, HUMAN).text) as Record<string, unknown>;
+    expect(Object.keys(all).every((k) => /@\d+$/.test(k))).toBe(true);
+  });
+
+  it("★ 无权的主体被拒 —— 与场景同一条授权", () => {
+    const r = templates(dir, AGENT);
+    expect(r.code).toBe(1);
+    expect(r.text).toMatch(/拒绝/);
   });
 });
