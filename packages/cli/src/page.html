@@ -1,0 +1,278 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Hertaloy 观测</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --line: #2b303b; --dim: #7c8595;
+    --text: #dfe4ee; --accent: #6ea8fe; --warn: #e0a458; --bad: #e06c75; --ok: #7fb069;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+  #canvas { position: relative; overflow: auto; padding: 20px; }
+  #side { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+  .side-sec { border-bottom: 1px solid var(--line); padding: 10px 12px; overflow: auto; }
+  .side-sec h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: .1em; color: var(--dim);
+                 text-transform: uppercase; font-weight: 600; }
+  #detail { flex: 1 1 55%; }
+  #outside, #authz { flex: 1 1 22%; }
+
+  .inst, .slot { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 8px 10px;
+                 background: var(--panel); }
+  .slot { border-style: dashed; background: transparent; }
+  .slot.empty { opacity: .45; }
+  .hd { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
+  .hd .name { font-weight: 600; }
+  .hd .meta { color: var(--dim); font-size: 11px; }
+  .open { color: var(--ok); } .terminal { color: var(--dim); }
+  .nodes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .node { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; cursor: pointer;
+          background: #20242c; }
+  .node:hover, .hd:hover .name { outline: 1px solid var(--accent); outline-offset: 2px; }
+  .node .ports { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+  .p { font-size: 10px; padding: 0 4px; border-radius: 3px; border: 1px solid var(--line);
+       color: var(--dim); }
+  .p.recv { border-color: #35507a; } .p.emit { border-color: #4a5a35; }
+  .p.gw { border-color: var(--warn); color: var(--warn); }
+  .p.servo::after { content: "\00b7"; color: var(--accent); }
+  .running { border-color: var(--accent); } .failed { border-color: var(--bad); }
+  .done { opacity: .7; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px; }
+  .row { display: flex; gap: 8px; font-size: 11px; padding: 1px 0; }
+  .row .who { color: var(--accent); } .row .no { color: var(--bad); }
+  #status { padding: 6px 12px; color: var(--dim); font-size: 11px; border-bottom: 1px solid var(--line); }
+  .waits { color: var(--warn); }
+</style>
+<div id="app">
+  <div id="canvas"><div id="tree"></div></div>
+  <div id="side">
+    <div id="status">连接中…</div>
+    <div class="side-sec" id="detail"><h2>配置</h2><pre id="detail-body">点左边任意一个容器 / 子槽 / 节点</pre></div>
+    <div class="side-sec" id="outside"><h2>图外来的（人 / CLI 投的）</h2><div id="outside-body"></div></div>
+    <div class="side-sec" id="authz"><h2>授权流水</h2><div id="authz-body"></div></div>
+  </div>
+</div>
+<script type="module">
+const TOKEN = "__HERTALOY_TOKEN__";
+const api = (p) => fetch(p, { headers: { "x-hertaloy-token": TOKEN } }).then((r) => r.json());
+
+/**
+ * 配置流：不可变、按版本寻址（C4 pin + C5 内容寻址）⇒ 拉一次，缓存永不失效。
+ * 它**不在每帧的场景里**，否则等于每帧重传永远不变的东西。
+ */
+let templates = {};
+
+/** 当前场景。差量按身份合并进来 —— 键规则必须与后端 diff 一致。 */
+let scene = { cells: [], flows: [], tethers: [], cards: [], range: { from: 1, to: 1 }, viewport: "" };
+
+const keyOfTether = (t) => t.from + "|" + t.to + "|" + t.relation;
+
+function apply(delta) {
+  const colls = [
+    ["cells", (x) => x.id],
+    ["flows", (x) => x.id],
+    ["cards", (x) => x.id],
+    ["tethers", keyOfTether],
+  ];
+  for (const [coll, keyer] of colls) {
+    const d = delta[coll];
+    if (d === undefined) continue;
+    const map = new Map(scene[coll].map((x) => [keyer(x), x]));
+    for (const k of d.removed ?? []) map.delete(k);
+    for (const x of [...(d.added ?? []), ...(d.changed ?? [])]) map.set(keyer(x), x);
+    scene[coll] = [...map.values()];
+  }
+  if (delta.range !== undefined) scene.range = delta.range;
+  if (delta.viewport !== undefined) scene.viewport = delta.viewport;
+}
+
+/**
+ * 端口模式靠**字段有无**判，不认任何枚举 —— 与内核 MessageSource 同一条规则。
+ * 第五种网关模式出现时这里不用改：它只问"有没有 alias / callback / reply"。
+ */
+function portClass(decl) {
+  const c = ["p", decl.direction === "receive" ? "recv" : "emit"];
+  if (decl.alias !== undefined || decl.callback !== undefined || decl.reply !== undefined) c.push("gw");
+  const vars = decl.servo && decl.servo.vars ? Object.keys(decl.servo.vars).length : 0;
+  if (vars > 0) c.push("servo");
+  return c.join(" ");
+}
+
+/** 节点的模板 = 它所在实例 pin 的那份。`cell.identity` 存的就是 templateRef。 */
+function templateOf(cell) {
+  if (cell.kind !== "node") return templates[cell.identity];
+  const owner = scene.cells.find((c) => c.id === cell.parent);
+  return owner ? templates[owner.identity] : undefined;
+}
+
+function portsOf(cell) {
+  const tpl = templateOf(cell);
+  const nodeId = cell.id.split("#").pop();
+  return (tpl && tpl.nodes && tpl.nodes[nodeId] && tpl.nodes[nodeId].ports) || {};
+}
+
+function detailOf(cell) {
+  if (cell.kind === "instance") {
+    return { 实例: cell.id, 模板: cell.identity, 相位: cell.phase,
+      生存期: cell.span, 进度: cell.progress, 定义: templates[cell.identity] };
+  }
+  if (cell.kind === "slot") {
+    return { 子槽: cell.label, 所属: cell.parent, 子模板: cell.identity,
+      锚点: cell.ports, 定义: templates[cell.identity] };
+  }
+  const nodeId = cell.id.split("#").pop();
+  const tpl = templateOf(cell);
+  return { 节点: nodeId, 所属实例: cell.parent, 身份: cell.identity, 相位: cell.phase,
+    定义: tpl && tpl.nodes ? tpl.nodes[nodeId] : undefined };
+}
+
+function show(cell) {
+  document.getElementById("detail-body").textContent = JSON.stringify(detailOf(cell), null, 2);
+}
+
+const childrenOf = (id) => scene.cells.filter((c) => c.parent === id);
+
+function renderNode(cell) {
+  const el = document.createElement("div");
+  el.className = "node " + cell.phase;
+  const name = document.createElement("div");
+  name.textContent = cell.label;
+  el.append(name);
+  const pr = document.createElement("div");
+  pr.className = "ports";
+  for (const [pname, decl] of Object.entries(portsOf(cell))) {
+    const s = document.createElement("span");
+    s.className = portClass(decl);
+    s.textContent = pname;
+    s.title = JSON.stringify(decl, null, 2);
+    pr.append(s);
+  }
+  el.append(pr);
+  el.onclick = (e) => { e.stopPropagation(); show(cell); };
+  return el;
+}
+
+function renderBox(cell) {
+  const kids = childrenOf(cell.id);
+  const isSlot = cell.kind === "slot";
+  const el = document.createElement("div");
+  el.className = isSlot ? "slot" + (kids.length === 0 ? " empty" : "") : "inst";
+
+  const waiting = scene.tethers.filter((t) => t.relation === "waits" && t.from === cell.id);
+  const hd = document.createElement("div");
+  hd.className = "hd";
+  const nm = document.createElement("span");
+  nm.className = "name";
+  nm.textContent = isSlot ? "▢ " + cell.label : cell.label;
+  hd.append(nm);
+  const meta = document.createElement("span");
+  meta.className = "meta " + (cell.phase === "idle" ? "open" : "terminal");
+  meta.textContent = isSlot ? "子槽" : cell.phase;
+  hd.append(meta);
+  if (cell.progress) {
+    const p = document.createElement("span");
+    p.className = "meta";
+    p.textContent = cell.progress.done + "/" + cell.progress.total;
+    hd.append(p);
+  }
+  if (waiting.length > 0) {
+    const w = document.createElement("span");
+    w.className = "meta waits";
+    w.textContent = "等 " + waiting.map((x) => x.to.split("/").pop()).join("、");
+    hd.append(w);
+  }
+  hd.onclick = (e) => { e.stopPropagation(); show(cell); };
+  el.append(hd);
+
+  const nodeKids = kids.filter((k) => k.kind === "node");
+  if (nodeKids.length > 0) {
+    const box = document.createElement("div");
+    box.className = "nodes";
+    for (const k of nodeKids) box.append(renderNode(k));
+    el.append(box);
+  }
+  for (const k of kids) if (k.kind !== "node") el.append(renderBox(k));
+  return el;
+}
+
+function render() {
+  const roots = scene.cells.filter((c) => c.parent === null);
+  document.getElementById("tree").replaceChildren(...roots.map(renderBox));
+
+  /**
+   * 图外来的**不进画布** —— 人的干预不是图里的一个假节点，它显示在画布外
+   * 的固定位置。判别式是 `from === null && at.length > 0`（声明了但从没命中
+   * 的那种 `at` 是空的）。
+   */
+  const outside = scene.flows.filter((f) => f.from === null && f.at.length > 0);
+  const rows = [];
+  for (const f of outside) {
+    for (const seq of f.at) {
+      const d = document.createElement("div");
+      d.className = "row";
+      const s = document.createElement("span");
+      s.className = "who";
+      s.textContent = "#" + seq;
+      const t = document.createElement("span");
+      t.textContent = "→ " + f.to.cell + "." + f.to.port;
+      d.append(s, t);
+      rows.push(d);
+    }
+  }
+  document.getElementById("outside-body").replaceChildren(...rows);
+
+  document.getElementById("status").textContent =
+    "视口 " + scene.viewport + " · 序号 " + scene.range.from + "–" + scene.range.to +
+    " · " + scene.cells.length + " 单元 / " + scene.flows.length + " 流";
+}
+
+async function renderAuthz() {
+  const list = await api("/authz?limit=30");
+  const rows = list.slice().reverse().map((e) => {
+    const d = document.createElement("div");
+    d.className = "row";
+    const mark = document.createElement("span");
+    mark.className = e.allowed ? "who" : "no";
+    mark.textContent = e.allowed ? "✓" : "✗";
+    const who = document.createElement("span");
+    who.textContent = e.actor;
+    const op = document.createElement("span");
+    op.className = "meta";
+    op.textContent = e.op;
+    const target = document.createElement("span");
+    target.textContent = e.target;
+    d.append(mark, who, op, target);
+    return d;
+  });
+  document.getElementById("authz-body").replaceChildren(...rows);
+}
+
+async function main() {
+  templates = await api("/templates");
+  const res = await fetch("/scene/stream", { headers: { "x-hertaloy-token": TOKEN } });
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buf += dec.decode(chunk.value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+    let touched = false;
+    for (const l of lines) {
+      if (l.length === 0) continue;
+      apply(JSON.parse(l));
+      touched = true;
+    }
+    if (touched) { render(); void renderAuthz(); }
+  }
+  document.getElementById("status").textContent = "流已结束";
+}
+
+main().catch((e) => {
+  document.getElementById("status").textContent = "出错：" + e.message;
+});
+</script>

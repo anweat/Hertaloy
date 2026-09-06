@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { listen } from "./serve.js";
 import { join } from "node:path";
 import { run, validate } from "./commands.js";
 import { nodeIO, openAiClient, runAgent, runExec, spawnRunner } from "./agent.js";
@@ -57,6 +58,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy status  <dir>                        实例树 / 阻塞原因 / 在途消息 / 死锁
   hertaloy show    <dir> <object-id[@n]>        读一个对象版本
   hertaloy authz   <dir> [条数]                 授权决策流水（谁做了什么，含被拒的）
+  hertaloy serve   <dir> [--port N] [--interval 毫秒]   起只读观测服务 + 画布
+       只绑 127.0.0.1，主体在启动时定死（--as），一次性 token 走 header
   hertaloy templates <dir> [--scope <traceid>]  用到的模板全文（配置那一条流，可永久缓存）
   hertaloy scene   <dir> [--scope <traceid>]    导出渲染用的场景 JSON
        加 --watch [--interval 毫秒] 持续输出**场景差量**（NDJSON，一行一帧）
@@ -105,6 +108,36 @@ ${USAGE}`, code: 2 } : null;
       return need(1) ?? status(dir as string, actor);
     case "authz":
       return need(1) ?? authz(dir as string, actor, a === undefined ? undefined : Number(a));
+    case "serve": {
+      const short = need(1);
+      if (short !== null) return short;
+      const pAt = args.indexOf("--port");
+      const iAt = args.indexOf("--interval");
+      const port = pAt === -1 ? 4173 : Number(args[pAt + 1]);
+      const interval = iAt === -1 ? 500 : Number(args[iAt + 1]);
+      if (!Number.isFinite(port) || !Number.isFinite(interval) || interval < 50) {
+        return { text: "--port 要是端口号，--interval 要是 ≥50 的毫秒数", code: 2 };
+      }
+      const handle = await listen({
+        dir: dir as string,
+        actor,
+        port,
+        intervalMs: interval,
+        page: readFileSync(new URL("./page.html", import.meta.url), "utf8"),
+      });
+      process.stdout.write(
+        `观测服务在听（主体 ${actor.kind}:${actor.id}，只读，只绑 127.0.0.1）
+` +
+          `  http://127.0.0.1:${handle.port()}/
+` +
+          `token 已内嵌进页面；直接调 JSON 出口时放进 x-hertaloy-token 头：
+` +
+          `  ${handle.token}
+`,
+      );
+      await new Promise<void>(() => {}); // 一直跑到被打断
+      return null;
+    }
     case "templates": {
       const at = args.indexOf("--scope");
       return need(1) ?? templatesCmd(dir as string, actor, at === -1 ? undefined : args[at + 1]);

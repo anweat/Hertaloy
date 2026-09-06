@@ -1,0 +1,162 @@
+/**
+ * 只读观测服务 —— 前后端分离的那条线。
+ *
+ * ## 主体在启动时定死，不由请求自称
+ *
+ * §11 的纪律是 **Principal 必须由可信边界注入**，绝不从 payload 或参数里取。
+ * 让请求自带主体（header 或 query）等于让调用方自称身份 —— 那会把这条从
+ * 结构性保证降成口头约定，而这个项目在授权上一路守的就是它。
+ *
+ * 所以：启动时 `--as` 定一个主体，**整个进程只有这一个身份**。这意味着
+ * 「能连上这个端口的人 = 那个主体」，因此另外两道门是必需的：
+ *
+ *   1. **只监听 127.0.0.1** —— 不上网
+ *   2. **一次性随机 token** —— 挡住同机的其他进程
+ *
+ * token 走 **header 不走 query**：query 会落进浏览器历史与访问日志。
+ * 代价是流不能用 `EventSource`（它设不了 header），改用 `fetch` + 流式读 ——
+ * 换来的是 token 不出现在任何 URL 里。
+ *
+ * ## 只读
+ *
+ * 全部是 GET，`RunState` 一律 `readOnly` 打开：不拿目录锁、不写授权日志
+ * （§17.8 单写者）。看的人再多也不挡跑的那个进程。
+ *
+ * 人工操作（send / truncate）将来加 POST —— 内核不用配合，它本来就不知道
+ * 谁在调它；要做的只是在这个边界上继续注入同一个主体。
+ */
+
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import type { Principal } from "@nodeflow/contracts";
+import { authz, scene, templates, watchScene } from "./state-commands.js";
+
+export interface ServeOptions {
+  readonly dir: string;
+  readonly actor: Principal;
+  readonly port?: number;
+  readonly intervalMs?: number;
+  /** 页面 HTML。不给就只有 JSON 出口。 */
+  readonly page?: string;
+}
+
+export interface ServeHandle {
+  readonly server: Server;
+  readonly token: string;
+  /** 实际监听的端口（给了 0 就是系统分配的那个）。 */
+  port(): number;
+  close(): Promise<void>;
+}
+
+const TOKEN_HEADER = "x-hertaloy-token";
+
+/** 定长比较 —— 长度不同直接判否，避免 `timingSafeEqual` 抛。 */
+function tokenOk(given: string | undefined, expected: string): boolean {
+  if (given === undefined) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function sendJson(res: ServerResponse, code: number, body: unknown): void {
+  const text = JSON.stringify(body);
+  res.writeHead(code, { "content-type": "application/json; charset=utf-8" });
+  res.end(text);
+}
+
+/** 命令结果 → HTTP。授权被拒是 403，不是 500 —— 它是正常答复，不是故障。 */
+function fromCommand(res: ServerResponse, r: { code: number; text: string; data?: unknown }): void {
+  if (r.code === 0) {
+    sendJson(res, 200, r.data ?? JSON.parse(r.text));
+    return;
+  }
+  sendJson(res, r.text.startsWith("拒绝") ? 403 : 400, { error: r.text });
+}
+
+/** 只给 `listen` 用 —— 不导出：没有第二个调用方，导出就是孤儿。 */
+function createServer(options: ServeOptions): ServeHandle {
+  const token = randomBytes(24).toString("hex");
+  const interval = options.intervalMs ?? 500;
+
+  const server = createHttpServer((req: IncomingMessage, res: ServerResponse) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const scope = url.searchParams.get("scope") ?? undefined;
+
+    // 页面本身不要 token —— 它就是用来把 token 交到浏览器手里的那一步
+    if (url.pathname === "/" && options.page !== undefined) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(options.page.replace("__HERTALOY_TOKEN__", token));
+      return;
+    }
+
+    if (!tokenOk(req.headers[TOKEN_HEADER] as string | undefined, token)) {
+      sendJson(res, 401, { error: `缺少或错误的 ${TOKEN_HEADER}` });
+      return;
+    }
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: "只读服务，只接受 GET" });
+      return;
+    }
+
+    switch (url.pathname) {
+      case "/scene":
+        fromCommand(res, scene(options.dir, options.actor, scope));
+        return;
+      case "/templates":
+        fromCommand(res, templates(options.dir, options.actor, scope));
+        return;
+      case "/authz": {
+        const n = Number(url.searchParams.get("limit") ?? "50");
+        fromCommand(res, authz(options.dir, options.actor, Number.isFinite(n) ? n : 50));
+        return;
+      }
+      case "/scene/stream": {
+        res.writeHead(200, {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          "cache-control": "no-store",
+        });
+        const abort = new AbortController();
+        // 客户端断开就停轮询 —— 否则关掉页面之后进程还在空转
+        req.on("close", () => abort.abort());
+        void watchScene(
+          options.dir,
+          options.actor,
+          scope,
+          interval,
+          (line) => {
+            if (!res.writableEnded) res.write(`${line}\n`);
+          },
+          abort.signal,
+        ).finally(() => {
+          if (!res.writableEnded) res.end();
+        });
+        return;
+      }
+      default:
+        sendJson(res, 404, { error: `没有这个出口：${url.pathname}` });
+    }
+  });
+
+  return {
+    server,
+    token,
+    port: () => {
+      const addr = server.address();
+      return addr !== null && typeof addr === "object" ? addr.port : 0;
+    },
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections?.();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/** 起服务，只绑 127.0.0.1。返回时已经在听了。 */
+export async function listen(options: ServeOptions): Promise<ServeHandle> {
+  const handle = createServer(options);
+  await new Promise<void>((resolve) => {
+    handle.server.listen(options.port ?? 0, "127.0.0.1", () => resolve());
+  });
+  return handle;
+}
