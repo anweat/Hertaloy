@@ -69,8 +69,9 @@ function git(paths: ObserverPaths, exec: GitExec, args: readonly string[]): stri
  * "agent 改的"。
  */
 export function initObserver(paths: ObserverPaths, exec: GitExec): void {
-  exec(["mkdir", "-p", paths.gitDir], paths.workTree);
-  git(paths, exec, ["init", "--quiet"]);
+  // 显式目录参数让 git 创建多级父目录；bare 避免在 workspace 写入 .git。
+  // 后续命令通过 --work-tree 指定被观察的工作树。
+  exec(["git", "init", "--bare", "--quiet", paths.gitDir], paths.workTree);
   // 局部身份，避免依赖宿主机的 git 全局配置
   git(paths, exec, ["config", "user.email", "observer@hertaloy.local"]);
   git(paths, exec, ["config", "user.name", "hertaloy-observer"]);

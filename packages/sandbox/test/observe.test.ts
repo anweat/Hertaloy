@@ -32,6 +32,20 @@ afterEach(() => {
 });
 
 describe("外置 git", () => {
+  it("记录仓的多级父目录不存在时也能初始化，只依赖目标环境的 git", () => {
+    const nested = { ...obs, gitDir: join(gitHome, "missing", "nested", "record.git") };
+    const gitOnly = (argv: readonly string[], cwd: string): string => {
+      if (argv[0] !== "git") throw new Error(`目标环境没有可执行文件：${argv[0]}`);
+      return exec(argv, cwd);
+    };
+    writeFileSync(join(p.workspace, "existing.txt"), "before\n");
+    initObserver(nested, gitOnly);
+    expect(observe(nested, gitOnly).changes).toEqual([]);
+    writeFileSync(join(p.workspace, "existing.txt"), "after\n");
+    expect(observe(nested, gitOnly).changes).toEqual([{ status: "M", path: "existing.txt" }]);
+    expect(existsSync(join(p.workspace, ".git"))).toBe(false);
+  });
+
   it("git 可用（前置条件）", () => {
     expect(gitAvailable(exec, p.workspace)).toBe(true);
   });
