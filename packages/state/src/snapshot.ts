@@ -84,8 +84,20 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
       bindings: instance.bindings.map((b) => ({ ...b })),
     };
     if (templates[instance.templateRef] === undefined) {
-      // 模板不在 viewport 前缀里，按对象身份单独授权
-      templates[instance.templateRef] = state.control.read(actor, instance.templateRef).body;
+      /**
+       * 模板**跟着实例走**，不单独授权。
+       *
+       * 我先写成 `control.read(actor, templateRef)`，深度用例当场抓到：
+       * templateRef 是 `mid@1`，授权目标会被算成 `mid` —— 而模板住在
+       * **traceid 树之外的扁平命名空间**。结果是一个被授权看自己子树的主体
+       * 拿不到画它所必需的定义：`拒绝：无权对 \`mid\` 执行 DQL`。
+       *
+       * 授权单位是**实例子树**（上面那次 `control.subtree` 已经判过）。
+       * 能看见实例，就该看得见它 pin 的那份定义 —— C4 说实例就是由这份定义
+       * 构成的，给你实例却不给定义，等于给一张读不懂的图。而且能看见实例
+       * 就已经能看见它的节点、端口与消息，模板本身并不多泄露什么。
+       */
+      templates[instance.templateRef] = state.store.resolve(instance.templateRef).body;
     }
   }
 
