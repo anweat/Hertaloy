@@ -39,7 +39,7 @@ describe("出网策略（纯逻辑）", () => {
     ensureInternalNetwork("net-x", (argv) => {
       calls.push([...argv]);
       if (argv[1] === "inspect" && calls.length === 1) throw new Error("no such network");
-      return "";
+      return JSON.stringify([{ Name: "net-x", Internal: true }]);
     });
     expect(calls[1]).toEqual(["network", "create", "--internal", "net-x"]);
   });
@@ -48,7 +48,7 @@ describe("出网策略（纯逻辑）", () => {
     const calls: string[][] = [];
     ensureInternalNetwork("net-x", (argv) => {
       calls.push([...argv]);
-      return "";
+      return JSON.stringify([{ Name: "net-x", Internal: true }]);
     });
     expect(calls).toEqual([["network", "inspect", "net-x"]]);
   });
@@ -62,7 +62,7 @@ describe("出网策略（纯逻辑）", () => {
           throw new Error("already exists");
         }
         if (creates === 0) throw new Error("no such network");
-        return "";
+        return JSON.stringify([{ Name: "net-x", Internal: true }]);
       }),
     ).not.toThrow();
   });

@@ -155,3 +155,18 @@
 - `corepack pnpm reachability`：193 个导出符号，无孤儿。
 
 包含真实 WSL、CLI 双进程驱动排他和两个强制结束写进程的持久化用例。Docker daemon 未运行，7 条集成测试维持跳过。最终测试原始输出为本机 `%TEMP%/hertaloy-bugfix-next-final.log`；用户原有覆盖率依赖、锁文件及 sandbox 测试路径改动保持原样，未跟踪文档、实验和配置也未纳入提交。
+
+## 第三轮（基线 4455e49；每步验证后提交）
+
+### H08a：验证 Docker 内网属性
+
+- P1 / bug：`network inspect` 成功就视为内网，未检查 `Internal`；同名普通 bridge 或并发创建的错误网络会被接受。
+- 先行审核：采纳。首次 inspect、创建成功、创建竞争失败三条路径均须检查实际网络名和 `Internal === true`；错误数据不触发重建，也不删除已有网络。
+- 反例先红：8 个拒绝用例失败，涵盖属性缺失/错误、错误名称、空结果、坏 JSON 和两条创建路径。修复时调整测试参数封装，确保检查的是 Docker 返回的数组。
+- 验证：网络校验和原 Docker 单元测试 20 passed / 7 skipped，sandbox typecheck 通过。旧成功用例改为真实 inspect 的响应形状；daemon 仍不可用，跳过真实容器测试。
+
+### 后续切片审核
+
+- H08b：节点覆盖 `internal` 未建网，全局默认名导致不同运行混网。采纳：按分配身份与工作根隔开默认网络，在实际 run 时按生效策略准备内网；显式 networkName 仍表示调用方主动共享。
+- H09：backend 交给 DockerRunner 的子目录一律名为 `box`，容器名因此恒为 `hertaloy-box`。采纳：每次 run 使用独立容器身份，启动与取消引用同一身份，验证并行取消不碰兄弟容器。
+- H10：safeId 的字符折叠及 Windows 大小写折叠会造成工作区覆盖。先核实旧 request.json 能否证明工作区归属，再决定兼容读取；不盲目删除或迁移旧目录。

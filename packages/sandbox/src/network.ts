@@ -44,21 +44,29 @@ export interface DockerCli {
 
 /** 幂等地建内网。`--internal` 是这堵墙本身，不是命名习惯。 */
 export function ensureInternalNetwork(name: string, docker: DockerCli): void {
+  let inspected: string;
   try {
-    docker(["network", "inspect", name]);
-    return;
+    inspected = docker(["network", "inspect", name]);
   } catch {
-    // 不存在，往下建
-  }
-  try {
-    docker(["network", "create", "--internal", name]);
-  } catch (err) {
-    // 并发下另一个进程可能刚建好 —— 再查一次，确实有就算成功
+    // create 可能输给并发写者；不论返回成功还是冲突，都要查实际属性。
+    let createError: unknown;
     try {
-      docker(["network", "inspect", name]);
-    } catch {
-      throw new Error(`建内网 ${name} 失败：${(err as Error).message}`);
+      docker(["network", "create", "--internal", name]);
+    } catch (error) {
+      createError = error;
     }
+    try {
+      inspected = docker(["network", "inspect", name]);
+    } catch (error) {
+      throw new Error(`建内网 ${name} 失败：${String(createError ?? error)}`);
+    }
+  }
+  // 校验放在 CLI 异常处理之外：存在但不合格，不能当成不存在再尝试重建。
+  let networks: unknown;
+  try { networks = JSON.parse(inspected); } catch { /* 下方统一拒绝 */ }
+  if (!Array.isArray(networks) || networks.length !== 1 ||
+      networks[0]?.Name !== name || networks[0]?.Internal !== true) {
+    throw new Error(`网络 ${name} 未被确认是内网（Internal=true），拒绝启动容器`);
   }
 }
 
