@@ -170,3 +170,10 @@
 - H08b：节点覆盖 `internal` 未建网，全局默认名导致不同运行混网。采纳：按分配身份与工作根隔开默认网络，在实际 run 时按生效策略准备内网；显式 networkName 仍表示调用方主动共享。
 - H09：backend 交给 DockerRunner 的子目录一律名为 `box`，容器名因此恒为 `hertaloy-box`。采纳：每次 run 使用独立容器身份，启动与取消引用同一身份，验证并行取消不碰兄弟容器。
 - H10：safeId 的字符折叠及 Windows 大小写折叠会造成工作区覆盖。先核实旧 request.json 能否证明工作区归属，再决定兼容读取；不盲目删除或迁移旧目录。
+
+### H08b：网络按实际执行策略和运行组生效
+
+- 5 个执行边界反例先红：缺省 none 覆盖 internal 不建网、缺省 internal 覆盖 none/open 仍建网、不同根混网、显式共享网络未验证、外网仍启动 agent。
+- 修法：allocate 只登记挂载与网络归属，run 根据最终策略准备并验证内网。默认网络名由工作根、原始根 trace 的完整 SHA-256 摘要生成；未给身份的分配各自组网。显式 networkName 保留主动共享语义。
+- 验证：新增 6 个 runner 用例，相关测试 26 passed / 7 skipped，sandbox typecheck 通过。通过模拟 Docker CLI/进程观察真实 runner 的准备顺序、启动参数和拒绝路径，不宣称实际隔离已测。
+- 兼容：默认不再连接旧的共享 `hertaloy-default`，不自动删除旧网络；同工作根且同根 trace 仍视为同一组。跨宿主/多租户全局运行身份需另行设计。

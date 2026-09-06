@@ -21,6 +21,8 @@
  * 并强制所有流量走它。假装支持一个实际不强制的白名单，比没有更危险。
  */
 
+import { createHash } from "node:crypto";
+
 export const NETWORK_POLICIES = ["none", "internal", "open"] as const;
 export type NetworkPolicy = (typeof NETWORK_POLICIES)[number];
 
@@ -31,11 +33,12 @@ const UNSAFE = /[^a-zA-Z0-9_.-]/g;
  * 内网名按**根 traceid** 取 —— 又一次复用前缀机制（§16 不变量 X）。
  *
  * 同一次运行（同一个根）下的所有沙箱落在同一张内网上，互相能连；
- * 不同运行之间网络层就是隔开的，不靠命名约定自觉。
+ * namespace 由 runner 的工作根给出，同名 trace 的不同状态目录也分开。
  */
-export function networkNameFor(traceid: string): string {
+export function networkNameFor(traceid: string, namespace = ""): string {
   const root = traceid.split("/")[0] ?? traceid;
-  return `hertaloy-${root.replace(UNSAFE, "-")}`;
+  const digest = createHash("sha256").update(JSON.stringify([namespace, root])).digest("hex");
+  return `hertaloy-${root.replace(UNSAFE, "-").slice(0, 16)}-${digest}`;
 }
 
 export interface DockerCli {

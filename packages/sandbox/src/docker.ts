@@ -21,7 +21,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
   type NetworkPolicy,
   ensureInternalNetwork,
@@ -34,7 +34,7 @@ export interface DockerOptions {
   /** 镜像即环境。默认一个带 git 的小镜像。 */
   readonly image?: string;
   readonly network?: NetworkPolicy;
-  /** `internal` 时用哪张内网。一般由 `networkNameFor(根 traceid)` 给。 */
+  /** 显式共享的内网名。省略则按工作根与 allocate(id) 的根 trace 分组。 */
   readonly networkName?: string;
   /**
    * 容器内以谁的身份跑。
@@ -84,17 +84,18 @@ export class DockerRunner implements Runner {
   readonly network: NetworkPolicy;
 
   readonly #image: string;
-  readonly #networkName: string;
+  readonly #networkName: string | undefined;
   readonly #user: string | undefined;
   readonly #prefix: string;
   readonly #docker: string;
   /** 宿主机路径 → 容器内路径。`toInner` / `exec` 都靠它反查。 */
   readonly #mounts = new Map<string, string>();
+  readonly #networks = new Map<string, string>();
 
   constructor(options: DockerOptions = {}) {
     this.#image = options.image ?? DEFAULT_IMAGE;
     this.network = options.network ?? "none";
-    this.#networkName = options.networkName ?? networkNameFor("default");
+    this.#networkName = options.networkName;
     this.#user = options.user;
     this.#prefix = join(options.workRoot ?? tmpdir(), "hertaloy-box-");
     this.#docker = options.docker ?? "docker";
@@ -107,14 +108,13 @@ export class DockerRunner implements Runner {
   allocate(id?: string): string {
     const host = id === undefined ? mkdtempSync(this.#prefix) : freshDir(this.locate(id));
     this.#mounts.set(slash(host), `${INNER_ROOT}/${basename(host)}`);
-    if (this.network === "internal") {
-      ensureInternalNetwork(this.#networkName, (argv) => this.#cli(argv));
-    }
+    this.#networks.set(slash(host), this.#networkName ?? networkNameFor(id ?? basename(host), resolve(this.#prefix)));
     return host;
   }
 
   release(hostRoot: string): void {
     this.#mounts.delete(slash(hostRoot));
+    this.#networks.delete(slash(hostRoot));
     rmSync(hostRoot, { recursive: true, force: true });
   }
 
@@ -171,13 +171,16 @@ export class DockerRunner implements Runner {
     const name = `hertaloy-${basename(host)}`;
     const envArgs = Object.entries(spec.env ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
     const { flag, rest } = splitArgv(spec.argv);
+    const network = spec.network ?? this.network;
+    const networkName = this.#networks.get(this.#hostRootOf(inner))!;
+    if (network === "internal") ensureInternalNetwork(networkName, (argv) => this.#cli(argv));
     const args = [
       "run",
       "--rm",
       "--name",
       name,
       // 每次执行可以自带策略；没带就用 runner 缺省
-      ...networkArgs(spec.network ?? this.network, this.#networkName),
+      ...networkArgs(network, networkName),
       ...(this.#user === undefined ? [] : ["--user", this.#user]),
       ...envArgs,
       "-v",

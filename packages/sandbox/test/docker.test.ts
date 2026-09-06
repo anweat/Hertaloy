@@ -25,13 +25,13 @@ describe("出网策略（纯逻辑）", () => {
   });
 
   it("内网名按**根** traceid 取 —— 同一次运行的兄弟同网，跨运行天然隔开", () => {
-    expect(networkNameFor("job-1/coder-1/sub")).toBe("hertaloy-job-1");
-    expect(networkNameFor("job-1/reviewer")).toBe("hertaloy-job-1");
-    expect(networkNameFor("job-2/coder-1")).toBe("hertaloy-job-2");
+    expect(networkNameFor("job-1/coder-1/sub")).toBe(networkNameFor("job-1/reviewer"));
+    expect(networkNameFor("job-2/coder-1")).not.toBe(networkNameFor("job-1/reviewer"));
   });
 
-  it("docker 网络名不合法的字符被换掉", () => {
-    expect(networkNameFor("run:a b/c")).toBe("hertaloy-run-a-b");
+  it("docker 网络名合法，字符折叠不能合并不同根", () => {
+    expect(networkNameFor("run:a b/c")).toMatch(/^hertaloy-[a-zA-Z0-9_.-]+$/);
+    expect(networkNameFor("run:a b/c")).not.toBe(networkNameFor("run-a-b/c"));
   });
 
   it("建内网带 --internal —— 墙在网络层，不靠容器自觉", () => {
