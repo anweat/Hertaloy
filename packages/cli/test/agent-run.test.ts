@@ -9,7 +9,7 @@
  * 第三个进程读得到 agent 写出来的产物。
  */
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -180,11 +180,13 @@ describe("★ 沙箱保留：多开 agent 时现场留得住", () => {
     expect(existsSync(join(v.body.diagnostics.sandbox.path, "box", "workspace"))).toBe(true);
   }, 120_000);
 
-  it("★ 沙箱名带 traceid —— 否则两个 run 的 exec-1 会撞名", async () => {
+  it("★ 沙箱记录完整执行身份，新 runner 能核对并定位", async () => {
     await drain(dir, HUMAN, backend());
     const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
-    expect(v.body.diagnostics.sandbox.path).toContain("job-1");
-    expect(v.body.diagnostics.sandbox.path).toContain("exec-1");
+    const path = v.body.diagnostics.sandbox.path;
+    const id = "job-1/worker/exec-1";
+    expect(JSON.parse(readFileSync(join(path, "hertaloy.identity.json"), "utf8"))).toEqual({ id });
+    expect(new LocalRunner(join(dir, "sandboxes")).locate(id)).toBe(path);
   }, 120_000);
 
   it("多个 agent 各占一个沙箱，互不覆盖", async () => {
