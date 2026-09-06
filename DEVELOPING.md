@@ -31,6 +31,10 @@ hertaloy status ./run
 才清理报错指向的锁文件。直接嵌入 Runtime/RunState 的宿主同样需要保证独占驱动权，
 尤其不能仅凭拿到了 `head.lock` 就把 RUNNING 执行认作孤儿。
 
+ControlPlane 的 `run`、`runAgents`、`settleAll`、`reconcile`、`causesOf` 目前
+作用于整棵运行树，只接受真实根 traceid 并检查根权限。传子树会被明确拒绝；
+`subtree`、`messages` 等查询与定点 `send`、`truncate` 仍按目标授权。
+
 ---
 
 ## 1. 写 handler

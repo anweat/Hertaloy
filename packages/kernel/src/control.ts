@@ -23,7 +23,7 @@ import {
   type Ref,
   type TraceId,
 } from "@nodeflow/contracts";
-import { AuthorizationError } from "./errors.js";
+import { AuthorizationError, InvariantError } from "./errors.js";
 import type { AuthzLog } from "./authz-log.js";
 
 import {
@@ -107,6 +107,15 @@ export class ControlPlane {
     this.check(actor, OPERATION_CLASS[op], target, op);
   }
 
+  /** Runtime 的这些操作覆盖整树；子树权限不能冒充根权限。 */
+  #authorizeRoot(actor: Principal, op: Operation, scope: TraceId): void {
+    const root = this.#registry.rootTrace;
+    this.#authorize(actor, op, root ?? scope);
+    if (scope !== root) {
+      throw new InvariantError(`此操作仅支持根实例 ${root ?? "（尚未创建）"}，不支持子树作用域 ${scope}`);
+    }
+  }
+
   /**
    * 授权决策的**唯一**落点 —— 放行和拒绝都记日志，然后拒绝的抛。
    *
@@ -160,7 +169,7 @@ export class ControlPlane {
 
   /** 同步驱动。授权按根实例判定 —— 驱动会跨整棵树。 */
   run(actor: Principal, scope: TraceId): readonly (StepResult | StepFailure)[] {
-    this.#authorize(actor, "run", scope);
+    this.#authorizeRoot(actor, "run", scope);
     return this.#runtime.drain();
   }
 
@@ -172,7 +181,7 @@ export class ControlPlane {
    * 合成一条就得让所有调用方都变成 async，也会掩盖"这一步要花钱"这件事。
    */
   async runAgents(actor: Principal, scope: TraceId): Promise<readonly (StepResult | StepFailure)[]> {
-    this.#authorize(actor, "run", scope);
+    this.#authorizeRoot(actor, "run", scope);
     return await this.#runtime.drainAgents();
   }
 
@@ -244,19 +253,19 @@ export class ControlPlane {
    * 查询早就实现了，只是一直没有出口，等于把主要的可观测面关在门外。
    */
   causesOf(actor: Principal, scope: TraceId, messageId: string): readonly string[] {
-    this.#authorize(actor, "query", scope);
+    this.#authorizeRoot(actor, "query", scope);
     return this.#runtime.causesOf(messageId);
   }
 
   /** 认领孤儿执行。见 `Runtime.reconcile` —— 复用失败路径，不是新状态机。 */
   reconcile(actor: Principal, scope: TraceId): readonly StepFailure[] {
-    this.#authorize(actor, "run", scope);
+    this.#authorizeRoot(actor, "run", scope);
     return this.#runtime.reconcile();
   }
 
-  /** 把够条件的实例收进终态。授权按传入的作用域根判定。 */
+  /** 把整树中够条件的实例收进终态，要求根实例权限。 */
   settleAll(actor: Principal, scope: TraceId): readonly TraceId[] {
-    this.#authorize(actor, "settle", scope);
+    this.#authorizeRoot(actor, "settle", scope);
     return this.#runtime.settleAll();
   }
 }

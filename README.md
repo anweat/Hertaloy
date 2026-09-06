@@ -38,7 +38,8 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
   装载时按 cursor 截断），未做。
 - **对象回收没有设计路径**。沙箱与头都已封顶，唯独对象版本只增不减 ——
   `status` 会报保留了多少，至少让人看得见。
-- **`run`/`settleAll` 的 scope 只用于授权，实际驱动整棵树**。
+- **整树操作只接受根 scope 并检查根权限**：`run`、`runAgents`、`settleAll`、
+  `reconcile`、`causesOf`。真实的子树调度尚未实现；子树查询和定点 send/truncate 可用。
 - **CLI 用 driver.lock 排斥同一 run 的并发 drain**，head.lock 仍在 agent 执行期间释放。
   嵌入式宿主直接调用 Runtime/RunState 时须自行保证独占驱动权；进程崩溃后的遗留锁
   仍需确认持有者已结束再清理，不自动抢占。分布式执行租约尚未实现。
