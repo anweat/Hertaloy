@@ -112,11 +112,17 @@ Cell 靠端口被寻址（M1），Card 只能被 `ref` 变量、`bind.card`、`d
 
 ### 2.4 `Tether` 系 —— 不承载消息的连接
 
-三种，共用一个元素、靠 `relation` 区分：
+共用一个元素、靠 `relation` 区分：
 
-- `contains` 归属 —— 父子，从 traceid 免费得到
 - `refs` 引用 —— Cell 用到某张 Card
 - `derives` 派生 —— Card 的 `derived_from`，即血缘
+- `waits` 等待 —— 谁被谁挡着（`because` 说明是哪种义务）
+
+**没有 `contains`。**嵌套由 `Cell.parent` 表达，而且是完整表达 —— 实测两份
+一个不多一个不少（17 条 ⟺ 17 个有 parent 的 cell）。同一事实两份拷贝必然漂移。
+
+分工因此清楚：**`cells` 管包含，`tethers` 管包含之外的**。树形布局按 `parent`
+递归；图布局只喂 `tethers` + `flows`。两种布局各取所需，谁也不用先滤掉一半噪声。
 
 它们和 Flow 的区别是**有没有东西在流动**。在树渲染器里归属是枝干，
 在球链渲染器里归属是弹簧/包膜 —— 同一份数据，两种读法。
@@ -179,7 +185,7 @@ export interface Flow {
 export interface Tether {
   readonly from: string;
   readonly to: string;
-  readonly relation: "contains" | "refs" | "derives";
+  readonly relation: "refs" | "derives" | "waits";
 }
 ```
 
@@ -266,7 +272,7 @@ export interface Tether {
 | `activity` | 连线粗细 | 沿链流动的粒子 |
 | `certainty` | 实线 ↔ 虚线 | 连接的可见度与刚度 |
 | `pinned` | 手动排序位 | 固定锚点，不受力 |
-| `contains` | 枝干 | 包膜 / 弹簧 |
+| `parent`（嵌套） | 枝干 | 包膜 / 弹簧 |
 
 同一份场景，两套投影。切换渲染器不需要重新取数。
 

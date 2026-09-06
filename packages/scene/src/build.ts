@@ -178,10 +178,6 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
       pinned: false,
     });
 
-    if (holder !== null) {
-      tethers.push({ from: holder, to: instance.traceid, relation: "contains" });
-    }
-
     // ── 节点也是 Cell，父是所在实例 ──
     for (const nodeId of nodeIds) {
       const decl = template?.nodes[nodeId];
@@ -221,7 +217,6 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         extent: ports.length,
         pinned: false,
       });
-      tethers.push({ from: instance.traceid, to: id, relation: "contains" });
     }
 
     if (template === undefined) continue;
@@ -271,7 +266,6 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         extent: 0,
         pinned: false,
       });
-      tethers.push({ from: instance.traceid, to: id, relation: "contains" });
     }
 
     // ── 内网边：certainty 恒 1，注册期就证实过 ──

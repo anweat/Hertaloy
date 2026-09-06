@@ -132,10 +132,21 @@ export interface Flow {
  * 它是**运行期的、会消失的**。归在同一个元素里是因为判据仍然成立
  * （它不承载消息，只是一条有向的关系），但渲染上该让它看起来是"活的"。
  */
+/**
+ * 单元之间**包含之外**的关系。
+ *
+ * **不含 `contains`** —— 嵌套已经由 `Cell.parent` 表达，而且是完整表达：
+ * 实测那两份一个不多一个不少（17 条 `contains` ⟺ 17 个有 parent 的 cell）。
+ * 同一事实两份拷贝必然漂移，这是本仓一路在削的东西。
+ *
+ * 分工因此清楚：**`cells` 管包含，`tethers` 管包含之外的**。
+ * 树形布局按 `parent` 递归，图布局只喂 `tethers` + `flows` —— 两种布局
+ * 各取所需，谁也不用先过滤掉一半噪声。
+ */
 export interface Tether {
   readonly from: string;
   readonly to: string;
-  readonly relation: "contains" | "refs" | "derives" | "waits";
+  readonly relation: "refs" | "derives" | "waits";
   /** `waits` 专用：锁的种类，说明为什么在等。 */
   readonly because?: string;
 }
