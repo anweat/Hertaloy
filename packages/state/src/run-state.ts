@@ -163,7 +163,24 @@ export class RunState {
 
       // 顺序要紧：对象先装，因为实例树里存的是指向对象的 Ref，
       // 恢复实例时会去解析模板
-      const cursor = loadObjects(dir, store, head.format === 1 ? undefined : head.objectHeads);
+      let cursor: number;
+      try {
+        cursor = loadObjects(dir, store, head.format === 1 ? undefined : head.objectHeads);
+        if (cursor !== head.objectCursor) {
+          throw new Error(
+            `对象库与可变头对不上：磁盘上 ${cursor} 个版本，head 记的是 ${head.objectCursor} 个。` +
+              "旧目录可能崩在刷对象与写 head 之间，或者目录被手工动过。",
+          );
+        }
+      } catch (error) {
+        // 只读者可能在拿到旧 head 后遇到另一个写者升级；新格式有明确清单，
+        // 丢弃本次不完整装载，重新打开。格式 2 失败不重试，也不忽略缺失文件。
+        if (head.format === 1 && readHead(dir)?.format === 2) {
+          lock?.release();
+          return RunState.open(dir, options);
+        }
+        throw error;
+      }
       const parts = decodeHeadParts(head);
       registry.restore(parts.registry);
       /**
@@ -173,12 +190,6 @@ export class RunState {
        */
       runtime.restore(parts.runtime);
 
-      if (cursor !== head.objectCursor) {
-        throw new Error(
-          `对象库与可变头对不上：磁盘上 ${cursor} 个版本，head 记的是 ${head.objectCursor} 个。` +
-            "多半是崩在刷对象与写 head 之间，或者目录被手工动过。",
-        );
-      }
       self = new RunState(dir, store, registry, runtime, true, lock, cursor, permissions, resources);
         self.#validateExecutionSpec = options.validateExecutionSpec;
 

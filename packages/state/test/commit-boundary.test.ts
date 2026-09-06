@@ -9,6 +9,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "../src/run-state.js";
 import * as objects from "../src/objects.js";
+import * as heads from "../src/head.js";
 
 let dir: string;
 const opened: RunState[] = [];
@@ -127,6 +128,24 @@ it("没有提交清单的旧目录若已有多余对象，不能猜测哪些应�
   delete head.objectHeads;
   writeFileSync(join(dir, "head.json"), JSON.stringify(head));
   expect(() => open()).toThrow(/对不上/);
+});
+
+it("读者刚读到格式 1 时另一个写者完成升级，重取格式 2 快照后继续读取", () => {
+  seed().close();
+  const headFile = join(dir, "head.json");
+  const legacy = JSON.parse(readFileSync(headFile, "utf8"));
+  legacy.format = 1;
+  delete legacy.objectHeads;
+  writeFileSync(headFile, JSON.stringify(legacy));
+  const writer = open();
+  writer.store.put("job/memo", "note", { text: "upgraded" });
+  const read = heads.readHead;
+  vi.spyOn(heads, "readHead").mockImplementationOnce((root) => {
+    const old = read(root);
+    writer.persist();
+    return old;
+  });
+  expect(open(true).store.head("job/memo").body).toEqual({ text: "upgraded" });
 });
 
 it.each(["readonly", "closed"] as const)("%s 实例不能绕过写锁发布新 head", (mode) => {
