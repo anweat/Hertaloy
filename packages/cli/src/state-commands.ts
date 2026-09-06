@@ -16,8 +16,16 @@
 
 import { checkAgentSpec } from "@nodeflow/sandbox";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { headPath } from "@nodeflow/state";
 import { join } from "node:path";
-import { buildScene, parseSnapshot } from "@nodeflow/scene";
+import {
+  buildScene,
+  diffScenes,
+  emptyScene,
+  isEmptyDelta,
+  parseSnapshot,
+  type Scene,
+} from "@nodeflow/scene";
 import {
   RunState,
   addResource,
@@ -262,10 +270,74 @@ export function show(dir: string, actor: Principal, ref: string): CommandResult 
  */
 export function scene(dir: string, actor: Principal, scope?: string): CommandResult {
   return readOnly(dir, (s) => {
-    const snapshot = exportSnapshot(s, actor, scope);
-    const built = buildScene(parseSnapshot(snapshot), scope);
+    const built = buildScene(parseSnapshot(exportSnapshot(s, actor, scope)), scope);
     return ok(JSON.stringify(built, null, 2), built as never);
   });
+}
+
+/** 算一帧场景。watch 与一次性导出走的是同一条路，不给两套。 */
+function sceneOf(dir: string, actor: Principal, scope?: string): Scene {
+  const state = RunState.open(dir, { readOnly: true, validateExecutionSpec: checkAgentSpec });
+  try {
+    return buildScene(parseSnapshot(exportSnapshot(state, actor, scope)), scope);
+  } finally {
+    state.close();
+  }
+}
+
+/**
+ * 持续输出场景差量（NDJSON，一行一帧）。
+ *
+ * ## 为什么是轮询，不是订阅
+ *
+ * 内核有 `CommitHook`，覆盖生命周期转移（commit/claim/apply/settle/truncate）——
+ * 但它在**写进程内**触发。前端是另一个进程，**收不到**。照着"订阅事件"去设计
+ * 会做出一个跨进程根本收不到的东西。
+ *
+ * 所以这里盯 `head.json` 的 mtime + size：它每次提交全量重写，变了就说明有事
+ * 发生。这个门很便宜 —— 没变就连状态目录都不打开。
+ *
+ * ## 只读打开，不抢锁
+ *
+ * `readOnly` 不拿目录锁、不写授权日志（§17.8 的单写者纪律）。看的人再多也
+ * 不影响跑的那个进程。
+ *
+ * ## 一种形状
+ *
+ * 第一帧是**与空场景的差量**，不是"全量帧" —— 流上只有一种消息。
+ * 没有变化的轮次一个字都不输出，这就是"减少占用"的落点。
+ */
+export async function watchScene(
+  dir: string,
+  actor: Principal,
+  scope: string | undefined,
+  intervalMs: number,
+  emit: (line: string) => void,
+  stop?: AbortSignal,
+): Promise<void> {
+  let previous = emptyScene(scope ?? "");
+  let stamp = "";
+
+  const tick = (): void => {
+    const head = headPath(dir);
+    if (!existsSync(head)) return;
+    const st = statSync(head);
+    const now = `${st.mtimeMs}:${st.size}`;
+    if (now === stamp) return; // 头没动 —— 连目录都不必打开
+    stamp = now;
+
+    const next = sceneOf(dir, actor, scope);
+    const delta = diffScenes(previous, next);
+    previous = next;
+    if (!isEmptyDelta(delta)) emit(JSON.stringify(delta));
+  };
+
+  tick(); // 先给一帧基线，别让人对着空屏等第一次变化
+  while (stop === undefined || !stop.aborted) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    if (stop?.aborted === true) break;
+    tick();
+  }
 }
 
 /** 一个对象的版本历史 —— C5 下这就是"这个东西经历了什么"。 */

@@ -24,7 +24,12 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
-const PACKAGES = ["contracts", "kernel", "sandbox", "state", "cli"];
+/**
+ * 扫哪些包。**`scene` 与 `mcp` 一度不在这张表里** —— 而观测那条链
+ * （exportSnapshot → buildScene → 渲染）恰恰长在 scene 里，
+ * 也恰恰是两端各自都绿、中间没人走复发得最狠的地方。
+ */
+const PACKAGES = ["contracts", "kernel", "sandbox", "state", "cli", "scene", "mcp"];
 
 /**
  * 已知且**有意**的孤儿。每一条都要写清为什么，否则就是在给漏洞开后门。
@@ -62,6 +67,20 @@ const ALLOWED = new Map([
   ["BoundedAuthzLog", "AuthzLog 的内存实现，给用例与不留证据的场合；生产走 state 的 FileAuthzLog"],
   ["isLocked", "给外部查锁状态用"],
   ["versionsOnDisk", "给外部查磁盘版本用"],
+
+  /**
+   * —— `scene` 是**库**，它的消费者（渲染器）还没建 ——
+   *
+   * ⚠️ 这一组的理由和 `exportSnapshot` 当年活下来的借口是同一个（"给前端用"），
+   * 而它零调用了很久，直到 `hertaloy scene` 才接上。所以写死条件：
+   * **渲染器一旦建起来仍然不用它们，就该删，不是继续留在这张表里。**
+   */
+  ["slotCellId", "画布单元 id：子槽。渲染器要按 id 找回单元 —— 渲染器建起来仍不用就删"],
+  ["nodeCellId", "画布单元 id：节点。同上"],
+  ["identityHue", "同一模板自动同色的色相。渲染器上色用 —— 建起来仍不用就删"],
+  ["swatch", "配色取样。同上"],
+  ["flowColor", "流的着色。同上"],
+  ["tetherKey", "tether 的复合键（它没有 id）。差量的消费方按它对账 —— 用不上就说明差量白算了"],
   ["encodeSegment", "objectDir 在同文件里调"],
   ["decodeSegment", "decodeObjectDir 在同文件里调"],
   ["permissionsPath", "loadPermissions 在同文件里调"],

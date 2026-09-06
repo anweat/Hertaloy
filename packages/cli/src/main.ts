@@ -32,6 +32,7 @@ import {
   resources,
   send,
   scene as sceneCmd,
+  watchScene,
   show,
   status,
   truncate,
@@ -54,6 +55,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy status  <dir>                        实例树 / 阻塞原因 / 在途消息 / 死锁
   hertaloy show    <dir> <object-id[@n]>        读一个对象版本
   hertaloy scene   <dir> [--scope <traceid>]    导出渲染用的场景 JSON
+       加 --watch [--interval 毫秒] 持续输出**场景差量**（NDJSON，一行一帧）
+       第一帧是与空场景的差量，所以流上只有一种形状；没变化的轮次不输出
   hertaloy history <dir> <object-id>            某对象的版本历史
   hertaloy send    <dir> <traceid> <node> <port> [json]   投一条消息（人的放行走这条）
   hertaloy drain   <dir> [--runner local|wsl|docker]  推进到静止
@@ -99,7 +102,20 @@ ${USAGE}`, code: 2 } : null;
     case "scene": {
       const at = args.indexOf("--scope");
       const scope = at === -1 ? undefined : args[at + 1];
-      return need(1) ?? sceneCmd(dir as string, actor, scope);
+      const short = need(1);
+      if (short !== null) return short;
+      if (!args.includes("--watch")) return sceneCmd(dir as string, actor, scope);
+      const iv = args.indexOf("--interval");
+      const interval = iv === -1 ? 500 : Number(args[iv + 1]);
+      if (!Number.isFinite(interval) || interval < 50) {
+        return { text: "--interval 要是 ≥50 的毫秒数", code: 2 };
+      }
+      // watch 不返回：它一直跑到被打断。输出直接走 stdout，一行一帧。
+      await watchScene(dir as string, actor, scope, interval, (line) => {
+        process.stdout.write(`${line}
+`);
+      });
+      return { text: "", code: 0 };
     }
     case "show":
       return need(2) ?? show(dir as string, actor, a as string);

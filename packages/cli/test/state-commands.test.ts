@@ -291,9 +291,9 @@ describe("★ 绕过 ControlPlane 的两条路收回来了", () => {
  * 所以这一组测的是**整条链**：真跑一段 → 导出 → 场景里确实有该有的东西。
  */
 describe("★ scene：观测链的出口", () => {
-  it("真跑一段之后，场景里有实例、有节点、有流", () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
-    drain(dir, HUMAN, undefined);
+  it("真跑一段之后，场景里有实例、有节点、有流", async () => {
+    send(dir, HUMAN, "job-1", "gate", "in", { value: 1, expect: 1 });
+    await drain(dir, HUMAN, undefined);
 
     const r = scene(dir, HUMAN);
     expect(r.code).toBe(0);
@@ -314,9 +314,9 @@ describe("★ scene：观测链的出口", () => {
     expect(built.range.to).toBeGreaterThanOrEqual(1);
   });
 
-  it("--scope 就是前缀裁剪 —— 视口即前缀", () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
-    drain(dir, HUMAN, undefined);
+  it("--scope 就是前缀裁剪 —— 视口即前缀", async () => {
+    send(dir, HUMAN, "job-1", "gate", "in", { value: 1, expect: 1 });
+    await drain(dir, HUMAN, undefined);
 
     const r = scene(dir, HUMAN, "job-1");
     expect(r.code).toBe(0);
@@ -338,9 +338,9 @@ describe("★ scene：观测链的出口", () => {
    * 和 scene 收的形状分家，这条命令当场炸 —— 而在此之前那种漂移是静默的
    * （夹具定格之后两端各自演化，谁也不知道）。
    */
-  it("★ 导出端与 scene 收的形状必须对得上，对不上当场炸", () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
-    drain(dir, HUMAN, undefined);
+  it("★ 导出端与 scene 收的形状必须对得上，对不上当场炸", async () => {
+    send(dir, HUMAN, "job-1", "gate", "in", { value: 1, expect: 1 });
+    await drain(dir, HUMAN, undefined);
     // 这条命令内部就是 exportSnapshot → parseSnapshot → buildScene，
     // 能跑通本身就是那条接缝的红灯
     expect(scene(dir, HUMAN).code).toBe(0);
