@@ -519,9 +519,9 @@ export class Runtime implements Snapshotable {
    * 让不可信的一侧决定"这是哪次执行的结果"。
    */
   applyAgentResult(executionId: string, raw: unknown): StepResult | StepFailure {
-    // 不断言 RUNNING：实例在执行期间被截断时记录已是 CANCELLED，而迟到的结果
-    // 该被**优雅丢弃**，不是抛异常 —— 冲突域复核在 `#apply` 里，那才是 L3 的落点。
     const record = this.record(executionId);
+    const closed = this.#closedResult(record);
+    if (closed !== null) return closed;
     const inputId = record.claimed[0];
     invariant(inputId !== undefined, `execution ${executionId} 没有被 claim 的消息`);
     const input = this.message(inputId);
@@ -542,10 +542,28 @@ export class Runtime implements Snapshotable {
   /** agent 执行本身失败（backend 抛异常、超时、被杀）时的对应入口。 */
   failAgentResult(executionId: string, termination: Termination, reason: string): StepFailure {
     const record = this.record(executionId);
+    const closed = this.#closedResult(record);
+    if (closed !== null) return closed;
     const inputId = record.claimed[0];
     invariant(inputId !== undefined, `execution ${executionId} 没有被 claim 的消息`);
     this.#ledger.releaseDriving(record.traceid, record.nodeId);
     return this.#applyFailure(record, this.message(inputId), termination, reason);
+  }
+
+  /**
+   * 重试可能再次 claim 同一消息、同一 generation，所以只查消息状态还不够。
+   * 先查 attempt 是否仍有效；必须早于读取旧消息、清除 driving 或记录观测。
+   * 已关闭执行保留原结论，迟到的成功、坏输出和异常都不能重新结算它。
+   */
+  #closedResult(record: ExecutionRecord): StepFailure | null {
+    if (record.status === "RUNNING") return null;
+    return {
+      consumed: record.claimed[0] ?? "",
+      traceid: record.traceid,
+      nodeId: record.nodeId,
+      reason: `结果作废：execution ${record.executionId} 已结束（${record.status}），迟到结果不改变已结算状态`,
+      retrying: false,
+    };
   }
 
   async stepAgent(): Promise<StepResult | StepFailure | null> {

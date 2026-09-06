@@ -122,13 +122,12 @@ describe("claim / execute / apply", () => {
 
     const result = await rt.stepAgent();
     expect(isFailure(result)).toBe(true);
-    // 两半都会拦住它：截断既丢了消息（claim 集复核先命中），也推了 generation。
-    // 断言"作废"这个行为本身，外加两条理由至少中一条 —— 而不是钉死在措辞上。
+    // 截断已经结算 attempt；迟到结果须被拒绝，并保留原取消事实。
     if (isFailure(result)) {
       expect(result.reason).toMatch(/结果作废/);
-      expect(result.reason).toMatch(/已不再是 CLAIMED|generation 0 → 1/);
+      expect(result.reason).toMatch(/已结束/);
     }
-    expect(rt.records()[0]?.status).toBe("VOIDED");
+    expect(rt.records()[0]).toMatchObject({ status: "SETTLED", termination: "CANCELLED" });
     expect(collected).toEqual([]);
   });
 

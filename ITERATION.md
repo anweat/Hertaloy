@@ -60,3 +60,10 @@
 - 修法：overlay 只物化正文，回到普通注册路径执行全部校验后一次落库；没有 entry 的子槽也检查引用。MCP writable 注入 `checkAgentSpec`；CLI validate 先解析覆盖层自身结构，仍明确提示基定义校验尚未完成。
 - 验证：kernel 285/285、MCP 16/16、CLI 命令测试 13/13，三个包 typecheck 通过。
 - 复审：内核继续接受宿主自定义执行规格；没有把 sandbox 的具体 schema 移回 contracts/kernel。物化对象的 kind、基定义 provenance 与实例 pin 语义保持不变；拒绝不追加模板版本。
+
+### H03a：迟到结果不能再次结算
+
+- 9 条反例全部先红：重试重新 claim 后、截断后，分别送达旧成功、失败、非法值、异常；另验成功后的重复非法值。
+- 修法：apply/fail 的共同前置条件是 attempt 仍为 RUNNING，检查早于读消息、清 driving、写观测。仅检查 generation 和 CLAIMED 不能区分同一消息的两次 attempt。
+- 兼容变化：迟到结果仍返回作废失败，但已结算记录保留原来的 SETTLED / termination，不再被迟到结果改成 VOIDED；三条旧测试同步改为检查这个更严格的保持性质。
+- 验证：kernel 294/294、state 65/65，两个包 typecheck 通过。新 attempt 的 driving 和 CLAIMED 不变，合法新结果仍能消费消息。

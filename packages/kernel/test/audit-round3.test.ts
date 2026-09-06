@@ -63,7 +63,8 @@ describe("★ P0-1 重复 apply 只生效一次", () => {
       termination: "DONE",
     });
     expect("reason" in again).toBe(true);
-    expect((again as { reason: string }).reason).toMatch(/已不再是 CLAIMED/);
+    expect((again as { reason: string }).reason).toMatch(/已结束/);
+    expect(rt.record("exec-1")).toMatchObject({ status: "SETTLED", termination: "DONE" });
 
     // ★ 下游只有一条 —— 副作用没有重复
     expect(rt.messages().filter((m) => m.target.node === "sink")).toHaveLength(1);

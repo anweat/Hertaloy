@@ -253,7 +253,8 @@ describe("★ 认领不再在 open 时自动发生（外部审核 P0-2）", () =
       termination: "DONE",
     });
     expect("reason" in late).toBe(true);
-    expect((late as { reason: string }).reason).toMatch(/已不再是 CLAIMED/);
+    expect((late as { reason: string }).reason).toMatch(/已结束/);
+    expect(c.runtime.record("exec-1")).toMatchObject({ status: "SETTLED", termination: "FAILED" });
     c.runtime.checkInvariants();
     c.close();
   }, 20_000);
