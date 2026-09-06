@@ -24,7 +24,18 @@ export interface Anchor {
 
 export interface AnchorRef {
   readonly cell: string;
-  readonly port: string;
+  /**
+   * 端口。**可以没有** —— 信号是容器自己发的，没有哪个节点 emit 它。
+   *
+   * 这与信封里的判别式是同一条，只是往上抬了一层：
+   *
+   *     source {traceid, node, port}   →  from { cell: 节点单元, port }   数据流
+   *     source {traceid}               →  from { cell: 实例单元 }         信号
+   *     source 缺省                     →  from null                      图外来的
+   *
+   * 渲染上也顺：信号是一条从**盒子边缘**出来的线，不是从某个端口。
+   */
+  readonly port?: string;
 }
 
 /**

@@ -373,6 +373,42 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
   }
 
   /**
+   * ── 信号与图外来的：此前这两类**一条都没画** ──
+   *
+   * 实测夹具里 16 条消息，2 条信号 + 7 条外部注入，**全都不在 flows 里**。
+   * 后果不是少几根线：
+   *
+   *   - 信号看不见 ⇒ `waits` 那条边在子实例收口时**凭空消失**，而父的 merge
+   *     节点凭空多一个刻度。因果链断在最要紧的一环 —— 看得见"在等"，
+   *     看不见"等到了"。
+   *   - 外部注入看不见 ⇒ 人往里投消息是这个系统里人唯一的干预方式，
+   *     而它在图上不留痕，整张图会显得"自己动起来了"。
+   *
+   * 判别式不用发明，就是信封里 `source` 那三种情形（见 `AnchorRef.port`）。
+   *
+   * **两种都不新建单元。**信号从**实例单元**出发（确实没有节点发它）；
+   * 图外来的 `from` 为 null —— 它该显示在画布外的固定位置，而不是图里多一个
+   * 假节点。"谁在什么时候投的"由 `authz.jsonl` 回答，那是 CLI 的事，不是内核的。
+   *
+   * 与"声明了但从没命中"（也是 `from: null`）靠 `at` 分得开，而且不是约定：
+   * `at` 就是"在哪些序号上发生过"，空即从未发生。
+   */
+  for (const msg of recent) {
+    if (msg.source !== undefined && msg.source.node !== undefined) continue; // 数据流，上面画过
+    const to = { cell: nodeCellId(msg.target.traceid, msg.target.node), port: msg.target.port };
+    if (!inScope(msg.target.traceid)) continue;
+    flows.push({
+      id: `signal:${msg.id}`,
+      from: msg.source === undefined ? null : { cell: msg.source.traceid },
+      to,
+      // 已经发生的事：确定性拉满，不像别名那样要靠命中数猜
+      certainty: 1,
+      activity: 1 / Math.max(1, recent.length),
+      at: [seqOf(msg.id)],
+    });
+  }
+
+  /**
    * ── 等待：谁挡着谁 ──
    *
    * 锁账本里 `waitingOn` 一直都在，只是快照从没导出过它 —— 于是"容器间关系"

@@ -246,3 +246,63 @@ describe("★ 结构性进度：能推的那一半", () => {
     expect(cell("job-1#plan")?.progress).toBeUndefined();
   });
 });
+
+/**
+ * ★ 四种来路都得画得出来。
+ *
+ * 此前只画了两种（内网边、别名绑定）。实测这份夹具 16 条消息里，
+ * **2 条信号 + 7 条外部注入一条都不在 flows 里**。后果不是少几根线：
+ *
+ *   信号看不见   ⇒ `waits` 那条边在子实例收口时凭空消失，而父的 merge 节点
+ *                  凭空多一个刻度 —— 看得见"在等"，看不见"等到了"
+ *   图外看不见   ⇒ 人往里投消息是人唯一的干预方式，图上却不留痕，
+ *                  整张图显得"自己动起来了"
+ */
+describe("★ 流的四种来路", () => {
+  it("内网边：node → node，certainty 恒 1", () => {
+    const f = scene.flows.find((x) => x.id.includes(":edge:"));
+    expect(f?.certainty).toBe(1);
+    expect(f?.from?.port).toBeDefined();
+  });
+
+  it("别名：跨实例，带 alias，certainty 由命中数来", () => {
+    const f = scene.flows.find((x) => x.id.includes(":alias:") && x.at.length > 0);
+    expect(f?.certainty).toBeGreaterThan(0);
+    expect(f?.certainty).toBeLessThan(1);
+  });
+
+  it("★ 信号：从**实例单元**出发，没有端口", () => {
+    const sig = scene.flows.filter((f) => f.from !== null && f.from.port === undefined);
+    expect(sig.length).toBeGreaterThan(0);
+    // 子实例收口 → 通知落父声明的 exit 端点
+    expect(sig.map((f) => f.to.cell)).toContain("job-1#merge");
+    expect(sig[0]?.from?.cell).toMatch(/^job-1\//);
+    // 确实没有节点发它 —— 端口缺席是判别式，不是漏填
+    expect(sig.every((f) => f.from?.port === undefined)).toBe(true);
+  });
+
+  it("★ 图外来的：from 为 null 且**确实发生过**", () => {
+    const outside = scene.flows.filter((f) => f.from === null && f.at.length > 0);
+    expect(outside.length).toBeGreaterThan(0);
+    // 人投的第一条：把根跑起来的那条
+    expect(outside.map((f) => f.to.cell)).toContain("job-1#plan");
+  });
+
+  it("★ 与「声明了但从没命中」分得开 —— 靠 at，而且这不是约定", () => {
+    const declared = scene.flows.filter((f) => f.from === null && f.at.length === 0);
+    expect(declared.length).toBeGreaterThan(0);
+    // `at` 就是"在哪些序号上发生过"，空即从未发生 —— 字段本义，不是隐含约定
+    expect(declared.every((f) => f.certainty === 0)).toBe(true);
+    // 两类都 from: null，但一类有流量一类没有
+    const outside = scene.flows.filter((f) => f.from === null && f.at.length > 0);
+    expect(outside.length).toBeGreaterThan(0);
+    expect(declared.length).toBeGreaterThan(0);
+  });
+
+  it("★ 不为「图外」新建一个假单元 —— 它该显示在画布外的固定位置", () => {
+    // cells 里只有 instance / node / slot 三种，没有第四种
+    expect(new Set(scene.cells.map((c) => c.kind))).toEqual(
+      new Set(["instance", "node", "slot"]),
+    );
+  });
+});
