@@ -29,7 +29,7 @@ import {
   networkArgs,
   networkNameFor,
 } from "./network.js";
-import { freshDir, type RunOutcome, type RunSpec, type Runner, safeId } from "./runner.js";
+import { freshDir, locateSandbox, type RunOutcome, type RunSpec, type Runner, safeId } from "./runner.js";
 
 export interface DockerOptions {
   /** 镜像即环境。默认一个带 git 的小镜像。 */
@@ -103,11 +103,11 @@ export class DockerRunner implements Runner {
   }
 
   locate(id: string): string {
-    return `${this.#prefix}${safeId(id)}`;
+    return locateSandbox(this.#prefix, id);
   }
 
   allocate(id?: string): string {
-    const host = id === undefined ? mkdtempSync(this.#prefix) : freshDir(this.locate(id));
+    const host = id === undefined ? mkdtempSync(this.#prefix) : freshDir(`${this.#prefix}${safeId(id)}`, id);
     this.#mounts.set(slash(host), `${INNER_ROOT}/${basename(host)}`);
     this.#networks.set(slash(host), this.#networkName ?? networkNameFor(id ?? basename(host), resolve(this.#prefix)));
     return host;

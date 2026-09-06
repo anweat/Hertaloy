@@ -9,9 +9,10 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export interface RunSpec {
   readonly argv: readonly string[];
@@ -78,14 +79,8 @@ export interface Runner {
   allocate(id?: string): string;
 
   /**
-   * 同一个 id 对应的沙箱根 —— **纯函数，不建也不清**。
-   *
-   * `allocate(id)` 的确定性上面已经写着（"沙箱因此可被再次找到"），但一直
-   * 没有非破坏的入口：想知道某个 id 的沙箱在哪，只能调 `allocate`，而它会
-   * 先把那个目录清空。于是"再次找到"这句话在代码里没有对应的动作，
-   * 需要它的地方（工作区交接）只好自己另记一本账。
-   *
-   * 把纯的那一半单独露出来，`allocate` = `locate` + 清空建目录。
+   * 同一个 id 对应的沙箱根，不建也不清。旧布局须核对目录内的身份再返回。
+   * allocate 只分配新目录；同一身份重复分配会拒绝，避免覆盖现场。
    */
   locate(id: string): string;
 
@@ -124,25 +119,41 @@ export interface Runner {
  * 一旦留着就会在共享目录里真的撞名 —— 两个 run 的第一次执行抢同一个目录。
  */
 export function safeId(id: string): string {
-  return id.replace(/[^A-Za-z0-9_.-]/g, "-");
+  const digest = createHash("sha256").update(JSON.stringify(id)).digest("hex");
+  return `v2-${id.replace(/[^A-Za-z0-9_.-]/g, "-").toLowerCase().slice(0, 16)}-${digest}`;
 }
 
 /**
- * 确定性路径必须**先清空再用**。
- *
- * 沙箱留着之后，同一个 id 第二次分配会撞上上次的残留 —— 而基线是在物化之后打的，
- * 于是残留文件被算进基线，agent 这次真改的东西反而 diff 不出来。
- * （现有的 profile 测试正是这么炸的：断言 `made.txt` 是改动，实际空。）
- *
- * 清空意味着**同 id 的旧沙箱会被顶掉**。这是可接受的：id 由
- * `<traceid>/<executionId>` 拼成，同 id 就是同一次执行，后来者是重跑。
- * 真正的隐患是 executionId 并非全局唯一（每个 Runtime 从 exec-1 起），
- * 那条单独记着 —— 但"顶掉旧的"至少是**响的**失败，比错误的观测好。
+ * 原子排他地分配新目录。不能复用旧 emit/journal，也不能先删除别人的执行现场。
+ * 身份标记在 box 之外，供重开 runner 后核对目录归属；它不是执行租约。
  */
-export function freshDir(dir: string): string {
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
+export function freshDir(dir: string, id?: string): string {
+  mkdirSync(dirname(dir), { recursive: true });
+  try { mkdirSync(dir); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    throw new Error(`沙箱已存在，拒绝覆盖：${dir}。重试必须使用新的执行身份`);
+  }
+  if (id !== undefined) writeFileSync(join(dir, "hertaloy.identity.json"), JSON.stringify({ id }), "utf8");
   return dir;
+}
+
+/** 定位新旧布局；目录身份只是文件归属证据，不代替执行记录或授权。 */
+export function locateSandbox(prefix: string, id: string): string {
+  const current = `${prefix}${safeId(id)}`;
+  const legacy = `${prefix}${id.replace(/[^A-Za-z0-9_.-]/g, "-")}`;
+  const found = existsSync(current) ? current : existsSync(legacy) ? legacy : undefined;
+  if (found === undefined) return current;
+  try {
+    const marker = join(found, "hertaloy.identity.json");
+    if (existsSync(marker)) {
+      if (JSON.parse(readFileSync(marker, "utf8")).id === id) return found;
+    } else {
+      const request = JSON.parse(readFileSync(join(found, "box/.hertaloy/request.json"), "utf8"));
+      const parts = [request.traceid, request.nodeId, request.executionId];
+      if (parts.every((part) => typeof part === "string") && parts.join("/") === id) return found;
+    }
+  } catch { /* 损坏或缺少身份时保留现场，不猜测。 */ }
+  throw new Error(`无法确认沙箱归属：${found} 与执行身份 ${id} 不匹配；原目录已保留`);
 }
 
 /**
@@ -231,11 +242,11 @@ export class LocalRunner implements Runner {
 
   allocate(id?: string): string {
     if (id === undefined) return mkdtempSync(this.#prefix);
-    return freshDir(this.locate(id));
+    return freshDir(`${this.#prefix}${safeId(id)}`, id);
   }
 
   locate(id: string): string {
-    return `${this.#prefix}${safeId(id)}`;
+    return locateSandbox(this.#prefix, id);
   }
 
   release(hostRoot: string): void {

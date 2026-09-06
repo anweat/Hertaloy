@@ -4,13 +4,24 @@
  * 适配不是特例代码，是配置 —— 每个 profile 只是"把上下文写成谁认识的文件"。
  */
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ExecutionRequest } from "@nodeflow/contracts";
 import { SandboxBackend } from "../src/backend.js";
 import { LocalRunner } from "../src/runner.js";
 import { PROFILE_NAMES, resolveProfile } from "../src/profile.js";
+
+const workRoots: string[] = [];
+function localRunner(): LocalRunner {
+  const root = mkdtempSync(join(tmpdir(), "hertaloy-profile-"));
+  workRoots.push(root);
+  return new LocalRunner(root);
+}
+afterEach(() => {
+  for (const root of workRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 const input = {
   vars: { rules: "遵守 PEP 8", budget: 1000 },
@@ -64,7 +75,7 @@ describe("★ 输出契约靠注入教给外部 agent", () => {
 
 describe("★ 渲染发生在打基线之前 —— CLAUDE.md 不会被当成 agent 的改动", () => {
   it("端到端：agent 什么都不改，观察结果为空", async () => {
-    const backend = new SandboxBackend({ runner: new LocalRunner() });
+    const backend = new SandboxBackend({ runner: localRunner() });
     const request: ExecutionRequest = {
       executionId: "exec-p",
       traceid: "job-1",
@@ -91,7 +102,7 @@ describe("★ 渲染发生在打基线之前 —— CLAUDE.md 不会被当成 ag
   }, 30_000);
 
   it("agent 真改了文件才算改动", async () => {
-    const backend = new SandboxBackend({ runner: new LocalRunner() });
+    const backend = new SandboxBackend({ runner: localRunner() });
     const result = await backend.run({
       executionId: "exec-p2",
       traceid: "job-1",

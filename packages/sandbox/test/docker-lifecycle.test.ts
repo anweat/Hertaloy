@@ -127,7 +127,12 @@ it("两个 box 子目录并行执行，容器名独立，取消只指向对应�
 
 it("即使同一挂载目录再次执行，也分配独立容器身份", async () => {
   const runner = new DockerRunner({ workRoot: workRoot() });
-  const a = await run(runner, "job/a/exec-1");
-  const b = await run(runner, "job/a/exec-1");
+  const paths = createSandbox(runner.allocate("job/a/exec-1"));
+  for (let n = 0; n < 2; n++) {
+    const pending = runner.run({ root: paths.box, argv: ["true"] });
+    fake.children.at(-1)!.emit("close", 0);
+    await pending;
+  }
+  const [a, b] = fake.calls.filter((args) => args[0] === "run") as [string[], string[]];
   expect(a[a.indexOf("--name") + 1]).not.toBe(b[b.indexOf("--name") + 1]);
 });

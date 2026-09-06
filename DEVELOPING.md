@@ -42,6 +42,15 @@ ControlPlane 的 `run`、`runAgents`、`settleAll`、`reconcile`、`causesOf` �
 作用于整棵运行树，只接受真实根 traceid 并检查根权限。传子树会被明确拒绝；
 `subtree`、`messages` 等查询与定点 `send`、`truncate` 仍按目标授权。
 
+Docker 内网按实际执行策略准备：节点覆盖为 `internal` 时才建网，并检查 Docker 返回的
+网络名称和 `Internal=true`。默认按工作根与根 trace 分组；显式 `networkName` 表示主动共享。
+旧的共享默认网络不会自动删除。每次 Docker 执行使用独立容器名，取消只引用该次调用的名字。
+
+沙箱目录使用带身份摘要的新名称。已保留的旧目录可通过其中的 `request.json` 核对后供
+`workspace.from` 继承；无法确认归属时拒绝并保留现场。同一身份重复 allocate 会报错，
+重试须使用新的执行身份，不再自动清空旧目录。直接使用 runner 时需要为独立运行配置独立
+workRoot/innerRoot；相同工作根与相同执行身份仍会冲突，WSL 的默认 `/tmp` 尤其需要注意。
+
 ---
 
 ## 1. 写 handler
