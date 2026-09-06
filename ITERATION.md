@@ -139,3 +139,19 @@
 - Docker：同名网络存在即接受，未验证 `Internal`；默认网络名和单次执行覆盖也需一起核实。当前 daemon 未运行，不能用参数测试冒充隔离验证。
 - 执行身份：`safeId` 把多个字符折叠为 `-`，存在目录命名碰撞；修法须同时处理已有保留工作区的定位与交接兼容，不能只换名字。
 - 物理取消、跨 run 执行归属、usage 计量与真正子树驱动继续保留为独立议题。本批不扩展产品 API 或重做前端。
+
+### 续轮收尾（2026-09-06）
+
+| 批次 | 提交 |
+|---|---|
+| H06 节点保留策略 | `f6c8650` |
+| H07 对象提交边界与恢复 | `061b427` |
+| H07b 升级中的并发读取 | `284d732` |
+
+最终代码的三个完整验证命令均退出 0：
+
+- `corepack pnpm test`：830 passed / 0 failed / 7 skipped，共 837 条，本轮新增 24 条。contracts 68、kernel 305、sandbox 154 passed + 7 skipped、state 81、CLI 153、MCP 17、scene 52。
+- `corepack pnpm typecheck`：7 个包通过。
+- `corepack pnpm reachability`：193 个导出符号，无孤儿。
+
+包含真实 WSL、CLI 双进程驱动排他和两个强制结束写进程的持久化用例。Docker daemon 未运行，7 条集成测试维持跳过。最终测试原始输出为本机 `%TEMP%/hertaloy-bugfix-next-final.log`；用户原有覆盖率依赖、锁文件及 sandbox 测试路径改动保持原样，未跟踪文档、实验和配置也未纳入提交。
