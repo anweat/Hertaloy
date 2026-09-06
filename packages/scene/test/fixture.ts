@@ -27,27 +27,7 @@ export const FIXTURE: unknown = {
      "port": "never",
      "inherit": true
     }
-   ],
-   "nodes": {
-    "plan": {
-     "nodeId": "plan"
-    },
-    "merge": {
-     "nodeId": "merge"
-    },
-    "watch": {
-     "nodeId": "watch"
-    },
-    "review": {
-     "nodeId": "review"
-    },
-    "audit": {
-     "nodeId": "audit"
-    },
-    "idle": {
-     "nodeId": "idle"
-    }
-   }
+   ]
   },
   "job-1/a1": {
    "traceid": "job-1/a1",
@@ -69,15 +49,7 @@ export const FIXTURE: unknown = {
      "port": "never",
      "inherit": true
     }
-   ],
-   "nodes": {
-    "scan": {
-     "nodeId": "scan"
-    },
-    "wrap": {
-     "nodeId": "wrap"
-    }
-   }
+   ]
   },
   "job-1/a2": {
    "traceid": "job-1/a2",
@@ -99,15 +71,7 @@ export const FIXTURE: unknown = {
      "port": "never",
      "inherit": true
     }
-   ],
-   "nodes": {
-    "scan": {
-     "nodeId": "scan"
-    },
-    "wrap": {
-     "nodeId": "wrap"
-    }
-   }
+   ]
   },
   "job-1/a3": {
    "traceid": "job-1/a3",
@@ -129,15 +93,7 @@ export const FIXTURE: unknown = {
      "port": "never",
      "inherit": true
     }
-   ],
-   "nodes": {
-    "scan": {
-     "nodeId": "scan"
-    },
-    "wrap": {
-     "nodeId": "wrap"
-    }
-   }
+   ]
   }
  },
  "templates": {
