@@ -1,0 +1,198 @@
+{
+  "base": "10195d2acc69edb69a098254402f0c73d6662f6d",
+  "root": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-feedback-wmqoBx",
+  "draftCursor": {
+    "before": {
+      "seq": 1,
+      "objects": 1,
+      "config": "unchanged"
+    },
+    "after": {
+      "seq": 1,
+      "objects": 1,
+      "config": "unchanged"
+    },
+    "changed": false,
+    "messageState": "CLAIMED",
+    "executionStatus": "RUNNING"
+  },
+  "latestAttempt": {
+    "records": [
+      {
+        "executionId": "exec-1",
+        "traceid": "job",
+        "nodeId": "work",
+        "status": "SETTLED",
+        "claimed": [
+          "msg-1"
+        ],
+        "generation": 0,
+        "termination": "FAILED"
+      },
+      {
+        "executionId": "exec-2",
+        "traceid": "job",
+        "nodeId": "work",
+        "status": "SETTLED",
+        "claimed": [
+          "msg-1"
+        ],
+        "generation": 0,
+        "termination": "DONE"
+      }
+    ],
+    "snapshotRecords": [
+      {
+        "traceid": "job",
+        "nodeId": "work",
+        "status": "SETTLED",
+        "termination": "FAILED",
+        "progress": {
+          "done": 1,
+          "total": 10
+        }
+      },
+      {
+        "traceid": "job",
+        "nodeId": "work",
+        "status": "SETTLED",
+        "termination": "DONE",
+        "progress": {
+          "done": 9,
+          "total": 10
+        }
+      }
+    ],
+    "whileSecondRunning": {
+      "phase": "failed",
+      "progress": {
+        "done": 1,
+        "total": 10
+      }
+    },
+    "afterSecondSucceeded": {
+      "id": "job#work",
+      "kind": "node",
+      "parent": "job",
+      "depth": 1,
+      "label": "work",
+      "identity": "agent:fixture",
+      "ports": [
+        {
+          "name": "in",
+          "direction": "receive"
+        }
+      ],
+      "span": {
+        "from": 1,
+        "to": null
+      },
+      "marks": [
+        1
+      ],
+      "progress": {
+        "done": 1,
+        "total": 10
+      },
+      "phase": "failed",
+      "activity": 1,
+      "extent": 1,
+      "pinned": false
+    },
+    "messageFact": {
+      "target": {
+        "traceid": "job",
+        "node": "work",
+        "port": "in"
+      },
+      "payload": {},
+      "id": "msg-1",
+      "state": "CONSUMED",
+      "attempts": 1,
+      "failure": "执行终止于 FAILED"
+    },
+    "messageProjection": {
+      "id": "msg-1",
+      "target": {
+        "traceid": "job",
+        "node": "work",
+        "port": "in"
+      },
+      "state": "CONSUMED"
+    }
+  },
+  "artifactOwner": {
+    "actualOwner": "job",
+    "card": {
+      "id": "job/reports/result.md",
+      "label": "result.md",
+      "kind": "artifact",
+      "owner": "job/reports",
+      "version": 1
+    },
+    "projectedOwnerExists": false
+  },
+  "waitRemoval": {
+    "serverRemoved": [
+      "job job/child waits"
+    ],
+    "clientRemaining": [
+      {
+        "from": "job",
+        "to": "job/child",
+        "relation": "waits",
+        "because": "child"
+      }
+    ]
+  },
+  "reconnectBaseline": {
+    "currentServerFlows": [],
+    "clientFlowsAfterNewBaseline": [
+      {
+        "id": "signal:msg-1",
+        "from": null,
+        "to": {
+          "cell": "job#work",
+          "port": "in"
+        },
+        "certainty": 1,
+        "activity": 1,
+        "at": [
+          1
+        ]
+      }
+    ]
+  },
+  "unspawnedSlot": {
+    "missingRef": "worker@1",
+    "topUps": 2,
+    "templateRequests": 2,
+    "note": "The actual /templates endpoint only supplies templates of existing instances."
+  },
+  "restartCredential": {
+    "oldPageStatus": 401,
+    "freshPageStatus": 200
+  },
+  "optionalTelemetry": {
+    "execution": {
+      "executionId": "exec-1",
+      "traceid": "job",
+      "nodeId": "work",
+      "status": "SETTLED",
+      "claimed": [
+        "msg-1"
+      ],
+      "generation": 0,
+      "termination": "DONE"
+    },
+    "projectionError": "Error: 快照格式不符：\n  records.0.progress.done：Expected number, received string"
+  },
+  "deniedStream": {
+    "singleStatus": 403,
+    "streamStatus": 200,
+    "streamError": null,
+    "exitCode": 1,
+    "signal": null,
+    "stderr": "D:\\codeproject\\Hertaloy\\packages\\kernel\\src\\control.ts:140\r\n    if (!decision.allowed) throw new AuthorizationError(decision.reason);\r\n                                 ^\r\n\r\nAuthorizationError: agent:denied-reader 无权对 `job` 执行 DQL 类操作。当前授权：human:*·*·DDL/DML/DQL\r\n    at ControlPlane.check (D:\\codeproject\\Hertaloy\\packages\\kernel\\src\\control.ts:140:34)\r\n    at ControlPlane.#authorize (D:\\codeproject\\Hertaloy\\packages\\kernel\\src\\control.ts:107:10)\r\n    at ControlPlane.subtree (D:\\codeproject\\Hertaloy\\packages\\kernel\\src\\control.ts:201:10)\r\n    at exportSnapshot (D:\\codeproject\\Hertaloy\\packages\\state\\src\\snapshot.ts:71:56)\r\n    at sceneOf (D:\\codeproject\\Hertaloy\\packages\\cli\\src\\state-commands.ts:305:37)\r\n    at tick (D:\\codeproject\\Hertaloy\\packages\\cli\\src\\state-commands.ts:352:18)\r\n    at watchScene (D:\\codeproject\\Hertaloy\\packages\\cli\\src\\state-commands.ts:358:3)\r\n    at Server.<anonymous> (D:\\codeproject\\Hertaloy\\packages\\cli\\src\\serve.ts:133:14)\r\n    at Server.emit (node:events:508:28)\r\n    at parserOnIncoming (node:_http_server:1210:12)\r\n\r\nNode.js v24.14.0\r\n"
+  }
+}
