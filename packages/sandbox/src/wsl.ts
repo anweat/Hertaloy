@@ -17,6 +17,8 @@
  * 代价是宿主机的 fs 访问要走 UNC（9P 协议），比本地盘慢。对沙箱这点开销可接受。
  */
 
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { rmSync } from "node:fs";
 import { freshDir, locateSandbox, type RunOutcome, type RunSpec, type Runner, safeId } from "./runner.js";
@@ -43,6 +45,12 @@ export function toInnerPath(hostPath: string, distro: string): string {
 
 export function toHostPath(innerPath: string, distro: string): string {
   return `${UNC_PREFIX}${distro}${innerPath.split("/").join("\\")}`;
+}
+
+/** POSIX shell 单引号转义 —— 引号只在这里转一次，不经 wsl.exe 再解析一遍。 */
+function shQuote(value: string): string {
+  // 单引号内不能再有单引号：闭合 → 转义的字面单引号 → 重开，即 '\''
+  return `'${value.split("'").join("'\\''")}'`;
 }
 
 export class WslRunner implements Runner {
@@ -103,14 +111,52 @@ export class WslRunner implements Runner {
 
     // 环境变量经 `env K=V …` 传进去 —— WSL 不继承宿主机的进程环境
     const envPairs = Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`);
+
+    /**
+     * 让本次执行**自成一个进程组**，并把组号写下来。
+     *
+     * 原来是取消时 `pkill -9 -f <完整 argv>`，一行里两个 bug：
+     *
+     *   1. 命令行不是身份。两个沙箱跑同一条命令时命令行一模一样，
+     *      取消一个会把另一个也打掉 —— 而后者只是莫名其妙被杀。
+     *   2. `pkill -f` 的模式是**正则**。argv 里带 `{}`（JSON、shell 花括号）
+     *      时 pkill 直接 `regex error` 什么都没杀，而宿主机侧的 wsl.exe 被杀了：
+     *      **外面报 CANCELLED，里面的 Linux 进程还活着。**
+     *
+     * `setsid --wait` 起一个新会话，`sh` 成为组长，`$$` 就是组号；`exec` 之后
+     * 命令接替这个 pid，仍是组长。取消时 `kill -9 -<组号>` 打的是**这一组**，
+     * 连带子进程一起 —— 比 pkill 精确，也比它覆盖得全。
+     * `--wait` 让退出码照常透出来，否则 setsid 一 fork 就返回了。
+     *
+     * **启动脚本写成文件，不内联。**`wsl.exe` 会把 argv 拼成一条命令行再让
+     * Linux 侧重新解析，嵌套引号过不去（实测 `exec "$@"` 里的 `$@` 是空的，
+     * 报 `exec: : Permission denied`）。写成文件之后引号只在 Node 这边转义一次，
+     * 传给 wsl 的参数是扁平的。
+     *
+     * 脚本与组号都放在 `box/` **之外**（沙箱根下），那一层不挂给 agent 容器。
+     * 但 local/wsl 的 agent 本来就够得着整个文件系统（`isolates` 已如实报告
+     * 这一点），所以这不是防篡改保证，只是不主动放进 agent 的工作目录。
+     */
+    const innerRoot = toInnerPath(spec.root, this.#distro);
+    const pgidPath = `${innerRoot}/pgid`;
+    const command = [...(envPairs.length > 0 ? ["env", ...envPairs] : []), ...spec.argv];
+    writeFileSync(
+      join(spec.root, "run.sh"),
+      `echo $$ > ${shQuote(pgidPath)}
+exec ${command.map(shQuote).join(" ")}
+`,
+      "utf8",
+    );
     const args = [
       "-d",
       this.#distro,
       "--cd",
       innerWorkspace,
       "--",
-      ...(envPairs.length > 0 ? ["env", ...envPairs] : []),
-      ...spec.argv,
+      "setsid",
+      "--wait",
+      "sh",
+      `${innerRoot}/run.sh`,
     ];
 
     return await new Promise<RunOutcome>((resolve) => {
@@ -128,13 +174,25 @@ export class WslRunner implements Runner {
        * 杀 WSL 里的进程树。
        *
        * 杀掉宿主机的 `wsl.exe` **不保证**里面的 Linux 进程也死 —— 那是另一个
-       * 内核里的另一棵树。所以两边都要动：`pkill` 进去清，再杀本地的 wsl.exe。
+       * 内核里的另一棵树。所以两边都要动：先按进程组清 Linux 侧，再杀 wsl.exe。
        */
       const kill = (): void => {
         try {
-          this.#wsl(["pkill", "-9", "-f", spec.argv.join(" ")]);
+          /**
+           * 组号在**宿主机侧**读（沙箱根经 UNC 就是同一个文件），
+           * 传给 wsl 的是扁平参数 `kill -9 -<组号>`。
+           *
+           * 别在这儿写 `sh -c "p=$(cat …); kill …"`：`wsl.exe` 会把 argv 拼成
+           * 一条命令行再让 Linux 侧重新解析，嵌套引号过不去 —— 启动那边已经
+           * 栽过一次（`exec "$@"` 的 `$@` 是空的），这里同一个坑。
+           *
+           * 组号读不到（还没写下来 / 已经退了）就跳过，**不退回按命令行匹配** ——
+           * 那正是要修掉的东西。
+           */
+          const pgid = readFileSync(join(spec.root, "pgid"), "utf8").trim();
+          if (/^[0-9]+$/.test(pgid)) this.#wsl(["kill", "-9", `-${pgid}`]);
         } catch {
-          /* 可能已经退了 */
+          /* 可能还没写下来，或者已经退了 */
         }
         child.kill("SIGKILL");
       };

@@ -108,6 +108,78 @@ describe.skipIf(!HAS_WSL)("真跑 WSL", () => {
     expect(diag.observation?.changes.map((c) => c.path)).toEqual(["made-in-linux.txt"]);
   }, 120_000);
 
+  /**
+   * ★ 取消要按**本次执行**取消，不是按命令行匹配。
+   *
+   * 原实现是 `pkill -9 -f <完整 argv>`，同一行里藏着两个 bug：
+   *
+   *   1. 两个沙箱跑同一条命令时命令行一模一样 —— 取消一个会把另一个打掉，
+   *      而后者只是莫名其妙被杀，自己并不知道
+   *   2. `pkill -f` 的模式是**正则**。argv 里带 `{}`（JSON、shell 花括号，
+   *      到处都是）时 pkill 直接 `regex error` 什么都没杀 —— 而 wsl.exe 被杀了，
+   *      于是**外面看起来是 CANCELLED，里面的 Linux 进程还活着**
+   *
+   * 两条都由"按进程组取消"一并修掉。下面两条用例各钉一条。
+   */
+  it("★ 同命令并发时，取消只打到本次执行", async () => {
+    const runner = new WslRunner();
+    const backend = new SandboxBackend({ runner });
+    // 命令里**不含正则元字符**，否则会撞上第二个 bug 而掩盖这一条
+    const argv = ["sh", "-c", "sleep 6; touch done.txt"];
+
+    const start = (executionId: string) =>
+      backend.run({
+        executionId,
+        traceid: "job-1",
+        nodeId: "w",
+        priorExecutions: {},
+        agentSpec: { argv } as never,
+        vars: {},
+        outputContract: { allowedEmitPorts: [] },
+        limits: {},
+      });
+
+    const first = start("exec-cancel-a");
+    const second = start("exec-cancel-b");
+    await new Promise((r) => setTimeout(r, 2500)); // 等两个都真起来
+    await backend.cancel("exec-cancel-a");
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.termination).toBe("CANCELLED");
+    // ★ 另一个跑完了自己那 6 秒 —— 退出码 0，不是被杀的 9
+    expect((b.diagnostics as never as SandboxDiagnostics).exitCode).toBe(0);
+  }, 180_000);
+
+  it("★ argv 里带 `{}` 也真的杀得掉 —— 模式当正则用会 regex error 后静默放过", async () => {
+    const runner = new WslRunner();
+    const backend = new SandboxBackend({ runner });
+    // 一次性标记，跑完再去 WSL 里查这个进程还在不在
+    const tag = `hertaloy-rx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const argv = ["sh", "-c", `echo '{}' > /dev/null; sleep 20; touch ${tag}`];
+
+    const running = backend.run({
+      executionId: "exec-regex",
+      traceid: "job-1",
+      nodeId: "w",
+      priorExecutions: {},
+      agentSpec: { argv } as never,
+      vars: {},
+      outputContract: { allowedEmitPorts: [] },
+      limits: {},
+    });
+    await new Promise((r) => setTimeout(r, 2500));
+    await backend.cancel("exec-regex");
+    const result = await running;
+    expect(result.termination).toBe("CANCELLED");
+
+    // ★ 关键：外面报 CANCELLED 不算数，去 WSL 里看那个进程是不是真没了
+    await new Promise((r) => setTimeout(r, 1000));
+    const probe = `[${tag.slice(0, 1)}]${tag.slice(1)}`;
+    // `pgrep -f` 会匹配到检查命令自己 —— 方括号让检查命令的命令行不匹配这个正则
+    const alive = runner.exec(["sh", "-c", `pgrep -f ${probe} | wc -l`], "/");
+    expect(alive.trim()).toBe("0");
+  }, 180_000);
+
   it("超时在 WSL 里也能杀掉", async () => {
     const runner = new WslRunner();
     const backend = new SandboxBackend({ runner });
