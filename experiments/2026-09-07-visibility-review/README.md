@@ -19,7 +19,7 @@ Lock → Obligation 的场景接线、授权死锁查询、请求方截断后的
 
 ## 真实实验
 
-- [results.json](./results.json)：复用 S6 程序，真实 Node + LocalRunner + CLI 子进程；exec-1 故意失败，自动重试 exec-2 成功。HTTP 验证两阶段日志、新进度、产物正文与归属、固定依赖、纯校验、通道限制、重启后旧 token 401、拒绝流 403 和内核不变量。
+- [results.json](./results.json)：复用 S6 程序，真实 Node + LocalRunner + CLI 子进程；exec-1 故意失败，自动重试 exec-2 成功。验证两阶段日志、新进度、产物正文与归属、固定依赖、纯校验、通道限制、重启后旧 token 401、拒绝流 403 和内核不变量。
 - [handler-results.json](./handler-results.json)：[handler.mts](./handler.mts) 运行真实同步 handler，落盘后经 HTTP 重新查询。failed 首次失败，recovered 先失败后成功，再经 filler 的 405 次提交回收成功消息。状态仍为 done，消息标不可读，`$run@1` 的 consumed 精确对应 msg-3。sceneSummary 只保留 cells/tethers 与流数量，避免重复保存 200 条窗口流。
 - 两组实验无模型调用，临时 run 保留，服务在检查后正常关闭。会话路径文件被忽略。
 

@@ -60,6 +60,7 @@ packages/scene        66 条   层积渲染的纯函数投影
 批次证据和未完成项见 [ITERATION.md](./ITERATION.md)。
 S4–S6 的信息反馈已接通，真实本地执行与浏览器验证见 [可见性实验](./experiments/2026-09-07-s6/README.md)；前端布局仍是实验原型。
 最新外部改动后的检查与补充见 [第十一轮可见性复审](./experiments/2026-09-07-visibility-review/README.md)。
+前端下一步从 [模板与运行分离的准备文档](./FRONTEND_PREPARATION.md) 开始；尚未冻结布局和网页写入契约。
 
 **上手看 [DEVELOPING.md](./DEVELOPING.md)** —— 每一条都对应一次真踩过的坑。
 
