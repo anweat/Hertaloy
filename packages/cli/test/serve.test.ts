@@ -63,7 +63,40 @@ const url = (p: string): string => `http://127.0.0.1:${h.port()}${p}`;
 const withToken = (p: string): Promise<Response> =>
   fetch(url(p), { headers: { "x-hertaloy-token": h.token } });
 
-describe("★ token：挡住同机的其他进程", () => {
+/**
+ * ★ token 挡住的是什么、挡不住什么（审核 R05）。
+ *
+ * 原来注释写着"挡住同机的其他进程" —— 那句话是假的：首页把 token 内嵌进去
+ * 交给浏览器，本机任何进程 GET `/` 就能拿到它。这一组把**真实**边界钉住，
+ * 免得下次有人照着那句假话去接写操作。
+ */
+describe("★ token 的真实边界", () => {
+  it("★ 首页不需要 token，而且它就把 token 交出去 —— 同机 = 可信是明说的前提", async () => {
+    const withPage = await listen({
+      dir,
+      actor: HUMAN,
+      intervalMs: 30,
+      page: "<html>__HERTALOY_TOKEN__</html>",
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${withPage.port()}/`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      // 谁都能取到它 —— 这就是"同机可信"这个前提的具体形状
+      expect(html).toContain(withPage.token);
+
+      // 取到之后照常读得了数据：token 不是身份验证
+      const scene = await fetch(`http://127.0.0.1:${withPage.port()}/scene`, {
+        headers: { "x-hertaloy-token": withPage.token },
+      });
+      expect(scene.status).toBe(200);
+    } finally {
+      await withPage.close();
+    }
+  });
+});
+
+describe("★ token：挡住不知道要先去取它的调用方", () => {
   it("不带 token → 401", async () => {
     const r = await fetch(url("/scene"));
     expect(r.status).toBe(401);

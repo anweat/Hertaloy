@@ -128,6 +128,8 @@ ${USAGE}`, code: 2 } : null;
       process.stdout.write(
         `观测服务在听（主体 ${actor.kind}:${actor.id}，只读，只绑 127.0.0.1）
 ` +
+          `信任边界是**这台机器**：本机任何进程取一次首页就拿得到 token。
+` +
           `  http://127.0.0.1:${handle.port()}/
 ` +
           `token 已内嵌进页面；直接调 JSON 出口时放进 x-hertaloy-token 头：
