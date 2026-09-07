@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { listen } from "./serve.js";
 import { join } from "node:path";
 import { run, validate } from "./commands.js";
+import { definitions } from "./template-commands.js";
 import { nodeIO, openAiClient, runAgent, runExec, spawnRunner } from "./agent.js";
 import { diagnose, formatChecks } from "./doctor.js";
 import type { ExecutionBackend, Principal } from "@nodeflow/contracts";
@@ -67,6 +68,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
        起只读观测服务 + 画布。--runner 只用于定位沙箱现场，不起执行面
        只绑 127.0.0.1，主体在启动时定死（--as），一次性 token 走 header
   hertaloy templates <dir> [--scope <traceid>]  用到的模板全文（配置那一条流，可永久缓存）
+  hertaloy definitions <dir> [--scope <traceid>]  固定版本及声明依赖，含未实例化的子模板
   hertaloy scene   <dir> [--scope <traceid>]    导出渲染用的场景 JSON
        加 --watch [--interval 毫秒] 持续输出**场景差量**（NDJSON，一行一帧）
        第一帧是与空场景的差量，所以流上只有一种形状；没变化的轮次不输出
@@ -154,6 +156,10 @@ ${USAGE}`, code: 2 } : null;
       );
       await new Promise<void>(() => {}); // 一直跑到被打断
       return null;
+    }
+    case "definitions": {
+      const at = args.indexOf("--scope");
+      return need(1) ?? definitions(dir as string, actor, at === -1 ? undefined : args[at + 1]);
     }
     case "templates": {
       const at = args.indexOf("--scope");

@@ -157,6 +157,11 @@ async function api(path) {
 
 /** 配置流：不可变、按版本寻址 ⇒ 拉一次，缓存永不失效。不在每帧的场景里。 */
 let templates = {};
+let definitionInfo = {};
+async function loadDefinitions() {
+  definitionInfo = await api("/definitions");
+  templates = Object.fromEntries(Object.entries(definitionInfo).map(([ref, d]) => [ref, d.body]));
+}
 let scene = { cells: [], flows: [], tethers: [], cards: [], range: { from: 1, to: 1 }, viewport: "" };
 
 /**
@@ -228,7 +233,8 @@ function detailOf(cell) {
              生存期: cell.span, 覆盖率: cell.coverage, 定义: templates[cell.identity] };
   if (cell.kind === "slot")
     return { 子槽: cell.label, 所属: cell.parent, 子模板: cell.identity,
-             锚点: cell.ports, 定义: templates[cell.identity] };
+             锚点: cell.ports, 使用实例: definitionInfo[cell.identity]?.usedBy,
+             依赖: definitionInfo[cell.identity]?.dependencies, 定义: templates[cell.identity] };
   const nodeId = cell.id.split("#").pop();
   const tpl = templateOf(cell);
   return { 节点: nodeId, 所属实例: cell.parent, 身份: cell.identity, 相位: cell.phase,
@@ -560,25 +566,18 @@ async function renderAuthz() {
  * （服务端给的就是"这个视口用到的全部"，比逐个请求少一次往返）。
  */
 /**
- * 只问**实例**用的模板 —— 那正是 `/templates` 承诺的范围。
- *
- * 上一版把子槽的 `identity` 也算进来了。子槽的那份是**已声明依赖**：
- * 槽还没实例化时 `/templates` 里根本没有它，于是每帧都发现"缺一个"、
- * 每帧都重拉一次、每帧仍然缺 —— 一个不会收敛的空转（审核指出）。
- *
- * 「已声明依赖」与「运行实例所用模板」是两个查询范围，前者目前没有接口。
- * 在它出现之前，这里不假装能拿到；`asked` 也兜住一层：问过一次仍然没有的
- * ref 不再反复问，免得服务端行为变化时又转起来。
+ * 实例与子槽都从 `/definitions` 的声明闭包取配置。版本固定，正文可缓存。
+ * 成功查过仍没有的 ref 不反复问；网络失败则留到下次重试。
  */
 const asked = new Set();
 async function topUpTemplates() {
   const wanted = scene.cells
-    .filter((c) => c.kind === "instance" && c.identity)
+    .filter((c) => (c.kind === "instance" || c.kind === "slot") && c.identity)
     .map((c) => c.identity);
   const missing = wanted.filter((ref) => templates[ref] === undefined && !asked.has(ref));
   if (missing.length === 0) return;
-  for (const ref of missing) asked.add(ref);
-  templates = await api("/templates");
+  await loadDefinitions();
+  for (const ref of missing) asked.add(ref); // 成功返回才记，暂时网络失败允许重试
 }
 
 addEventListener("resize", () => requestAnimationFrame(drawWires));
@@ -654,7 +653,7 @@ async function consume() {
  * 那种情况下继续重连是纯粹的空转，得让人知道要刷新。
  */
 async function main() {
-  templates = await api("/templates");
+  await loadDefinitions();
   let backoff = 500;
   for (;;) {
     try {

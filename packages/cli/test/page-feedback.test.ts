@@ -51,3 +51,18 @@ it("选中节点离开视口时立即清掉它的现场", () => {
   `, ctx);
   expect(JSON.stringify(elements.get("live-body"))).not.toContain("OLD");
 });
+
+it("未实例化子槽的详情消费声明闭包，拉取失败后仍能补齐", async () => {
+  const { ctx } = page();
+  await expect(runInContext(`
+    scene.cells = [{id:'job/slot',kind:'slot',identity:'leaf@1'}];
+    api = async () => { throw new Error('offline'); };
+    topUpTemplates();
+  `, ctx)).rejects.toThrow("offline");
+  const result = await runInContext(`
+    api = async () => ({'leaf@1': {body:{nodes:{work:{}}},usedBy:[],dependencies:[]}});
+    topUpTemplates().then(() => detailOf(scene.cells[0]));
+  `, ctx);
+  expect(result.定义).toEqual({ nodes: { work: {} } });
+  expect(result.使用实例).toEqual([]);
+});

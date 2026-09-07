@@ -13,6 +13,7 @@
  */
 
 import {
+  ContainerTemplate,
   formatPrincipal,
   type Endpoint,
   type Json,
@@ -201,6 +202,48 @@ export class ControlPlane {
   subtree(actor: Principal, trace: TraceId): readonly ContainerInstance[] {
     this.#authorize(actor, "query", trace);
     return this.#registry.subtree(trace);
+  }
+
+  /** 从获准子树的固定版本展开声明依赖；不枚举别的模板资产或版本。 */
+  definitions(actor: Principal, scope?: TraceId) {
+    const trace = scope ?? this.#registry.rootTrace;
+    this.#authorize(actor, "query", trace ?? "*");
+    const instances = trace === null ? [] : this.#registry.subtree(trace);
+    const result: Record<string, {
+      ref: Ref; kind: string; body: Json;
+      usedBy: string[];
+      dependencies: { ref: Ref; where: string }[];
+    }> = {};
+    const pending = instances.map((i) => i.templateRef);
+    for (let at = 0; at < pending.length; at += 1) {
+      const ref = pending[at]!;
+      if (Object.hasOwn(result, ref)) continue;
+      const version = this.#store.resolve(ref);
+      const dependencies: { ref: Ref; where: string }[] = [];
+      if (version.kind !== "message_contract") {
+        const tpl = ContainerTemplate.parse(version.body);
+        for (const [slot, child] of Object.entries(tpl.children)) {
+          dependencies.push({ ref: child.template, where: `children.${slot}.template` });
+        }
+        for (const [node, decl] of Object.entries(tpl.nodes)) {
+          for (const [port, spec] of Object.entries(decl.ports)) {
+            if (spec.contract !== undefined) {
+              dependencies.push({ ref: spec.contract, where: `nodes.${node}.ports.${port}.contract` });
+            }
+          }
+        }
+        for (const base of version.provenance.derived_from ?? []) {
+          dependencies.push({ ref: base, where: "extends" });
+        }
+      }
+      result[ref] = {
+        ref, kind: version.kind, body: version.body,
+        usedBy: instances.filter((i) => i.templateRef === ref).map((i) => i.traceid),
+        dependencies,
+      };
+      pending.push(...dependencies.map((d) => d.ref));
+    }
+    return result;
   }
 
   locks(actor: Principal, trace: TraceId): readonly Lock[] {
