@@ -149,6 +149,8 @@ export const SnapshotObligation = z.object({
 export const SnapshotCommit = z.object({
   traceid: z.string(),
   node: z.string(),
+  /** 精确提交正文；旧快照可能只有 consumed。 */
+  ref: z.string().optional(),
   /** 通常恰好一条（一次提交消费一条消息）。留数组是照抄 `$run` 的形状。 */
   consumed: z.array(z.string()).default([]),
 });

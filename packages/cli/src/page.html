@@ -240,7 +240,7 @@ function detailOf(cell) {
   const nodeId = cell.id.split("#").pop();
   const tpl = templateOf(cell);
   return { 节点: nodeId, 所属实例: cell.parent, 身份: cell.identity, 相位: cell.phase,
-           执行: cell.execution, 进度: cell.progress, 进度不可用: cell.progressUnavailable,
+           执行: cell.execution, 结果: cell.result, 进度: cell.progress, 进度不可用: cell.progressUnavailable,
            定义: tpl && tpl.nodes ? tpl.nodes[nodeId] : undefined };
 }
 /**
@@ -269,7 +269,8 @@ function renderDetail() {
   operationFor = nextScope;
   renderOperations();
   // 节点运行中看现场，结束后保留执行详情与对象读取入口。
-  const next = cell.kind === "node" && cell.execution ? cell.execution : null;
+  liveResult = cell.kind === "node" && !cell.execution ? cell.result ?? null : null;
+  const next = cell.kind === "node" ? cell.execution ?? (liveResult ? `sync:${JSON.stringify(liveResult)}` : null) : null;
   if (liveFor !== next) document.getElementById("live-body").replaceChildren(el("div", "row", "读取中…"));
   liveFor = next;
   liveRunning = cell.phase === "running";
@@ -284,6 +285,7 @@ function renderDetail() {
  * 而且只在"选中的节点正在跑"时开，别让静止的页面白转。
  */
 let liveFor = null;
+let liveResult = null;
 let liveRunning = false;
 let livePending = false;
 let operationFor = null;
@@ -306,38 +308,58 @@ async function renderOperations() {
 }
 setInterval(() => { if (operationFor !== null) void renderOperations(); }, 5000);
 
+function appendObjects(box, refs, requested) {
+  const content = el("pre", "", refs.size ? "点引用查看对象正文" : "");
+  let objectRequest = 0;
+  for (const ref of refs) {
+    const button = el("button", "", ref);
+    button.addEventListener("click", async () => {
+      const request = ++objectRequest;
+      content.textContent = "读取中…";
+      try {
+        const object = await api(`/object?ref=${encodeURIComponent(ref)}`);
+        if (liveFor === requested && objectRequest === request) content.textContent = JSON.stringify(object, null, 2);
+      } catch (error) { if (liveFor === requested && objectRequest === request) content.textContent = `读不到：${error.message}`; }
+    });
+    box.append(button);
+  }
+  box.append(content);
+}
+
 async function renderLive() {
   const box = document.getElementById("live-body");
   if (liveFor === null) {
-    box.replaceChildren(el("div", "row", "选一个有执行记录的节点，这里显示现场或结果"));
+    box.replaceChildren(el("div", "row", "所选节点尚无执行或处理结果"));
     return;
   }
   if (livePending) return; // 上一次还没回来，不叠加请求
   const requested = liveFor;
+  const result = liveResult;
   const wasRunning = liveRunning;
   livePending = true;
   try {
+    if (result !== null) {
+      const body = el("pre", "", result.message.available ? "读取消息…" : `消息 ${result.message.id} 已回收；可通过提交引用查看保留的结果。`);
+      box.replaceChildren(el("pre", "", JSON.stringify(result, null, 2)), body);
+      appendObjects(box, new Set(result.commit ? [result.commit] : []), requested);
+      if (result.message.available) {
+        try {
+          const data = await api(`/message?id=${encodeURIComponent(result.message.id)}`);
+          if (liveFor === requested) body.textContent = JSON.stringify(data, null, 2);
+        } catch (error) {
+          if (error instanceof Expired) throw error;
+          if (liveFor === requested) body.textContent = `消息读不到：${error.message}`;
+        }
+      }
+      return;
+    }
     const d = await api(`/execution?id=${encodeURIComponent(requested)}`);
     if (liveFor !== requested) return; // 期间换了选中项
     const live = d.live;
     if (live === undefined) {
       box.replaceChildren(el("pre", "", JSON.stringify(d, null, 2)));
       const refs = new Set([...(d.observation.available ? [d.observation.ref] : []), ...d.artifacts.map((a) => a.ref)]);
-      const content = el("pre", "", "点引用查看对象正文");
-      let objectRequest = 0;
-      for (const ref of refs) {
-        const button = el("button", "", ref);
-        button.addEventListener("click", async () => {
-          const request = ++objectRequest;
-          content.textContent = "读取中…";
-          try {
-            const object = await api(`/object?ref=${encodeURIComponent(ref)}`);
-            if (liveFor === requested && objectRequest === request) content.textContent = JSON.stringify(object, null, 2);
-          } catch (error) { if (liveFor === requested && objectRequest === request) content.textContent = `读不到：${error.message}`; }
-        });
-        box.append(button);
-      }
-      box.append(content);
+      appendObjects(box, refs, requested);
       return;
     }
     if (!live.available) {

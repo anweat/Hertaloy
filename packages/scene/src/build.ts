@@ -139,17 +139,19 @@ function phaseOf(record: Snapshot["records"][number] | undefined): Phase {
  * FAILED / DISCARDED 不回收，所以现存消息可能比已回收的成功更老；
  * 不能拿“仍在窗口里”当作“更新”。没有成功提交也不等于没有失败。
  */
-function phaseOfNode(
+function stateOfNode(
   traceid: string,
   nodeId: string,
   snapshot: Snapshot,
   record: Snapshot["records"][number] | undefined,
-): Phase {
-  if (record !== undefined) return phaseOf(record);
+): Pick<Cell, "phase" | "result"> {
+  if (record !== undefined) return { phase: phaseOf(record) };
 
   const commit = snapshot.commits.find((c) => c.traceid === traceid && c.node === nodeId);
   let latest = Math.max(0, ...(commit?.consumed.map(seqOf) ?? []));
   let phase: Phase = commit === undefined ? "idle" : "done";
+  let messageId = commit?.consumed.find((id) => seqOf(id) === latest);
+  let commitRef = commit?.ref;
   for (const m of snapshot.messages) {
     if (m.target.traceid !== traceid || m.target.node !== nodeId || seqOf(m.id) < latest) continue;
     if (m.state === "CONSUMED") phase = "done";
@@ -157,8 +159,13 @@ function phaseOfNode(
     else if (m.state === "DISCARDED") phase = "voided";
     else continue;
     latest = seqOf(m.id);
+    messageId = m.id;
+    if (m.state !== "CONSUMED") commitRef = undefined;
   }
-  return phase;
+  return { phase, ...(messageId === undefined ? {} : { result: {
+    message: { id: messageId, available: snapshot.messages.some((m) => m.id === messageId) },
+    ...(commitRef === undefined ? {} : { commit: commitRef }),
+  } }) };
 }
 
 /** 身份只在这一处拼。消费方读 `id`，不重新推导。 */
@@ -302,7 +309,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
                 ...(current.progress.note === undefined ? {} : { note: current.progress.note }),
               },
             }),
-        phase: phaseOfNode(instance.traceid, nodeId, snapshot, current),
+        ...stateOfNode(instance.traceid, nodeId, snapshot, current),
         ...(current?.progressUnavailable === undefined ? {} : { progressUnavailable: current.progressUnavailable }),
         ...(current?.executionId === undefined ? {} : { execution: current.executionId }),
         activity: activityOf(id),

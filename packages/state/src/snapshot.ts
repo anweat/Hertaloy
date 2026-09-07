@@ -252,7 +252,7 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
    *
    * 每个 `(实例, 节点)` 只留最后一次：`$run` 是插入序，后写的覆盖先写的。
    */
-  const lastCommit = new Map<string, { traceid: string; node: string; consumed: string[] }>();
+  const lastCommit = new Map<string, { traceid: string; node: string; ref: string; consumed: string[] }>();
   for (const instance of roots) {
     for (const version of runtime.snapshots(instance.traceid)) {
       const body = version.body as { node?: unknown; consumed?: unknown };
@@ -260,6 +260,7 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
       lastCommit.set(`${instance.traceid}#${body.node}`, {
         traceid: instance.traceid,
         node: body.node,
+        ref: `${version.object_id}@${version.version}`,
         consumed: Array.isArray(body.consumed) ? body.consumed.filter((x) => typeof x === "string") : [],
       });
     }

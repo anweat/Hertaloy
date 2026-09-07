@@ -113,3 +113,39 @@ it("终态到达时旧现场请求仍在途，返回后会主动补查结算详�
   `, ctx);
   expect(JSON.stringify(elements.get("live-body"))).toContain("DONE");
 });
+
+it("同步节点可读失败消息；成功消息已回收时解释缺席并读精确提交", async () => {
+  const { ctx, elements } = page();
+  await runInContext(`
+    api = async path => path.startsWith('/message') ? {lastFailure:'缺少 value'} : {};
+    scene.cells = [{id:'job#work',kind:'node',parent:'job',phase:'failed',result:{message:{id:'msg-1',available:true}}}];
+    show(scene.cells[0]);
+  `, ctx);
+  expect(JSON.stringify(elements.get("live-body"))).toContain("缺少 value");
+  await runInContext(`
+    api = async path => { if (path.startsWith('/message')) throw new Error('不该查询回收消息'); return {body:{consumed:['msg-2']}}; };
+    scene.cells[0] = {id:'job#work',kind:'node',parent:'job',phase:'done',result:{message:{id:'msg-2',available:false},commit:'job/$run@1'}};
+    renderDetail();
+  `, ctx);
+  expect(JSON.stringify(elements.get("live-body"))).toContain("已回收");
+  expect(JSON.stringify(elements.get("live-body"))).toContain("msg-2");
+  expect(JSON.stringify(elements.get("live-body"))).not.toContain("不该查询");
+  const children = elements.get("live-body")!.children as { textContent: string; listeners: Record<string, () => Promise<void>> }[];
+  await children.find((c) => c.textContent === "job/$run@1")!.listeners.click!();
+  expect(children.at(-1)!.textContent).toContain('"consumed"');
+});
+
+it("同步失败消息仍在读取时同节点出现新提交，旧响应不能覆盖成功结果", async () => {
+  const { ctx, elements } = page();
+  await runInContext(`
+    let finishMessage;
+    api = path => path.startsWith('/message') ? new Promise(resolve => { finishMessage = resolve; }) : Promise.resolve({});
+    scene.cells = [{id:'job#work',kind:'node',parent:'job',phase:'failed',result:{message:{id:'msg-1',available:true}}}];
+    show(scene.cells[0]);
+    scene.cells[0] = {id:'job#work',kind:'node',parent:'job',phase:'done',result:{message:{id:'msg-2',available:false},commit:'job/$run@1'}};
+    renderDetail();
+    finishMessage({lastFailure:'OLD FAILURE'});
+  `, ctx);
+  expect(JSON.stringify(elements.get("live-body"))).toContain("job/$run@1");
+  expect(JSON.stringify(elements.get("live-body"))).not.toContain("OLD FAILURE");
+});
