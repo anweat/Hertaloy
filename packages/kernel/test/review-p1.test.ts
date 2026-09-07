@@ -239,8 +239,25 @@ describe("P1-5 自然终止必须存在，并释放父的 child 锁", () => {
   });
 });
 
-describe("P1-6 重复回复必须真的被拒（不是靠改名蒙混）", () => {
-  it("同一 requestId 第二次回复时 lookupRequest 已空 → 明确拒绝", () => {
+describe("P1-6 回复绝不落到不存在的接收方", () => {
+  /**
+   * 这条原本钉的是「lookupRequest 查不到 → 整体拒绝」。
+   *
+   * 而那条拒绝里塞着两种读法，只有一种构造得出来：
+   *
+   *   已回复    一条 requestId 只挂在一条消息上，commit 成功即 CONSUMED，
+   *             `#pickWork` 只挑 QUEUED；重试意味着上一次没 commit，
+   *             `plan.resolved` 没生效、条目还在。**到不了这里。**
+   *   已作废    `#truncate` 把请求方名下的 pending 直接删掉。**这条到得了**，
+   *             而判成失败会让干完活的服务方记一次失败，agent 服务方
+   *             还按 INVALID_OUTPUT 重跑三次。
+   *
+   * 所以拒绝换成了 dangling。**P1-6 要保的性质没有变**：回复绝不会落到
+   * 一个不存在的接收方那儿 —— 只是现在由"根本不排期"来保证，
+   * 而不是由"整批排期失败"。端到端那半在
+   * `gateway.test.ts`「请求方被截断后，服务方照常收口」。
+   */
+  it("请求方已不在时不排期任何回复消息 —— 报 dangling，不是失败", () => {
     const node = {
       kind: "handler" as const,
       handler: "x",
@@ -261,8 +278,13 @@ describe("P1-6 重复回复必须真的被拒（不是靠改名蒙混）", () =>
       },
       { answer: { a: 1 } },
     );
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.reason).toMatch(/已回复或已作废，拒绝重复回复/);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      // ★ 一条消息都没排 —— 这才是"回复不会落到不存在的接收方"本身
+      expect(outcome.plan.messages).toEqual([]);
+      expect(outcome.plan.resolved).toEqual([]);
+      expect(outcome.plan.dangling).toEqual(["answer"]);
+    }
   });
 });
 

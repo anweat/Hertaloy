@@ -181,18 +181,47 @@ describe("强制截断（§9.6）", () => {
     expect(rt.canTerminate("job-1")).toBe(true);
   });
 
-  it("★ 迟到回复不复活已截断的实例（generation fence / L3）", () => {
+  /**
+   * ★ 请求方被截断，代价不该落在服务方身上。
+   *
+   * `#truncate` 第 3 步把请求方名下的 `#pending` 条目**直接删掉**，而服务方
+   * 还是 OPEN、它的入站请求还在队列里。等它出货时 `lookupRequest` 拿到
+   * undefined，排期整体判失败 —— 于是：
+   *
+   *   1. 归因是错的。"拒绝重复回复"说的是"你回了两次"，而真相是"你的调用方没了"。
+   *   2. **agent 服务方会被重跑三次。**排期失败在 apply 里归 INVALID_OUTPUT，
+   *      它不在 NON_RETRYABLE 里，于是消息退回 QUEUED —— 对一个永远不会
+   *      变好的条件付三次模型钱。
+   *
+   * 对称的那半早就修好了：**服务方**被截断时会代它发一条请求方自己声明的
+   * `unavailable`。反方向还停在"光删 pending"，让对面撞墙。
+   *
+   * 回复没有接收方 = `dangling`，这与"PUBLISH 零订阅者"是同一件事，
+   * 而那件事这个文件里一直就不算错误。
+   */
+  it("★ 请求方被截断后，服务方照常收口，迟到回复也不复活它（L3）", () => {
     setupPair();
     rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
     rt.step(); // 发出 REQUEST
+    const request = rt.messages().find((m) => m.target.traceid === "job-1/discovery");
+    expect(request).toBeDefined();
 
     rt.truncate("job-1/coder-1", "请求方被截断");
 
-    // 服务方此刻才回复
-    const late = rt.step();
-    expect(isFailure(late)).toBe(true);
-    if (isFailure(late)) expect(late.reason).toMatch(/已回复或已作废|已截断/);
+    const served = rt.step();
+    expect(isFailure(served)).toBe(false);
+    // 服务方干完了自己的活：消息收口，不退回队列
+    expect(rt.message((request as { id: string }).id).state).toBe("CONSUMED");
+    expect(rt.message((request as { id: string }).id).attempts).toBe(0);
+    // reply 端口没有接收方 —— 报成 dangling，与零订阅者的 PUBLISH 同例
+    expect((served as StepResult).dangling).toContain("answer");
+    // 服务方自己毫发无伤，也不欠任何义务
+    expect(reg.get("job-1/discovery").status).toBe("OPEN");
+    expect(rt.obligations("job-1/discovery")).toEqual([]);
+    // 而被截断的请求方仍然没被复活，一条消息都没收到
     expect(reg.get("job-1/coder-1").status).toBe("TERMINAL");
+    expect(rt.messages().filter((m) => m.target.traceid === "job-1/coder-1" && m.state === "QUEUED"))
+      .toEqual([]);
   });
 
   it("重复截断幂等，不留第二条事实", () => {

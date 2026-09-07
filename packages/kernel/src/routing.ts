@@ -83,7 +83,12 @@ export interface StageContext {
    * scope。别名版只读实例自带的表 —— 于是解析是局部的，租户之间不共享名字空间。
    */
   readonly resolve: (alias: string) => readonly Endpoint[];
-  /** 查一个 pending request；返回 undefined 表示不存在或已作废。 */
+  /**
+   * 查一个 pending request。
+   *
+   * **undefined 只有一种含义：请求方已经不在了**（被截断，或随父级联截断）。
+   * "已被回复过"到不了这里 —— 理由写在 `stageOutputs` 的 reply 分支上。
+   */
   readonly lookupRequest: (requestId: string) => StagedRequest | undefined;
   readonly nextRequestId: () => string;
 }
@@ -160,11 +165,26 @@ export function stageOutputs(
         return { ok: false, reason: "本次消息不是 REQUEST，无法从 `reply` 端口回复" };
       }
       const req = ctx.lookupRequest(ctx.inboundRequestId);
+      /**
+       * 查不到 = **请求方已经不在了**，不是"回了两次"。
+       *
+       * 这两种读法原来共用一条拒绝，而只有前一种构造得出来：
+       *
+       *   一条 requestId 只挂在一条消息上（`nextRequestId` 每次新发）；
+       *   那条消息 commit 成功即 CONSUMED，`#pickWork` 只挑 QUEUED；
+       *   重试意味着上一次**没有** commit，`plan.resolved` 没生效，条目还在。
+       *
+       * 所以"已回复"那半是不可构造状态 —— 而唯一到得了这里的路径是
+       * `#truncate` 把请求方名下的 pending 直接删掉。判成失败的后果是：
+       * 服务方明明干完了活却记一次失败，agent 服务方还要按 INVALID_OUTPUT
+       * **重跑三次**，对一个永远不会变好的条件付三次钱。
+       *
+       * 回复没有接收方就是 `dangling` —— 与本函数里"PUBLISH 零订阅者"
+       * 同一个判法，那件事从来不算错误。
+       */
       if (req === undefined) {
-        return {
-          ok: false,
-          reason: `请求 ${ctx.inboundRequestId} 已回复或已作废，拒绝重复回复`,
-        };
+        dangling.push(portName);
+        continue;
       }
       resolved.push(ctx.inboundRequestId);
       messages.push({
