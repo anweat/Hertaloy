@@ -44,6 +44,16 @@ const TEMPLATE = {
   children: {},
 };
 
+/** 两个同步 handler 节点 —— 它们不产生执行记录，只写 `$run`。 */
+const SYNC_TEMPLATE = {
+  nodes: {
+    a: { kind: "handler", handler: "noop", ports: { in: { direction: "receive", servo: { vars: {} } } } },
+    b: { kind: "handler", handler: "noop", ports: { in: { direction: "receive", servo: { vars: {} } } } },
+  },
+  edges: {},
+  children: {},
+};
+
 /** 按节点给不同进度；`diagnostics` 会落成 `<traceid>/$exec` 一版。 */
 class ReportsProgress implements ExecutionBackend {
   async run(request: ExecutionRequest): Promise<ExecutionResult> {
@@ -204,6 +214,64 @@ it("★ 多级资产名的归属是写它的实例，不是它的父路径", asy
     // ★ 归属是 job-1，不是 job-1/reports
     expect(obj?.owner).toBe("job-1");
     expect(obj?.owner).not.toBe("job-1/reports");
+  } finally {
+    state.close();
+  }
+});
+
+/**
+ * ★ 同步提交的事实要出得去（否则同步节点的相位只能默认成 idle）。
+ *
+ * `records` 只覆盖 agent 节点 —— 三段式的账是给"外面有进程在跑、崩了要接管"
+ * 用的，同步 handler 没有这个需要。而渲染层把"没有记录"读成 idle，
+ * 于是**跑完的同步图和从没跑过的图长得一模一样**。
+ *
+ * 事实一直在 `<traceid>/$run` 里，缺的只是这一行导出。
+ */
+it("★ 每个节点最后一次提交出得去，且只出最后一次", () => {
+  const state = RunState.open(dir, { backend: new ReportsProgress() });
+  try {
+    const ref = registerContainerTemplate(state.store, "root", SYNC_TEMPLATE, "root_config");
+    state.registry.createRoot(ref, "job-1");
+    state.runtime.registerHandler("noop", () => ({}));
+    state.runtime.send({ traceid: "job-1", node: "a", port: "in" }, {});
+    state.runtime.send({ traceid: "job-1", node: "a", port: "in" }, {});
+    state.runtime.send({ traceid: "job-1", node: "b", port: "in" }, {});
+    state.runtime.drain();
+    state.persist();
+
+    const commits = exportSnapshot(state, HUMAN).commits as
+      { traceid: string; node: string; consumed: string[] }[];
+
+    // a 跑了两次，只留最后一次；b 跑了一次
+    expect(commits.map((c) => c.node).sort()).toEqual(["a", "b"]);
+    expect(commits.find((c) => c.node === "a")?.consumed).toEqual(["msg-2"]);
+    expect(commits.find((c) => c.node === "b")?.consumed).toEqual(["msg-3"]);
+    // 同步节点确实一条执行记录都没有 —— 这正是需要 commits 的原因
+    expect(state.runtime.records()).toHaveLength(0);
+  } finally {
+    state.close();
+  }
+});
+
+it("commits 跟着授权子树走，看不见的实例不出现", () => {
+  const state = RunState.open(dir, { backend: new ReportsProgress() });
+  try {
+    const leaf = registerContainerTemplate(state.store, "leaf", SYNC_TEMPLATE);
+    const ref = registerContainerTemplate(state.store, "root",
+      { ...SYNC_TEMPLATE, children: { kid: { template: leaf } } }, "root_config");
+    state.registry.createRoot(ref, "job-1");
+    state.runtime.registerHandler("noop", () => ({}));
+    state.runtime.spawn("job-1", "kid", "k1");
+    state.runtime.send({ traceid: "job-1", node: "a", port: "in" }, {});
+    state.runtime.send({ traceid: "job-1/k1", node: "a", port: "in" }, {});
+    state.runtime.drain();
+    state.persist();
+
+    const all = exportSnapshot(state, HUMAN).commits as { traceid: string }[];
+    expect(new Set(all.map((c) => c.traceid))).toEqual(new Set(["job-1", "job-1/k1"]));
+    const sub = exportSnapshot(state, HUMAN, "job-1/k1").commits as { traceid: string }[];
+    expect(new Set(sub.map((c) => c.traceid))).toEqual(new Set(["job-1/k1"]));
   } finally {
     state.close();
   }

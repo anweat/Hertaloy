@@ -120,6 +120,50 @@ function phaseOf(record: Snapshot["records"][number] | undefined): Phase {
   return record.termination === "DONE" ? "done" : "failed";
 }
 
+/**
+ * 一个节点的相位。
+ *
+ * `ExecutionRecord` **只覆盖 agent 节点** —— 三段式的账是给"外面有进程在跑、
+ * 崩了要接管"用的，同步 handler 没有这个需要，所以它天然没有记录。
+ * 那是内核对的地方；错的是把"没有记录"读成 idle：**idle 是一句正面断言**，
+ * 而这里说的其实是"这类节点不报"。夹具里 `plan`（消费了 msg-1、写了一版
+ * `$run`）与 `idle`（一次都没跑）因此长得一模一样。
+ *
+ * 同步那半的事实一直都在，分在两处，而且两处都耐久：
+ *
+ *   成功 → `$run` 一版（对象库只增不删）→ `snapshot.commits`
+ *   失败 → 消息进 FAILED / DISCARDED（队列只回收 CONSUMED，
+ *          FAILED 留着当排查现场）→ `snapshot.messages`
+ *
+ * 排序用**投递顺序** —— `messages` 就是队列的 `#order`。不去解析 `msg-N`
+ * 里的数字：那会把队列的发号格式变成渲染层的隐藏依赖，改格式时静默地错。
+ *
+ * 被回收掉的提交比任何还在的消息都老（回收只丢**最老的 CONSUMED**），
+ * 所以它们只用来打底，随后按顺序走一遍现存消息，后面的覆盖前面的。
+ */
+function phaseOfNode(
+  traceid: string,
+  nodeId: string,
+  snapshot: Snapshot,
+  record: Snapshot["records"][number] | undefined,
+): Phase {
+  if (record !== undefined) return phaseOf(record);
+
+  const commit = snapshot.commits.find((c) => c.traceid === traceid && c.node === nodeId);
+  if (commit === undefined) return phaseOf(undefined);
+
+  const present = new Set(snapshot.messages.map((m) => m.id));
+  // 最后一次提交消费的那条消息已经被回收 ⇒ 那次成功比现存任何消息都早
+  let phase: Phase = commit.consumed.some((id) => !present.has(id)) ? "done" : "idle";
+  for (const m of snapshot.messages) {
+    if (m.target.traceid !== traceid || m.target.node !== nodeId) continue;
+    if (m.state === "CONSUMED") phase = "done";
+    else if (m.state === "FAILED") phase = "failed";
+    else if (m.state === "DISCARDED") phase = "voided";
+  }
+  return phase;
+}
+
 /** 身份只在这一处拼。消费方读 `id`，不重新推导。 */
 function tether(
   from: string,
@@ -261,7 +305,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
                 ...(current.progress.note === undefined ? {} : { note: current.progress.note }),
               },
             }),
-        phase: phaseOf(current),
+        phase: phaseOfNode(instance.traceid, nodeId, snapshot, current),
         ...(current?.progressUnavailable === undefined ? {} : { progressUnavailable: current.progressUnavailable }),
         ...(current?.executionId === undefined ? {} : { execution: current.executionId }),
         activity: activityOf(id),

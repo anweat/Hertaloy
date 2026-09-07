@@ -488,11 +488,13 @@ export const FIXTURE: unknown = {
  ],
  "records": [
   {
+   "executionId": "exec-1",
    "traceid": "job-1",
    "nodeId": "review",
    "status": "RUNNING"
   },
   {
+   "executionId": "exec-2",
    "traceid": "job-1",
    "nodeId": "audit",
    "status": "SETTLED",
@@ -604,6 +606,71 @@ export const FIXTURE: unknown = {
    "kind": "child",
    "key": "job-1/a3",
    "waitingOn": "job-1/a3"
+  }
+ ],
+ "commits": [
+  {
+   "traceid": "job-1",
+   "node": "plan",
+   "consumed": [
+    "msg-1"
+   ]
+  },
+  {
+   "traceid": "job-1",
+   "node": "merge",
+   "consumed": [
+    "msg-3"
+   ]
+  },
+  {
+   "traceid": "job-1",
+   "node": "watch",
+   "consumed": [
+    "msg-11"
+   ]
+  },
+  {
+   "traceid": "job-1/a1",
+   "node": "scan",
+   "consumed": [
+    "msg-2"
+   ]
+  },
+  {
+   "traceid": "job-1/a1",
+   "node": "wrap",
+   "consumed": [
+    "msg-4"
+   ]
+  },
+  {
+   "traceid": "job-1/a2",
+   "node": "scan",
+   "consumed": [
+    "msg-6"
+   ]
+  },
+  {
+   "traceid": "job-1/a2",
+   "node": "wrap",
+   "consumed": [
+    "msg-7"
+   ]
+  },
+  {
+   "traceid": "job-1/a3",
+   "node": "scan",
+   "consumed": [
+    "msg-9"
+   ]
+  },
+  {
+   "traceid": "job-1/a3",
+   "node": "wrap",
+   "consumed": [
+    "msg-10"
+   ]
   }
  ]
 };

@@ -170,8 +170,44 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
     expect(phase("job-1#audit")).toBe("failed");
   });
 
-  it("同步 handler 没有执行记录 → idle（它没有可观测的 RUNNING 窗口）", () => {
-    expect(phase("job-1#plan")).toBe("idle");
+  /**
+   * ★ 同步 handler 节点没有**执行记录**，但那不等于它没跑过。
+   *
+   * 这条原来断言 `plan` 是 idle，理由写在括号里：「它没有可观测的 RUNNING
+   * 窗口」。前半是真的 —— handler 在事务内提交，永远不会出现 running。
+   * 但由此推出"所以永远 idle"是把「这类节点不报」说成了「这个节点空闲」，
+   * 而 idle 是一句**正面断言**。
+   *
+   * 夹具里就摆着最干净的对照：`plan` 消费了 msg-1、写了一版 `$run`，
+   * `idle` 一次都没跑 —— 修之前两个字面上一模一样。
+   */
+  it("★ 同步 handler 永远不会 running —— 但跑过就是 done，没跑过才是 idle", () => {
+    expect(phase("job-1#plan")).toBe("done");
+    expect(phase("job-1/a1#wrap")).toBe("done");
+    // 这个真的一次都没跑过 —— idle 在它身上是真话
+    expect(phase("job-1#idle")).toBe("idle");
+    // 而 running 仍然只属于 agent
+    expect(scene.cells.filter((c) => c.phase === "running").map((c) => c.id)).toEqual([
+      "job-1#review",
+    ]);
+  });
+
+  it("还排着队不影响它已经跑过 —— a3#scan 消费了 msg-9，同时还欠着 msg-14", () => {
+    expect(phase("job-1/a3#scan")).toBe("done");
+  });
+
+  it("handler 最后一条消息 FAILED → failed，不是 done", () => {
+    const snapshot = parseSnapshot(FIXTURE);
+    snapshot.messages.push({
+      id: "msg-99", target: { traceid: "job-1", node: "plan", port: "in" }, state: "FAILED",
+    });
+    expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("failed");
+  });
+
+  it("提交被回收掉也不退回 idle —— 队列只丢 CONSUMED，那次成功比现存的都老", () => {
+    const snapshot = parseSnapshot(FIXTURE);
+    snapshot.messages = snapshot.messages.filter((m) => m.id !== "msg-1");
+    expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("done");
   });
 });
 

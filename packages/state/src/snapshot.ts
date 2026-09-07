@@ -31,6 +31,17 @@ export interface RunSnapshot {
    * `runtime.locks` 本来就是公开 getter —— 缺的从来只是这一行导出。
    */
   readonly locks: readonly unknown[];
+  /**
+   * 每个节点**最后一次成功提交**消费的是哪条消息 —— 同步那半的事实。
+   *
+   * `records` 只覆盖 agent 节点：三段式的账是给"外面有进程在跑、崩了要接管"
+   * 用的，同步 handler 没有这个需要，所以它天然没有执行记录。而渲染层把
+   * "没有记录"读成 idle，于是**跑完的同步图和从没跑过的图长得一模一样**。
+   *
+   * 事实一直都在，只是在 `<traceid>/$run` 里 —— 每次提交一版，两条路径都写。
+   * 这里只送**每个节点的最后一次**：全量历史随提交数无界增长，而每帧都要发。
+   */
+  readonly commits: readonly unknown[];
 }
 
 /**
@@ -231,5 +242,27 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
       ...(l.originNode === undefined ? {} : { originNode: l.originNode }),
     }));
 
-  return { root, instances, templates, messages, records, objects, locks };
+  /**
+   * `$run` 的投影。**直接读 runtime，不再走一次 `control`** —— 与 messages /
+   * records / objects / locks 同例：上面那次 `control.subtree` 是 run 侧唯一
+   * 一次授权，之后读到的东西都在同一个前缀内。逐实例再判一次只会多 N 条
+   * 授权流水，而判据一模一样。
+   *
+   * 每个 `(实例, 节点)` 只留最后一次：`$run` 是插入序，后写的覆盖先写的。
+   */
+  const lastCommit = new Map<string, { traceid: string; node: string; consumed: string[] }>();
+  for (const instance of roots) {
+    for (const version of runtime.snapshots(instance.traceid)) {
+      const body = version.body as { node?: unknown; consumed?: unknown };
+      if (typeof body.node !== "string") continue;
+      lastCommit.set(`${instance.traceid}#${body.node}`, {
+        traceid: instance.traceid,
+        node: body.node,
+        consumed: Array.isArray(body.consumed) ? body.consumed.filter((x) => typeof x === "string") : [],
+      });
+    }
+  }
+  const commits = [...lastCommit.values()];
+
+  return { root, instances, templates, messages, records, objects, locks, commits };
 }
