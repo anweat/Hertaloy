@@ -381,7 +381,7 @@ export function execution(
     // 产物：provenance 记着是哪次执行写的 —— 不靠名字猜
     const artifacts = s.store
       .appended(0)
-      .filter((v) => v.provenance.execution_id === executionId)
+      .filter((v) => v.provenance.execution_id === executionId && v.object_id !== `${record.traceid}/$exec`)
       .map((v) => ({ ref: `${v.object_id}@${String(v.version)}`, kind: v.kind }));
 
     /**

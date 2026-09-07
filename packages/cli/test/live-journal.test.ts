@@ -131,3 +131,17 @@ it("已结束的执行不查现场 —— 那时该看 $exec", () => {
   const d = execution(dir, HUMAN, rec.executionId, "local").data as { live?: unknown };
   expect(d.live).toBeUndefined();
 });
+
+it("执行观测不重复计入用户产物", () => {
+  const rec = claimOne();
+  const s = RunState.open(dir);
+  try {
+    s.runtime.applyAgentResult(rec.executionId, { executionId: rec.executionId, termination: "DONE", emissions: {},
+      diagnostics: { progress: { done: 1, total: 1 } },
+      artifacts: [{ object_id: "reports/result.md", kind: "artifact", body: { text: "done" }, derived_from: [] }] });
+    s.persist();
+  } finally { s.close(); }
+  const r = execution(dir, HUMAN, rec.executionId);
+  expect(r.data).toHaveProperty("observation.available", true);
+  expect(r.data).toHaveProperty("artifacts", [{ ref: "job/reports/result.md@1", kind: "artifact" }]);
+});

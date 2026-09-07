@@ -391,3 +391,5 @@ S4 运行摘要与执行/消息/产物详情查询、S5 语义进度与日志采
 - 浏览器观察到运行中的实例被旧相位映射显示为 idle；新增原始 `Cell.lifecycle` 并让实例标签显示 OPEN/TERMINAL。生命周期不作为执行成功/失败结论，覆盖率标签明确写“覆盖”。
 - state 已导出 `progressUnavailable`，但 buildScene 丢掉了它；补齐 Cell 字段及透传，区分没报进度与坏采集。
 - 两个反例先红后绿，scene 60/60，scene/CLI typecheck 通过。
+
+- 真实执行实验还发现 `$exec` 被重复计入用户产物；查询现在排除该执行观测对象。新增反例先红后绿，现场/结果查询 6/6，CLI typecheck 通过。
