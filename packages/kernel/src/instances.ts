@@ -33,6 +33,7 @@ import {
   formatContractIssues,
   validateContainerTemplate,
   validateContract,
+  type ObjectVersion,
 } from "@nodeflow/contracts";
 import { extractPortVars, formatExtractionFailures } from "./extract.js";
 import { InvariantError, TemplateValidationError, invariant } from "./errors.js";
@@ -247,8 +248,30 @@ export class InstanceRegistry implements Snapshotable {
     return instance;
   }
 
+  /**
+   * 解析后的模板按**版本对象本身**记住一份。
+   *
+   * 之前每次调用都对整份模板做一次 zod `safeParse`，而 `#pickWork` 对
+   * **每一步的每一条排队消息**都调它 —— 于是 drain 是 M²/2 次全量解析。
+   * 实测 1600 条消息 drain 要 31 秒，每条的成本随队列长度线性增长。
+   *
+   * 键用 `ObjectVersion` 而不是 ref 字符串，**过期在结构上不可能**：
+   * 版本是深冻结的，每次 `put` 造一个新对象；事务回滚是把数组截短，
+   * 被丢掉的那个对象再也拿不到。所以"同一个 ref 指向不同内容"这件事，
+   * 在这里表现为**换了一个键**，而不是一条脏记录。
+   *
+   * 这不是记账 —— 记账会漂是因为两份拷贝各自维护，而这里的键就是内容本身。
+   * 前端对固定版本的模板早就这么干了（"不可变、按版本寻址 ⇒ 拉一次，
+   * 缓存永不失效"），内核这边反倒在重复解析同一份定义。
+   *
+   * `WeakMap` ⇒ 版本被丢掉时条目自己走，不留内存。
+   */
+  readonly #parsed = new WeakMap<ObjectVersion, ContainerTemplate>();
+
   #template(ref: Ref): ContainerTemplate {
     const version = this.#store.resolve(ref);
+    const hit = this.#parsed.get(version);
+    if (hit !== undefined) return hit;
     const parsed = ContainerTemplate.safeParse(version.body);
     if (!parsed.success) {
       throw new InvariantError(
@@ -257,6 +280,7 @@ export class InstanceRegistry implements Snapshotable {
           .join("；")}`,
       );
     }
+    this.#parsed.set(version, parsed.data);
     return parsed.data;
   }
 }
