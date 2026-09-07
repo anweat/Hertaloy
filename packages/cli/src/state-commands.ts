@@ -293,7 +293,7 @@ export function show(dir: string, actor: Principal, ref: string): CommandResult 
       const version = at === -1 ? s.control.head(actor, ref) : s.control.read(actor, ref);
       return ok(JSON.stringify(version, null, 2), version as never);
     } catch (error) {
-      return fail((error as Error).message);
+      return fail(error instanceof AuthorizationError ? `拒绝：${error.message}` : (error as Error).message);
     }
   });
 }
@@ -445,7 +445,13 @@ export function message(dir: string, actor: Principal, messageId: string): Comma
   return readOnly(dir, (s) => {
     const m = s.control.message(actor, messageId);
     if (m === undefined) return fail(`没有消息 ${messageId}`);
-    const causes = s.control.causesOf(actor, s.registry.rootTrace ?? messageId, messageId);
+    let causes: readonly string[] = [];
+    let causesUnavailable: string | undefined;
+    try { causes = s.control.causesOf(actor, s.registry.rootTrace ?? messageId, messageId); }
+    catch (error) {
+      if (!(error instanceof AuthorizationError)) throw error;
+      causesUnavailable = "完整因果查询需要根作用域读取权";
+    }
     const settled = m.state !== "QUEUED" && m.state !== "CLAIMED";
     const lines = [
       `${m.id}  →  ${m.target.traceid}/${m.target.node}.${m.target.port}`,
@@ -458,7 +464,9 @@ export function message(dir: string, actor: Principal, messageId: string): Comma
       ...(m.failure === undefined
         ? []
         : [`  历史失败：${m.failure}${settled ? "" : "（当前仍在途 —— 这是上一次尝试留下的）"}`]),
-      `  由 ${causes.length} 条消息导致${causes.length === 0 ? "" : `：${causes.join("、")}`}`,
+      causesUnavailable === undefined
+        ? `  由 ${causes.length} 条消息导致${causes.length === 0 ? "" : `：${causes.join("、")}`}`
+        : `  因果不可用：${causesUnavailable}`,
     ];
     return ok(lines.join("\n"), {
       message: {
@@ -474,6 +482,7 @@ export function message(dir: string, actor: Principal, messageId: string): Comma
       ...(m.failure === undefined ? {} : { lastFailure: m.failure }),
       payload: m.payload,
       causes: [...causes],
+      ...(causesUnavailable === undefined ? {} : { causesUnavailable }),
     } as never);
   });
 }

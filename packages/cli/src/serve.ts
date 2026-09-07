@@ -49,6 +49,7 @@ import {
   message,
   scene,
   status,
+  show,
   templates,
   watchScene,
 } from "./state-commands.js";
@@ -170,6 +171,12 @@ function createServer(options: ServeOptions): ServeHandle {
       case "/operations":
         fromCommand(res, operations(options.dir, options.actor, scope, "http"));
         return;
+      case "/object": {
+        const ref = url.searchParams.get("ref");
+        if (ref === null) { sendJson(res, 400, { error: "缺少 ref 参数" }); return; }
+        fromCommand(res, show(options.dir, options.actor, ref));
+        return;
+      }
       /**
        * 详情三口。都按 id 取，授权在 ControlPlane 那层按目标的 traceid 判 ——
        * 无权与"没有"分不出来是有意的（见 `ControlPlane.execution`）。

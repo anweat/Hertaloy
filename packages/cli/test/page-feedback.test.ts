@@ -6,9 +6,10 @@ import { expect, it } from "vitest";
 function page() {
   const element = () => ({
     textContent: "", children: [] as unknown[],
+    listeners: {} as Record<string, () => Promise<void>>,
     append(...items: unknown[]) { this.children.push(...items); },
     replaceChildren(...items: unknown[]) { this.children = items; },
-    addEventListener() {},
+    addEventListener(name: string, fn: () => Promise<void>) { this.listeners[name] = fn; },
   });
   const elements = new Map<string, ReturnType<typeof element>>();
   const ctx = createContext({
@@ -76,4 +77,39 @@ it("现场凭据失效后停止轮询，保留可操作的刷新提示", async (
   `, ctx);
   expect(runInContext("liveFor", ctx)).toBeNull();
   expect(JSON.stringify(elements.get("live-body"))).toContain("请刷新");
+});
+
+it("执行结束后可以从引用读对象正文，快速切换引用不接收迟到结果", async () => {
+  const { ctx, elements } = page();
+  await runInContext(`
+    const detail = { execution:{status:'SETTLED',termination:'DONE'}, observation:{available:true,ref:'job/$exec@1'}, artifacts:[{ref:'job/result.md@1'}] };
+    api = async () => detail;
+    liveFor = 'exec-1';
+    renderLive();
+  `, ctx);
+  const children = elements.get("live-body")!.children as { textContent: string; listeners: Record<string, () => Promise<void>> }[];
+  expect(JSON.stringify(children)).toContain("DONE");
+  runInContext(`let finishObject; api = () => new Promise(resolve => { finishObject = resolve; });`, ctx);
+  const first = children.find((c) => c.textContent === "job/$exec@1")!.listeners.click!();
+  runInContext(`api = async () => ({body:{text:'FINAL CONTENT'}});`, ctx);
+  await children.find((c) => c.textContent === "job/result.md@1")!.listeners.click!();
+  runInContext(`finishObject({body:{text:'STALE'}});`, ctx);
+  await first;
+  expect(children.at(-1)!.textContent).toContain("FINAL CONTENT");
+  expect(children.at(-1)!.textContent).not.toContain("STALE");
+});
+
+it("终态到达时旧现场请求仍在途，返回后会主动补查结算详情", async () => {
+  const { ctx, elements } = page();
+  await runInContext(`
+    let finishLive;
+    api = () => new Promise(resolve => { finishLive = resolve; });
+    liveFor = 'exec-1'; liveRunning = true;
+    const oldLive = renderLive();
+    liveRunning = false;
+    api = async () => ({execution:{status:'SETTLED',termination:'DONE'},observation:{available:false},artifacts:[]});
+    finishLive({live:{available:true,entries:[]}});
+    oldLive;
+  `, ctx);
+  expect(JSON.stringify(elements.get("live-body"))).toContain("DONE");
 });

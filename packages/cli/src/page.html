@@ -134,7 +134,7 @@
   <div id="side">
     <div id="status">连接中…</div>
     <div class="sec" id="detail"><h2>配置</h2><pre id="detail-body">点任意一个容器 / 子槽 / 节点</pre></div>
-    <div class="sec" id="live"><h2>执行中的现场</h2><div id="live-body">选一个正在跑的节点</div></div>
+    <div class="sec" id="live"><h2>执行现场与结果</h2><div id="live-body">选一个有执行记录的节点</div></div>
     <div class="sec"><h2>操作条件（当前 HTTP 通道）</h2><pre id="operation-body">选一个实例或节点</pre></div>
     <div class="sec" id="legend"><h2>线型</h2><div id="legend-body"></div></div>
     <div class="sec" id="outside"><h2>图外来的（人 / CLI 投的）</h2><div id="outside-body"></div></div>
@@ -240,6 +240,7 @@ function detailOf(cell) {
   const nodeId = cell.id.split("#").pop();
   const tpl = templateOf(cell);
   return { 节点: nodeId, 所属实例: cell.parent, 身份: cell.identity, 相位: cell.phase,
+           执行: cell.execution, 进度: cell.progress, 进度不可用: cell.progressUnavailable,
            定义: tpl && tpl.nodes ? tpl.nodes[nodeId] : undefined };
 }
 /**
@@ -267,10 +268,11 @@ function renderDetail() {
   if (operationFor !== nextScope) document.getElementById("operation-body").textContent = "读取中…";
   operationFor = nextScope;
   renderOperations();
-  // 选中的是**正在跑**的节点，就把现场也盯上
-  const next = cell.phase === "running" && cell.execution ? cell.execution : null;
+  // 节点运行中看现场，结束后保留执行详情与对象读取入口。
+  const next = cell.kind === "node" && cell.execution ? cell.execution : null;
   if (liveFor !== next) document.getElementById("live-body").replaceChildren(el("div", "row", "读取中…"));
   liveFor = next;
+  liveRunning = cell.phase === "running";
   renderLive();
 }
 
@@ -282,6 +284,7 @@ function renderDetail() {
  * 而且只在"选中的节点正在跑"时开，别让静止的页面白转。
  */
 let liveFor = null;
+let liveRunning = false;
 let livePending = false;
 let operationFor = null;
 let operationPending = false;
@@ -306,18 +309,35 @@ setInterval(() => { if (operationFor !== null) void renderOperations(); }, 5000)
 async function renderLive() {
   const box = document.getElementById("live-body");
   if (liveFor === null) {
-    box.replaceChildren(el("div", "row", "选一个正在跑的节点，这里显示它到这一刻的输出"));
+    box.replaceChildren(el("div", "row", "选一个有执行记录的节点，这里显示现场或结果"));
     return;
   }
   if (livePending) return; // 上一次还没回来，不叠加请求
   const requested = liveFor;
+  const wasRunning = liveRunning;
   livePending = true;
   try {
     const d = await api(`/execution?id=${encodeURIComponent(requested)}`);
     if (liveFor !== requested) return; // 期间换了选中项
     const live = d.live;
     if (live === undefined) {
-      box.replaceChildren(el("div", "row", "这次执行已经结束 —— 看 $exec"));
+      box.replaceChildren(el("pre", "", JSON.stringify(d, null, 2)));
+      const refs = new Set([...(d.observation.available ? [d.observation.ref] : []), ...d.artifacts.map((a) => a.ref)]);
+      const content = el("pre", "", "点引用查看对象正文");
+      let objectRequest = 0;
+      for (const ref of refs) {
+        const button = el("button", "", ref);
+        button.addEventListener("click", async () => {
+          const request = ++objectRequest;
+          content.textContent = "读取中…";
+          try {
+            const object = await api(`/object?ref=${encodeURIComponent(ref)}`);
+            if (liveFor === requested && objectRequest === request) content.textContent = JSON.stringify(object, null, 2);
+          } catch (error) { if (liveFor === requested && objectRequest === request) content.textContent = `读不到：${error.message}`; }
+        });
+        box.append(button);
+      }
+      box.append(content);
       return;
     }
     if (!live.available) {
@@ -348,12 +368,14 @@ async function renderLive() {
     }
   } finally {
     livePending = false;
+    // 场景已跨到下一次执行或终态时，补查最新详情；不能等已停止的现场定时器。
+    if (liveFor !== null && (liveFor !== requested || liveRunning !== wasRunning)) void renderLive();
   }
 }
 
 // 现场自己的节拍：场景不变不代表 agent 没在动
 setInterval(() => {
-  if (liveFor !== null) void renderLive();
+  if (liveFor !== null && liveRunning) void renderLive();
 }, 1000);
 
 /* ── 渲染：CSS 管嵌套，SVG 管连线 ─────────────────────────────────── */

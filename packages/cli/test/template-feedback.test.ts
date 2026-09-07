@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { RunState } from "@nodeflow/state";
 import { define, definitions, operations, validateDefinition } from "../src/template-commands.js";
 import { execFileSync } from "node:child_process";
+import { message } from "../src/state-commands.js";
 import { listen } from "../src/serve.js";
 
 const HUMAN = { kind: "human", id: "local" } as const;
@@ -154,4 +155,42 @@ it("HTTP 操作反馈指定真实通道，配置损坏后服务仍可恢复读�
     rmSync(join(dir, "permissions.json"));
     expect((await get()).status).toBe(200);
   } finally { await h.close(); }
+});
+
+it("只读对象出口返回精确正文，子树主体不能读取范围外对象", async () => {
+  const s = RunState.open(dir);
+  try {
+    s.store.put("job/a/result.md", "artifact", { text: "first" });
+    s.store.put("job/a/result.md", "artifact", { text: "second" });
+    s.store.put("job/private", "artifact", { text: "outside" });
+    s.persist();
+  } finally { s.close(); }
+  writeFileSync(join(dir, "permissions.json"), JSON.stringify({ format: 1, grants: [
+    { principal: "agent:reader", scope: "job/a", ops: ["DQL"] },
+  ] }));
+  const h = await listen({ dir, actor: AGENT });
+  try {
+    const get = (ref: string) => fetch(`http://127.0.0.1:${h.port()}/object?ref=${encodeURIComponent(ref)}`,
+      { headers: { "x-hertaloy-token": h.token } });
+    expect(await (await get("job/a/result.md@1")).json()).toMatchObject({ body: { text: "first" }, version: 1 });
+    expect((await get("job/private@1")).status).toBe(403);
+    expect((await get("job/nonexistent@1")).status).toBe(403);
+  } finally { await h.close(); }
+});
+
+it("获准子树内的消息可读，根因果无权时明确标为不可用", () => {
+  const s = RunState.open(dir);
+  let id: string;
+  try {
+    s.control.spawn(HUMAN, "job/a", "leaf", "worker");
+    id = s.control.send(HUMAN, { traceid: "job/a/worker", node: "w", port: "in" }, { visible: true });
+    s.persist();
+  } finally { s.close(); }
+  writeFileSync(join(dir, "permissions.json"), JSON.stringify({ format: 1, grants: [
+    { principal: "agent:reader", scope: "job/a", ops: ["DQL"] },
+  ] }));
+  const result = message(dir, AGENT, id!);
+  expect(result.code).toBe(0);
+  expect(result.data).toMatchObject({ payload: { visible: true }, causesUnavailable: expect.stringContaining("根作用域") });
+  expect(result.text).not.toContain("由 0 条消息导致");
 });
