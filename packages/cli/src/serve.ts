@@ -31,7 +31,7 @@
  *
  * ## 只读
  *
- * 全部是 GET，`RunState` 一律 `readOnly` 打开：不拿目录锁、不写授权日志
+ * 查询用 GET，纯草稿校验用 POST；`RunState` 一律 `readOnly` 打开：不拿目录锁、不写授权日志
  * （§17.8 单写者）。看的人再多也不挡跑的那个进程。
  *
  * 人工操作（send / truncate）将来加 POST —— 内核不用配合，它本来就不知道
@@ -41,7 +41,8 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Principal } from "@nodeflow/contracts";
-import { definitions } from "./template-commands.js";
+import { definitions, validateDefinition } from "./template-commands.js";
+import { z } from "zod";
 import {
   authz,
   execution,
@@ -98,15 +99,21 @@ function fromCommand(res: ServerResponse, r: { code: number; text: string; data?
     sendJson(res, 200, r.data ?? JSON.parse(r.text));
     return;
   }
-  sendJson(res, r.text.startsWith("拒绝") ? 403 : 400, { error: r.text });
+  sendJson(res, r.text.startsWith("拒绝") ? 403 : 400, {
+    ...(typeof r.data === "object" && r.data !== null ? r.data : {}), error: r.text,
+  });
 }
+
+const ValidationRequest = z.object({ id: z.string().min(1), spec: z.unknown(), kind: z.string().optional() })
+  .strict().refine((v) => Object.hasOwn(v, "spec"), "缺少 spec");
 
 /** 只给 `listen` 用 —— 不导出：没有第二个调用方，导出就是孤儿。 */
 function createServer(options: ServeOptions): ServeHandle {
   const token = randomBytes(24).toString("hex");
   const interval = options.intervalMs ?? 500;
 
-  const server = createHttpServer((req: IncomingMessage, res: ServerResponse) => {
+  const server = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
+    try {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const scope = url.searchParams.get("scope") ?? undefined;
 
@@ -119,6 +126,30 @@ function createServer(options: ServeOptions): ServeHandle {
 
     if (!tokenOk(req.headers[TOKEN_HEADER] as string | undefined, token)) {
       sendJson(res, 401, { error: `缺少或错误的 ${TOKEN_HEADER}` });
+      return;
+    }
+    // 纯校验以 POST 传草稿，正文不落库、不调用执行面；其余出口仍只接受 GET。
+    if (url.pathname === "/validate-definition" && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of req) {
+        size += Buffer.byteLength(chunk);
+        if (size > 256 * 1024) {
+          sendJson(res, 413, { error: "校验请求超过 256 KiB" });
+          return;
+        }
+        chunks.push(Buffer.from(chunk));
+      }
+      let raw: unknown;
+      try { raw = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+      catch { sendJson(res, 400, { error: "请求不是合法 JSON" }); return; }
+      const parsed = ValidationRequest.safeParse(raw);
+      if (!parsed.success) {
+        sendJson(res, 400, { error: "校验请求结构非法", issues: parsed.error.issues });
+        return;
+      }
+      const { id, spec, kind } = parsed.data;
+      fromCommand(res, validateDefinition(options.dir, options.actor, id, spec, kind));
       return;
     }
     if (req.method !== "GET") {
@@ -219,6 +250,11 @@ function createServer(options: ServeOptions): ServeHandle {
       }
       default:
         sendJson(res, 404, { error: `没有这个出口：${url.pathname}` });
+    }
+    } catch (error) {
+      // 磁盘/配置读错只终止这次请求，不让异步 handler 的拒绝杀掉观测服务。
+      if (!res.headersSent) sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      else if (!res.writableEnded) res.end();
     }
   });
 

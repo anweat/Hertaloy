@@ -363,3 +363,11 @@ S4 运行摘要与执行/消息/产物详情查询、S5 语义进度与日志采
 - 每个精确 ref 返回 kind、body、usedBy 和带字段位置的 dependencies；未实例化模板的 usedBy 为空。未使用资产及后来注册的新版本不混进来。
 - 页面子槽详情消费同一出口；网络失败不再把缺失 ref 永久标记成已查过。
 - 验证：模板查询、HTTP 授权和页面消费 6/6，CLI/kernel typecheck 通过；包含深层未实例化依赖、子树权限与运行 pin 不变。
+
+### S6b：校验与注册的结构化反馈
+
+- 抽出注册前的纯准备阶段，干跑与注册共用结构、连接、子模板、契约、别名、执行规格及 overlay 物化校验；错误保留 `where/code/message/severity`。
+- CLI 新增 `validate-definition` 与 `define`；HTTP 新增仅计算、不落盘的 `POST /validate-definition`（256 KiB 上限，依然要求 token）。完整干跑解析任意已有定义引用，因此要求全库 DQL；注册仍按定义 id 的 DDL 判定。
+- MCP `validate_template` 给 id 时完整校验，不给时保留本地校验并明示 unchecked；注册、校验与新增 `get_definitions` 返回 structuredContent。旧 `validate --json` 也有机器结果。
+- 注册返回实际 ref，干跑不预测或预留版本；正式注册仍重跑全部检查。HTTP 的读取异常收口到当前请求。
+- 验证：kernel 310/310，相关 CLI 41/41，MCP 19/19；CLI/kernel/MCP 类型检查通过。含四种非法草稿与注册拒绝一致、overlay、实际 CLI、HTTP 错误/超限/无 token、head 不变。

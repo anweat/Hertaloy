@@ -16,6 +16,23 @@ let dir: string;
 const HUMAN: ToolContext["actor"] = { kind: "human", id: "local" };
 const AGENT: ToolContext["actor"] = { kind: "agent", id: "planner" };
 
+it("完整干跑与注册携带相同字段错误，拒绝后没有新版本", () => {
+  const args = { id: "bad", spec: { extends: "missing@1", override: {} } };
+  const checked = call("validate_template", args);
+  const written = call("define_template", args);
+  expect(checked).toHaveProperty("data.valid", false);
+  expect(written).toHaveProperty("data.issues", (checked as { data: { issues: unknown } }).data.issues);
+  const s = RunState.open(dir, { readOnly: true });
+  try { expect(s.store.appendCount).toBe(0); } finally { s.close(); }
+});
+
+it("结构化注册版本与运行定义闭包可由 MCP 消费", () => {
+  expect(call("create_run", { scenario: FLOW }).isError).toBe(false);
+  expect(call("get_definitions", {})).toHaveProperty("data.root@1.usedBy", ["job-1"]);
+  expect(call("define_template", { id: "new", spec: {} })).toHaveProperty("data.ref", "new@1");
+  expect(call("get_definitions", {}, AGENT).isError).toBe(true);
+});
+
 function ctx(actor = HUMAN): ToolContext {
   return { dir, actor };
 }

@@ -35,7 +35,7 @@ import {
   validateContract,
 } from "@nodeflow/contracts";
 import { extractPortVars, formatExtractionFailures } from "./extract.js";
-import { InvariantError, invariant } from "./errors.js";
+import { InvariantError, TemplateValidationError, invariant } from "./errors.js";
 import { ObjectStore } from "./store.js";
 import type { Snapshotable } from "./tx.js";
 import {
@@ -291,6 +291,25 @@ export function registerContainerTemplate(
   kind = "container_template",
   validateExecutionSpec?: ExecutionSpecValidator,
 ): Ref {
+  const prepared = prepareContainerTemplate(store, templateId, spec, kind, validateExecutionSpec);
+  const version = store.put(templateId, prepared.kind, prepared.body,
+    prepared.base === undefined ? undefined : { derived_from: [prepared.base] });
+  return `${version.object_id}@${version.version}`;
+}
+
+/** 注册与干跑共用的纯校验/物化阶段，不写对象库。 */
+export function prepareContainerTemplate(
+  store: ObjectStore,
+  templateId: string,
+  spec: unknown,
+  kind = "container_template",
+  validateExecutionSpec?: ExecutionSpecValidator,
+): { kind: string; body: JsonObject; base?: Ref } {
+  if (templateId.length === 0 || templateId.includes("@")) {
+    throw new TemplateValidationError("定义 id 必须非空且不得含 @", [
+      { where: "id", code: "invalid_id", message: "定义 id 必须非空且不得含 @" },
+    ]);
+  }
   /**
    * **按 kind 分派校验。**
    *
@@ -303,14 +322,14 @@ export function registerContainerTemplate(
   if (kind === "message_contract") {
     const parsed = MessageContract.safeParse(spec);
     if (!parsed.success) {
-      throw new InvariantError(
+      throw new TemplateValidationError(
         `契约 ${templateId} 结构非法：${parsed.error.issues
           .map((i) => `${i.path.join(".") || "(根)"} ${i.message}`)
           .join("；")}`,
+        parsed.error.issues.map((i) => ({ where: i.path.join("."), code: i.code, message: i.message })),
       );
     }
-    const v = store.put(templateId, kind, parsed.data as unknown as JsonObject);
-    return `${v.object_id}@${v.version}`;
+    return { kind, body: parsed.data as unknown as JsonObject };
   }
 
   // 覆盖层：解析继承链 → 施加 → 校验合并结果 → 存成物化定义（§5.1）
@@ -318,10 +337,11 @@ export function registerContainerTemplate(
 
   const parsed = ContainerTemplate.safeParse(overlay?.merged ?? spec);
   if (!parsed.success) {
-    throw new InvariantError(
+    throw new TemplateValidationError(
       `模板 ${templateId} 结构非法：${parsed.error.issues
         .map((i) => `${i.path.join(".") || "(根)"} ${i.message}`)
         .join("；")}`,
+      parsed.error.issues.map((i) => ({ where: i.path.join("."), code: i.code, message: i.message })),
     );
   }
   const issues = [
@@ -342,18 +362,17 @@ export function registerContainerTemplate(
       : checkAliases(templateId, parsed.data, (ref) => resolveTemplate(store, ref)).issues),
   ];
   if (issues.length > 0) {
-    throw new InvariantError(
+    throw new TemplateValidationError(
       [`模板 ${templateId} 连接期校验失败：`, ...issues.map((i) => `${i.where}：${i.message}`)]
         .join("\n  "),
+      issues.map((i) => ({ ...i, code: "link_error" })),
     );
   }
-  const version = store.put(
-    templateId,
-    overlay === undefined ? kind : "materialized",
-    parsed.data as unknown as JsonObject,
-    overlay === undefined ? undefined : { derived_from: [overlay.base] },
-  );
-  return `${version.object_id}@${version.version}`;
+  return {
+    kind: overlay === undefined ? kind : "materialized",
+    body: parsed.data as unknown as JsonObject,
+    ...(overlay === undefined ? {} : { base: overlay.base }),
+  };
 }
 
 /**
@@ -411,10 +430,11 @@ function materializeOverlay(
 ): { readonly merged: ContainerTemplate; readonly base: Ref } {
   const parsedOverlay = TemplateOverlay.safeParse(spec);
   if (!parsedOverlay.success) {
-    throw new InvariantError(
+    throw new TemplateValidationError(
       `覆盖层 ${templateId} 结构非法：${parsedOverlay.error.issues
         .map((i) => `${i.path.join(".") || "(根)"} ${i.message}`)
         .join("；")}`,
+      parsedOverlay.error.issues.map((i) => ({ where: i.path.join("."), code: i.code, message: i.message })),
     );
   }
   const overlay = parsedOverlay.data;
@@ -423,21 +443,24 @@ function materializeOverlay(
   try {
     baseVersion = store.resolve(overlay.extends);
   } catch {
-    throw new InvariantError(
+    throw new TemplateValidationError(
       `覆盖层 ${templateId} 的 extends 指向未知定义：${overlay.extends}`,
+      [{ where: "extends", code: "missing_definition", message: `未知定义 ${overlay.extends}` }],
     );
   }
   const base = ContainerTemplate.safeParse(baseVersion.body);
   if (!base.success) {
-    throw new InvariantError(
+    throw new TemplateValidationError(
       `覆盖层 ${templateId} 的基定义 ${overlay.extends} 不是合法容器模板`,
+      [{ where: "extends", code: "invalid_definition", message: `${overlay.extends} 不是容器模板` }],
     );
   }
 
   const outcome = applyOverlay(base.data, overlay);
   if (!outcome.ok) {
-    throw new InvariantError(
+    throw new TemplateValidationError(
       [`覆盖层 ${templateId} 施加失败：`, ...outcome.issues.map((i) => `${i.where}：${i.message}`)].join("\n  "),
+      outcome.issues.map((i) => ({ ...i, code: "overlay_error" })),
     );
   }
 

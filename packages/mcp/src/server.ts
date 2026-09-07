@@ -59,6 +59,7 @@ async function main(): Promise<void> {
         return {
           content: [{ type: "text" as const, text: result.text }],
           isError: result.isError,
+          ...(result.data === undefined ? {} : { structuredContent: result.data as Record<string, unknown> }),
         };
       },
     );

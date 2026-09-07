@@ -27,6 +27,9 @@ import {
   BUILTIN_NAMES,
   init as createRunCommand,
   validate as validateTemplate,
+  define as defineCommand,
+  validateDefinition,
+  definitions,
 } from "@nodeflow/cli";
 
 export interface ToolContext {
@@ -40,6 +43,7 @@ export interface ToolResult {
   /** 给模型看的文本。失败时这就是它自我修正的依据。 */
   readonly text: string;
   readonly isError: boolean;
+  readonly data?: Json;
 }
 
 export interface Tool {
@@ -103,13 +107,15 @@ const validate: Tool = {
   name: "validate_template",
   title: "干跑校验容器模板",
   description:
-    "校验一份容器模板，**不落库**。提交之前先跑这个 —— 拿到的错误是给模型读的，" +
-    "改完再 define。这是自我修正内循环的入口。",
-  schema: z.object({ spec: z.unknown() }),
-  handler: (_ctx, args) => {
-    const r = validateTemplate(args.spec);
-    return r.code === 0 ? ok(r.text) : err(r.text);
-  },
+    "校验一份容器模板，不落库。给 id 时按当前对象库完整校验（要求全库 DQL）；" +
+    "不带 id 只做本地校验，data.level/unchecked 明示未检查部分。错误保留字段位置。",
+  schema: z.object({ spec: z.unknown(), id: z.string().optional(), kind: z.string().optional() }),
+  handler: (ctx, args) => guard(() => {
+    const r = typeof args.id === "string"
+      ? validateDefinition(ctx.dir, ctx.actor, args.id, args.spec, args.kind as string | undefined)
+      : validateTemplate(args.spec);
+    return { text: r.text, isError: r.code !== 0, ...(r.data === undefined ? {} : { data: r.data }) };
+  }),
 };
 
 const define: Tool = {
@@ -125,11 +131,21 @@ const define: Tool = {
     kind: z.string().optional(),
   }),
   handler: (ctx, args) =>
-    writable(ctx, (s) => {
+    guard(() => {
       const a = args as { id: string; spec: unknown; kind?: string };
-      const ref = s.control.define(ctx.actor, a.id, a.spec, a.kind);
-      return ok(`已注册 ${ref}`);
+      const r = defineCommand(ctx.dir, ctx.actor, a.id, a.spec, a.kind);
+      return { text: r.text, isError: r.code !== 0, ...(r.data === undefined ? {} : { data: r.data }) };
     }),
+};
+
+const getDefinitions: Tool = {
+  name: "get_definitions", title: "查看固定定义及声明依赖",
+  description: "从获准子树固定的版本展开子模板与契约，包含未实例化的依赖及 usedBy，不枚举其他资产。",
+  schema: z.object({ scope: z.string().optional() }),
+  handler: (ctx, args) => guard(() => {
+    const r = definitions(ctx.dir, ctx.actor, args.scope as string | undefined);
+    return { text: r.text, isError: r.code !== 0, ...(r.data === undefined ? {} : { data: r.data }) };
+  }),
 };
 
 const createRun: Tool = {
@@ -338,6 +354,7 @@ const causes: Tool = {
 
 export const TOOLS: readonly Tool[] = [
   validate,
+  getDefinitions,
   createRun,
   define,
   status,

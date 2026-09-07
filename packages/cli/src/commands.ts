@@ -8,6 +8,7 @@ import {
   TemplateOverlay,
   isOverlay,
   validateContainerTemplate,
+  type Json,
 } from "@nodeflow/contracts";
 import {
   InstanceRegistry,
@@ -24,6 +25,7 @@ import { Scenario } from "./scenario.js";
 export interface CommandResult {
   readonly text: string;
   readonly code: number;
+  readonly data?: Json;
 }
 
 const ok = (text: string): CommandResult => ({ text, code: 0 });
@@ -40,18 +42,18 @@ export function validate(raw: unknown): CommandResult {
   if (isOverlay(raw)) {
     const parsed = TemplateOverlay.safeParse(raw);
     if (!parsed.success) {
-      return fail(["覆盖层结构非法：", ...parsed.error.issues.map(
+      return localValidation(["覆盖层结构非法：", ...parsed.error.issues.map(
         (i) => `${i.path.join(".") || "(根)"}：${i.message}`,
-      )].join("\n  "));
+      )].join("\n  "), parsed.error.issues.map((i) => ({ where: i.path.join("."), code: i.code, message: i.message })));
     }
-    return ok("覆盖层：结构合法。合并结果需要基定义才能校验，请用 `run` 或 `define`。");
+    return localValidation("覆盖层：结构合法。合并结果需要基定义才能校验，请用 `validate-definition`。", []);
   }
   const parsed = ContainerTemplate.safeParse(raw);
   if (!parsed.success) {
-    return fail(
+    return localValidation(
       ["结构非法：", ...parsed.error.issues.map((i) => `${i.path.join(".") || "(根)"}：${i.message}`)].join(
         "\n  ",
-      ),
+      ), parsed.error.issues.map((i) => ({ where: i.path.join("."), code: i.code, message: i.message })),
     );
   }
   /**
@@ -74,13 +76,22 @@ export function validate(raw: unknown): CommandResult {
     ),
   ];
   if (issues.length > 0) {
-    return fail(
+    return localValidation(
       ["连接期校验失败：", ...issues.map((i: { where: string; message: string }) => `${i.where}：${i.message}`)].join("\n  "),
+      issues.map((i) => ({ ...i, code: "link_error" })),
     );
   }
   const nodes = Object.keys(parsed.data.nodes).length;
   const edges = Object.keys(parsed.data.edges).length;
-  return ok(`合法：${nodes} 个节点，${edges} 条边，${Object.keys(parsed.data.children).length} 个子槽。`);
+  return localValidation(`本地校验合法：${nodes} 个节点，${edges} 条边，${Object.keys(parsed.data.children).length} 个子槽。完整校验用 validate-definition。`, []);
+}
+
+function localValidation(text: string, issues: readonly { where: string; code: string; message: string }[]): CommandResult {
+  return { text, code: issues.length === 0 ? 0 : 1, data: {
+    valid: issues.length === 0, level: "local", registered: false,
+    unchecked: ["registered_dependencies", "root_aliases", "overlay_merge"],
+    issues: issues.map((i) => ({ ...i, severity: "error" })),
+  } };
 }
 
 /** 一次性跑完一个场景，返回可读报告。 */

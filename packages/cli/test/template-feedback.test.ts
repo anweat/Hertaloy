@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { RunState } from "@nodeflow/state";
-import { definitions } from "../src/template-commands.js";
+import { define, definitions, validateDefinition } from "../src/template-commands.js";
+import { execFileSync } from "node:child_process";
 import { listen } from "../src/serve.js";
 
 const HUMAN = { kind: "human", id: "local" } as const;
@@ -56,4 +57,63 @@ it("HTTP 出口与 CLI 返回同一闭包，未授权请求仍被拒", async () 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(definitions(dir, HUMAN).data);
   } finally { await h.close(); }
+});
+
+it.each([
+  [{ nodes: { w: { kind: "wrong" } } }, "nodes.w.kind"],
+  [{ children: { bad: { template: "missing@1" } } }, "children.bad"],
+  [{ extends: "missing@1", override: {} }, "extends"],
+  [{ nodes: { w: { kind: "handler", ports: {}, agent: { argv: ["x"], capabilities: { network: "opne" } } } } }, "nodes.w.agent"],
+])("干跑和正式注册拒绝同一字段，不追加对象：%j", (spec, where) => {
+  const before = readFileSync(join(dir, "head.json"), "utf8");
+  const checked = validateDefinition(dir, HUMAN, "draft", spec);
+  const written = define(dir, HUMAN, "draft", spec);
+  expect(checked.code).toBe(1);
+  expect(written.data).toEqual(checked.data);
+  expect(checked.data).toMatchObject({ valid: false, registered: false, issues: expect.arrayContaining([
+    expect.objectContaining({ where: expect.stringContaining(where as string), severity: "error" }),
+  ]) });
+  expect(readFileSync(join(dir, "head.json"), "utf8")).toBe(before);
+});
+
+it("overlay 干跑返回物化结果，注册返回真实 ref；运行 pin 不变", () => {
+  const spec = { extends: "leaf@1", override: {} };
+  const before = readFileSync(join(dir, "head.json"), "utf8");
+  expect(validateDefinition(dir, HUMAN, "derived", spec).data).toMatchObject({
+    valid: true, registered: false, definition: { kind: "materialized", base: "leaf@1" },
+  });
+  expect(readFileSync(join(dir, "head.json"), "utf8")).toBe(before);
+  expect(define(dir, HUMAN, "derived", spec).data).toEqual({ ref: "derived@1", registered: true });
+  expect((definitions(dir, HUMAN).data as object)).not.toHaveProperty("derived@1");
+});
+
+it("HTTP 草稿校验携带字段错误；坏 JSON/大请求收口；始终不写 head", async () => {
+  const before = readFileSync(join(dir, "head.json"), "utf8");
+  const h = await listen({ dir, actor: HUMAN });
+  try {
+    const url = `http://127.0.0.1:${h.port()}/validate-definition`;
+    const post = (body: string, token = h.token) => fetch(url, {
+      method: "POST", headers: { "x-hertaloy-token": token }, body,
+    });
+    expect((await post("{}", "bad")).status).toBe(401);
+    expect((await post("{" )).status).toBe(400);
+    expect((await post("x".repeat(300 * 1024))).status).toBe(413);
+    const bad = await post(JSON.stringify({ id: "draft", spec: { extends: "missing@1", override: {} } }));
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toMatchObject({ valid: false, issues: [{ where: "extends", code: "missing_definition" }] });
+    const good = await post(JSON.stringify({ id: "draft", spec: {} }));
+    expect(good.status).toBe(200);
+    expect(await good.json()).toMatchObject({ valid: true, registered: false });
+    expect(readFileSync(join(dir, "head.json"), "utf8")).toBe(before);
+  } finally { await h.close(); }
+});
+
+it("真实 CLI 返回 JSON 校验及注册反馈", () => {
+  const file = join(dir, "draft.json");
+  writeFileSync(file, JSON.stringify({ children: { next: { template: "leaf@1" } } }));
+  const cli = (cmd: string) => JSON.parse(execFileSync(process.execPath, [
+    "--import", "tsx", "src/main.ts", cmd, dir, "draft", file, "--json",
+  ], { encoding: "utf8" }));
+  expect(cli("validate-definition")).toMatchObject({ valid: true, registered: false });
+  expect(cli("define")).toEqual({ ref: "draft@1", registered: true });
 });

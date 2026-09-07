@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import { listen } from "./serve.js";
 import { join } from "node:path";
 import { run, validate } from "./commands.js";
-import { definitions } from "./template-commands.js";
+import { define, definitions, validateDefinition } from "./template-commands.js";
 import { nodeIO, openAiClient, runAgent, runExec, spawnRunner } from "./agent.js";
 import { diagnose, formatChecks } from "./doctor.js";
 import type { ExecutionBackend, Principal } from "@nodeflow/contracts";
@@ -69,6 +69,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
        只绑 127.0.0.1，主体在启动时定死（--as），一次性 token 走 header
   hertaloy templates <dir> [--scope <traceid>]  用到的模板全文（配置那一条流，可永久缓存）
   hertaloy definitions <dir> [--scope <traceid>]  固定版本及声明依赖，含未实例化的子模板
+  hertaloy validate-definition <dir> <id> <template.json> [kind]  完整干跑校验，--json 给字段错误
+  hertaloy define <dir> <id> <template.json> [kind]  注册并返回实际精确 ref
   hertaloy scene   <dir> [--scope <traceid>]    导出渲染用的场景 JSON
        加 --watch [--interval 毫秒] 持续输出**场景差量**（NDJSON，一行一帧）
        第一帧是与空场景的差量，所以流上只有一种形状；没变化的轮次不输出
@@ -112,6 +114,15 @@ async function statefulCommand(
 ${USAGE}`, code: 2 } : null;
 
   switch (command) {
+    case "define":
+    case "validate-definition": {
+      const short = need(3);
+      if (short !== null) return short;
+      let spec: unknown;
+      try { spec = readJson(b as string); }
+      catch (error) { return { code: 2, text: `读不了 ${b}：${(error as Error).message}` }; }
+      return (command === "define" ? define : validateDefinition)(dir as string, actor, a as string, spec, c);
+    }
     case "status":
       return need(1) ?? status(dir as string, actor);
     case "execution": {
@@ -448,8 +459,7 @@ async function main(rawArgv: readonly string[]): Promise<number> {
     process.stderr.write(`未知命令 \`${command}\`。\n\n${USAGE}`);
     return 2;
   }
-  (result.code === 0 ? process.stdout : process.stderr).write(`${result.text}\n`);
-  return result.code;
+  return emit(result, json);
 }
 
 process.exitCode = await main(process.argv.slice(2));

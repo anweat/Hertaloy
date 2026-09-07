@@ -33,6 +33,7 @@ import {
   type ExecutionSpecValidator,
   InstanceRegistry,
   registerContainerTemplate,
+  prepareContainerTemplate,
 } from "./instances.js";
 import type { ObjectStore } from "./store.js";
 import type { Lock } from "./locks.js";
@@ -157,6 +158,12 @@ export class ControlPlane {
   }
 
   // --- DML ---------------------------------------------------------------
+
+  /** 干跑可以解析任意定义引用，要求对象库的完整读取权；不要求写权限。 */
+  validateDefinition(actor: Principal, id: string, spec: unknown, kind?: string) {
+    this.#authorize(actor, "query", "*");
+    return prepareContainerTemplate(this.#store, id, spec, kind, this.#deps.validateExecutionSpec);
+  }
 
   /** scope 按 **traceid 前缀**判定（行级安全）。 */
   send(actor: Principal, target: Endpoint, payload: Json): string {

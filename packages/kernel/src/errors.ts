@@ -13,6 +13,16 @@ export class AuthorizationError extends InvariantError {
   override readonly name: string = "AuthorizationError";
 }
 
+/** 模板校验失败保留字段位置，调用方无需反解析中文错误。 */
+export class TemplateValidationError extends InvariantError {
+  override readonly name: string = "TemplateValidationError";
+  constructor(message: string, readonly issues: readonly {
+    where: string; code: string; message: string;
+  }[]) {
+    super(message);
+  }
+}
+
 export function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new InvariantError(message);
 }
