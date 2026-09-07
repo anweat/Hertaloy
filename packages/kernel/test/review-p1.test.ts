@@ -269,7 +269,6 @@ describe("P1-6 回复绝不落到不存在的接收方", () => {
         node,
         traceid: "job-1",
         nodeId: "n",
-        generation: 0,
         inboundMessageId: "msg-1",
         inboundRequestId: "req-1",
         resolve: () => [],

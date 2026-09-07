@@ -382,10 +382,9 @@ export class Runtime implements Snapshotable {
     return this.#ledger.all();
   }
 
+  /** 按 id 取。取不到是编程错误 —— id 只由账本发放，判定与文案都在它那儿。 */
   record(executionId: string): ExecutionRecord {
-    const found = this.#ledger.all().find((r) => r.executionId === executionId);
-    if (found === undefined) throw new InvariantError(`未知 execution：${executionId}`);
-    return found;
+    return this.#ledger.get(executionId);
   }
 
   /**
@@ -478,7 +477,7 @@ export class Runtime implements Snapshotable {
    *
    * 单进程里 JS 的同步段天然原子，`await` 是唯一让出点 —— 所以"execute 在提交锁外"
    * 是结构保证的，不靠自觉。并发安全由两件事共同给出：
-   *   1. `#busy` 挡住同 (实例, 节点) 的并发 claim
+   *   1. 账本的 driving 标记挡住同 (实例, 节点) 的并发 claim
    *   2. apply 复核 generation 与被 claim 消息的状态（冲突域）
    */
   /**
@@ -502,7 +501,7 @@ export class Runtime implements Snapshotable {
             executionId: outcome.record.executionId,
           });
         } catch (error) {
-          // 钩子抛了 → 这次 claim 要整体撤销，而 `#busy` 不归 transact 管
+          // 钩子抛了 → 这次 claim 要整体撤销，而 driving 标记不归 transact 管
           this.#ledger.releaseDriving(outcome.record.traceid, outcome.record.nodeId);
           throw error;
         }
@@ -602,7 +601,6 @@ export class Runtime implements Snapshotable {
     if (input === null) return { kind: "idle" };
 
     const { traceid, node: nodeId } = input.target;
-    const key = `${traceid}/${nodeId}`;
     if (this.#ledger.isDriving(traceid, nodeId)) return { kind: "idle" };
 
     const instance = this.#registry.get(traceid);
@@ -666,7 +664,7 @@ export class Runtime implements Snapshotable {
       limits,
     };
     /**
-     * `#busy` 到这一步才置位。
+     * driving 标记到这一步才置位。
      *
      * 它是**进程内的执行中标记**，不是事务状态（不在 `snapshot()` 里），所以
      * `transact` 回滚不到它。早置位就意味着每条被拒的 claim 都会留下一个永不清除
@@ -809,7 +807,7 @@ export class Runtime implements Snapshotable {
     }
 
     const outcome = stageOutputs(
-      this.#stageContext(template, node, record.traceid, record.nodeId, input, instance),
+      this.#stageContext(template, node, record.traceid, record.nodeId, input),
       result.emissions,
     );
     if (!outcome.ok) {
@@ -1246,7 +1244,7 @@ export class Runtime implements Snapshotable {
     }
 
     const outcome = stageOutputs(
-      this.#stageContext(template, node, traceid, nodeId, input, instance),
+      this.#stageContext(template, node, traceid, nodeId, input),
       outputs,
     );
     if (!outcome.ok) return this.#fail(input, outcome.reason);
@@ -1304,7 +1302,7 @@ export class Runtime implements Snapshotable {
    * **孤儿执行**：记录是 RUNNING，但本进程没在跑它。
    *
    * 这里不引入 `RECONCILING / ADOPTED / ABANDONED` 那套状态机 —— 因为
-   * "有没有进程在跑"根本不是持久状态，它是**进程本地事实**（`#busy`）。
+   * "有没有进程在跑"根本不是持久状态，它是**进程本地事实**（账本的 driving 集）。
    * 把进程本地事实写进持久状态，才需要状态机去对齐两边；不写就不需要。
    *
    * 这里只知道本 Runtime 没在驱动，不能证明其他进程没有在跑。
@@ -1452,14 +1450,12 @@ export class Runtime implements Snapshotable {
     traceid: TraceId,
     nodeId: string,
     input: Message,
-    instance: ContainerInstance,
   ) {
     return {
       template,
       node,
       traceid,
       nodeId,
-      generation: instance.generation,
       inboundMessageId: input.id,
       ...(input.requestId === undefined ? {} : { inboundRequestId: input.requestId }),
       /**

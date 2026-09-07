@@ -29,7 +29,7 @@ export interface ContextFailure {
 }
 
 export type ContextOutcome =
-  | { readonly ok: true; readonly vars: VarBag; readonly tokens: number }
+  | { readonly ok: true; readonly vars: VarBag }
   | { readonly ok: false; readonly failures: readonly ContextFailure[] };
 
 /** 卡片正文：约定取 `body.text`，没有就用整个 body 的规范 JSON。 */
@@ -45,8 +45,8 @@ function checkBound(
   decl: { readonly max_tokens?: number | undefined },
   value: Json,
   failures: ContextFailure[],
-): number {
-  if (decl.max_tokens === undefined) return 0;
+): void {
+  if (decl.max_tokens === undefined) return;
   const actual = estimateValueTokens(value);
   if (actual > decl.max_tokens) {
     failures.push({
@@ -56,7 +56,6 @@ function checkBound(
         `不截断也不降级 —— 这说明声明写错了或图切得太粗`,
     });
   }
-  return actual;
 }
 
 /** 解引用失败时的哨兵 —— 失败已记进 failures，别再往变量袋里塞坏值。 */
@@ -108,12 +107,11 @@ export function compileContext(
   runtimeVars: VarBag,
 ): ContextOutcome {
   if (node.kind !== "handler") {
-    return { ok: true, vars: runtimeVars, tokens: 0 };
+    return { ok: true, vars: runtimeVars };
   }
 
   const vars: Record<string, Json> = {};
   const failures: ContextFailure[] = [];
-  let tokens = 0;
 
   // 编译期绑定 —— 稳定前缀（不变量 X）
   for (const [name, decl] of Object.entries(node.bind ?? {}) as [string, BindVar][]) {
@@ -128,7 +126,7 @@ export function compileContext(
     } else {
       value = decl.literal as Json;
     }
-    tokens += checkBound(name, decl, value, failures);
+    checkBound(name, decl, value, failures);
     vars[name] = value;
   }
 
@@ -144,12 +142,12 @@ export function compileContext(
     const decl = portVars.get(name);
     const resolved = decl?.type === "ref" ? dereference(store, name, value, failures) : value;
     if (resolved === SKIP) continue;
-    if (decl !== undefined) tokens += checkBound(name, decl, resolved, failures);
+    if (decl !== undefined) checkBound(name, decl, resolved, failures);
     vars[name] = resolved;
   }
 
   if (failures.length > 0) return { ok: false, failures };
-  return { ok: true, vars: Object.freeze(vars), tokens };
+  return { ok: true, vars: Object.freeze(vars) };
 }
 
 export function formatContextFailures(failures: readonly ContextFailure[]): string {

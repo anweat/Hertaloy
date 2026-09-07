@@ -306,12 +306,6 @@ export class ControlPlane {
     return found;
   }
 
-  /** 某实例的提交快照（因果权威）。按 trace 授权。 */
-  snapshots(actor: Principal, trace: TraceId): readonly ObjectVersion[] {
-    this.#authorize(actor, "query", trace);
-    return this.#runtime.snapshots(trace);
-  }
-
   messages(actor: Principal, trace: TraceId): readonly Message[] {
     this.#authorize(actor, "query", trace);
     return this.#runtime.messages().filter((m) => m.target.traceid === trace);

@@ -43,7 +43,6 @@ export interface Message extends MessageFact {
   readonly source?: MessageSource;
   /** 协议级关联，**绝不进 payload**。 */
   readonly requestId?: string;
-  readonly inReplyTo?: string;
   readonly attempts: number;
 }
 

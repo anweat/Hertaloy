@@ -31,7 +31,6 @@ export interface StagedMessage {
   /** 经哪个别名出的网关。观测用。 */
   readonly alias?: string;
   readonly requestId?: string;
-  readonly inReplyTo?: string;
 }
 
 export interface StagedRequest {
@@ -47,7 +46,6 @@ export interface StagedRequest {
   readonly requester: TraceId;
   readonly node: string;
   readonly callbackPort: string;
-  readonly generation: number;
   /**
    * 服务方 traceid。
    *
@@ -72,7 +70,6 @@ export interface StageContext {
   readonly node: NodeDefinition;
   readonly traceid: TraceId;
   readonly nodeId: string;
-  readonly generation: number;
   /** 本次消费的消息若是 REQUEST，其 id；否则 undefined。 */
   readonly inboundRequestId?: string;
   readonly inboundMessageId: string;
@@ -191,7 +188,6 @@ export function stageOutputs(
         target: { traceid: req.requester, node: req.node, port: req.callbackPort },
         payload: structuredClone(value) as Json,
         source,
-        inReplyTo: ctx.inboundMessageId,
       });
       continue;
     }
@@ -226,7 +222,6 @@ export function stageOutputs(
         requester: ctx.traceid,
         node: ctx.nodeId,
         callbackPort: port.callback,
-        generation: ctx.generation,
         waitingOn: (targets[0] as Endpoint).traceid,
         // 「等不到回复时当作收到什么」—— 排期时就钉死，与 C4 的 pin 同一条理由：
         // 了结发生在很久以后，那时再去读模板可能已经不是同一份定义了

@@ -85,11 +85,16 @@ describe("★ B1 的运行期一半对 ref 不再是真空", () => {
     if (!r.ok) expect(r.failures[0]?.message).toMatch(/超出声明上界 100/);
   });
 
-  it("上界够大就通过，并把正文的 token 数算进总量", () => {
-    store.put("job-1/big", "artifact", { text: "中等长度的一段正文" });
-    const r = compileContext(store, nodeWithRef(10_000) as never, { doc: "job-1/big@1" });
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.tokens).toBeGreaterThan(0);
+  /**
+   * 原来这条还断言 `r.tokens > 0`。而那个总量**没有任何消费方**：
+   * B1 的两半是「注册期 Σ(声明上界) ≤ 节点预算」与「运行期单个变量超上界即失败」，
+   * 运行期的**和**不是其中任何一半 —— 它只是被算出来然后丢掉。
+   * 剩下的真性质是这条边界本身：同一份正文，上界够大就过、太小就不过。
+   */
+  it("同一份正文：上界够大就通过，太小就失败 —— 量的是解引用之后", () => {
+    store.put("job-1/big", "artifact", { text: "中等长度的一段正文".repeat(50) });
+    expect(compileContext(store, nodeWithRef(10_000) as never, { doc: "job-1/big@1" }).ok).toBe(true);
+    expect(compileContext(store, nodeWithRef(5) as never, { doc: "job-1/big@1" }).ok).toBe(false);
   });
 });
 
