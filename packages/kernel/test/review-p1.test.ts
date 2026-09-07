@@ -190,11 +190,11 @@ describe("P1-4 REQUEST 锁必须记 waitingOn，否则服务方死亡时请求�
     rt.send({ traceid: "job-1/caller", node: "w", port: "start" }, { q: "x" });
     rt.step();
 
-    const lock = rt.locks.held("job-1/caller").find((l) => l.kind === "request");
+    const lock = rt.obligations("job-1/caller").find((o) => o.kind === "request");
     expect(lock?.waitingOn).toBe("job-1/server");
 
     rt.truncate("job-1/server", "服务方挂了");
-    expect(rt.locks.held("job-1/caller").filter((l) => l.kind === "request")).toEqual([]);
+    expect(rt.obligations("job-1/caller").filter((o) => o.kind === "request")).toEqual([]);
   });
 });
 

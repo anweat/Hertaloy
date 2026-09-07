@@ -246,8 +246,8 @@ describe("★ 子槽：声明是一等公民", () => {
 });
 
 describe("★ 等待关系：谁挡着谁", () => {
-  it("锁账本导出来了 —— 此前快照一个字段都没带", () => {
-    // 数据一直躺在内核里（Lock.waitingOn），缺的从来只是那一行导出
+  it("义务导出来了 —— 此前快照一个字段都没带", () => {
+    // 数据一直躺在内核里（`Obligation.waitingOn`），缺的从来只是那一行导出
     const waits = scene.tethers.filter((t) => t.relation === "waits");
     expect(waits.length).toBeGreaterThan(0);
   });

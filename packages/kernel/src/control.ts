@@ -25,7 +25,7 @@ import {
   type TraceId,
 } from "@nodeflow/contracts";
 import { AuthorizationError, InvariantError } from "./errors.js";
-import type { Obligation } from "./obligations.js";
+import { type Obligation, deadlocks as cyclesOf } from "./obligations.js";
 import type { AuthzLog } from "./authz-log.js";
 
 import {
@@ -36,7 +36,6 @@ import {
   prepareContainerTemplate,
 } from "./instances.js";
 import type { ObjectStore } from "./store.js";
-import type { Lock } from "./locks.js";
 import type {
   ExecutionRecord,
   Message,
@@ -253,9 +252,22 @@ export class ControlPlane {
     return result;
   }
 
-  locks(actor: Principal, trace: TraceId): readonly Lock[] {
-    this.#authorize(actor, "query", trace);
-    return this.#runtime.locks.held(trace);
+  /**
+   * 等待图里的环 = 死锁。**只报警，不裁决**（观测不裁决）。
+   *
+   * 按作用域裁剪后再找环：**看不见的那一半也参与不了裁决**。一个横跨
+   * 作用域内外的环，对只看得见半边的主体报不出来 —— 那是诚实的，
+   * 报出一个它无法核实的结论才是假的。
+   *
+   * 此前 `status` 直接调 `runtime.locks.deadlocks()`，不授权也不裁剪：
+   * 一个只被授权看子树的主体，能读到整棵树的等待环。
+   */
+  deadlocks(actor: Principal, scope?: TraceId): readonly (readonly TraceId[])[] {
+    const trace = scope ?? this.#registry.rootTrace;
+    this.#authorize(actor, "query", trace ?? "*");
+    if (trace === null) return [];
+    const inScope = (t: TraceId): boolean => t === trace || t.startsWith(`${trace}/`);
+    return cyclesOf(this.#runtime.obligations().filter((o) => inScope(o.holder)));
   }
 
   blockers(actor: Principal, trace: TraceId): readonly string[] {

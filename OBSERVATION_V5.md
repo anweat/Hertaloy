@@ -299,10 +299,15 @@ POST /api/truncate → { ..., cursor: {seq, objects, config} }
 
 > ⚠️ 原本这里是 `head.ledger`（一张落盘的锁账本）。第八次归约把它删了：
 > 义务从实例状态 + 消息 + 执行记录 + 待回复请求**算出来**，`head.ledger` 现在写空位
-> 只为格式兼容，装载时不读。观察方读 `Runtime.obligations()` 或它的展示投影 `locks`。
+> 只为格式兼容，装载时不读。观察方读 `Runtime.obligations()`。
+>
+> 曾经还有一层 `LockView` / `Lock`（滤掉两种 kind、另发 `id` 与 `since`）。
+> 第九次归约把它也删了：它是同一批事实的**第二套词汇**，而 `id` 与 `since`
+> 全链路无人读。「阻塞锁」留作**给人看的词**，落在渲染层，不再是一个类型。
 
-`id` · `kind`（只有 `request` / `child` 两种）· `holder` · `waitingOn` ·
-`originNode`（仅供展示）· `key` · `since`（逻辑时钟，不是墙钟）
+`kind`（message / execution / request / child）· `holder` · `key` ·
+`waitingOn`（**只有在等别人的那两种才有** —— 谁挡着谁靠字段有无判，
+不靠认 kind 的闭集）· `originNode`（仅供展示）
 派生：`deadlocks()` 环 · 每个实例的 `terminationBlockers()`
 
 ### C. `head.runtime` —— 消息与执行

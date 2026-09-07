@@ -123,12 +123,18 @@ export const SnapshotObject = z.object({
   owner: z.string().optional(),
 });
 
-export const SnapshotLock = z.object({
-  id: z.string(),
+/**
+ * 一份未了结的义务。
+ *
+ * `kind` 是**派生描述符**，不是要认的闭集 —— 所以这里是 `z.string()`：
+ * 后端加一种等待形态时，这份 schema 一行都不用改。谁挡着谁靠
+ * `waitingOn` **有没有**来判（见 `build.ts` 的等待段）。
+ */
+export const SnapshotObligation = z.object({
   holder: z.string(),
   kind: z.string(),
   key: z.string(),
-  /** 等谁 —— 有它才画得出"谁挡着谁"。 */
+  /** 在等谁。省略 = 自己还在跑（message / execution）。 */
   waitingOn: z.string().optional(),
   originNode: z.string().optional(),
 });
@@ -156,7 +162,7 @@ export const Snapshot = z.object({
   messages: z.array(SnapshotMessage),
   records: z.array(SnapshotRecord).default([]),
   objects: z.array(SnapshotObject).default([]),
-  locks: z.array(SnapshotLock).default([]),
+  obligations: z.array(SnapshotObligation).default([]),
   commits: z.array(SnapshotCommit).default([]),
 });
 

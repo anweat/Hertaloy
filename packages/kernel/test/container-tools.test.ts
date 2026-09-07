@@ -89,7 +89,7 @@ describe("剧本帧 8：按 plan 扇出子容器并派活", () => {
     ]);
     expect(done).toEqual(["a", "b", "c"]);
     // 三个子容器各记一把 child 锁在父身上
-    expect(rt.locks.held("job-1").filter((l) => l.kind === "child")).toHaveLength(3);
+    expect(rt.obligations("job-1").filter((o) => o.kind === "child")).toHaveLength(3);
     rt.checkInvariants();
   });
 
@@ -172,7 +172,8 @@ describe("spawn 随提交事务（批 0）", () => {
 
     expect(() => rt.drain()).toThrow("建完就炸");
     expect(reg.has("job-1/doomed")).toBe(false);
-    expect(rt.locks.held("job-1")).toEqual([]);
+    // 回滚后不欠子实例了；那条被 handler 消费到一半的消息另有归宿，不在这条的射程内
+    expect(rt.obligations("job-1").filter((o) => o.kind === "child")).toEqual([]);
     rt.checkInvariants();
   });
 });

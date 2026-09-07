@@ -697,7 +697,7 @@ unresolved(t) = t 自己用到但没绑的
 |---|---|---|
 | **DDL** | `define` · `propose` · `approve` · `publish` | human / 经审批的 agent |
 | **DML** | `send` · `run` · `control` · `truncate` · `settle` | human / agent / service |
-| **DQL** | `query` · `snapshots` · `locks` · `observe` | 全部 |
+| **DQL** | `query`（唯一一个 —— 读的授权判据只有 principal × scope，读什么不改变判据）| 全部 |
 
 ### 11.2 授权 = (principal, scope, 操作类)
 

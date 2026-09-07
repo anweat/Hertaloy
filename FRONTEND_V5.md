@@ -125,9 +125,9 @@ POST /api/define | validate           → DDL（validate 干跑，不落库）
 
 | 补什么 | 现在在哪 | 界面上是什么 |
 |---|---|---|
-| `locks[]`（kind/holder/waitingOn/originNode/since） | `LockView`（**义务枚举的展示投影**，每次现算）| **阻塞的全部依据**：谁在等谁 |
+| `obligations[]`（kind/holder/key/waitingOn/originNode） | `Runtime.obligations()`（纯派生，每次现算）| **阻塞的全部依据**：有 `waitingOn` 就是在等别人 |
 | `blockers[]`（按实例） | `terminationBlockers` | 实例为什么收不了口 |
-| `deadlocks[][]` | `locks.deadlocks()` | 环，红色，最高优先级提示 |
+| `deadlocks[][]` | `ControlPlane.deadlocks()`（按作用域裁剪后找环）| 环，红色，最高优先级提示 |
 | `generation`（按实例） | `ContainerInstance` | 截断后的第二代，必须与第一代区分 |
 | `records[].executionId` / `termination` | `ExecutionRecord` | 五种终止不能混成一种（`CANCELLED`/`BUDGET` 是意图，不是故障） |
 | `objects[].provenance`（`derived_from`） | `ObjectVersion` | 血缘 |

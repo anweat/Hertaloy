@@ -426,7 +426,7 @@ kernel 里保留一份"给内核用的"、contracts 里再定义一份"给前端
 
 | 事项 | 改在哪 | 内核动吗 |
 |---|---|---|
-| 等待关系（谁挡着谁） | `state/snapshot.ts` | ❌ `runtime.locks` 本来就是公开 getter |
+| 等待关系（谁挡着谁） | `state/snapshot.ts` | ❌ `runtime.obligations()` 本来就是公开方法 |
 | 结构性进度 | `scene/build.ts` | ❌ 纯推导 |
 | 染色边（命中 → certainty） | 已在 scene | ❌ `Message.source` 补完就够了 |
 | 工具集 / journal | **沙箱层** | ❌ 见 §9.2 |

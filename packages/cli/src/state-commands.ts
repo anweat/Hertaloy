@@ -127,7 +127,6 @@ export function status(dir: string, actor: Principal): CommandResult {
         root: null,
         permissions: s.permissions.source,
         instances: [],
-        locks: [],
         queued: [],
         claimed: [],
         running: [],
@@ -157,20 +156,26 @@ export function status(dir: string, actor: Principal): CommandResult {
     }
 
     /**
-     * 锁与消息按**子树**汇总，不是只看根。
+     * 义务与消息按**子树**汇总，不是只看根。
      *
      * 之前只统计 root 自己持有的锁、以及 `target.traceid === root` 的消息 ——
      * 于是子实例卡住时，status 照样显示"阻塞锁 0、在途消息 0"。
      * 一个只在根节点出问题时才说真话的状态命令，比没有更糟。
      */
     const subtree = control.subtree(actor, root);
-    const locks = subtree.flatMap((i) => control.locks(actor, i.traceid));
-    lines.push("", `阻塞锁 ${locks.length} 把：`);
-    for (const lock of locks) {
-      lines.push(
-        `  ${lock.kind}  持有者=${lock.holder}  键=${lock.key}` +
-          (lock.waitingOn === undefined ? "" : `  等待=${lock.waitingOn}`),
-      );
+    const obligations = subtree.flatMap((i) => control.obligations(actor, i.traceid));
+    /**
+     * 「阻塞锁」是**给人看的词**，不是第二种类型。
+     *
+     * 内核那侧的 `Lock` 已经删了 —— 它是同一批事实的第二套词汇（滤掉两种
+     * kind、另发一个没人读的 id 与 since），而"两份拷贝必然漂移"正是当初
+     * 删掉锁账本的理由。词汇留在渲染这一层，判据回到事实本身：
+     * **有 `waitingOn` 就是在等别人**，没有就是自己还在跑。
+     */
+    const waiting = obligations.filter((o) => o.waitingOn !== undefined);
+    lines.push("", `阻塞锁 ${waiting.length} 把：`);
+    for (const o of waiting) {
+      lines.push(`  ${o.kind}  持有者=${o.holder}  键=${o.key}  等待=${String(o.waitingOn)}`);
     }
 
     const inbox = subtree.flatMap((i) => control.messages(actor, i.traceid));
@@ -237,7 +242,8 @@ export function status(dir: string, actor: Principal): CommandResult {
       }
     }
 
-    const deadlocks = s.runtime.locks.deadlocks();
+    // 按作用域裁剪后再找环 —— 此前这里直连 runtime，不授权也不裁剪
+    const deadlocks = control.deadlocks(actor);
     if (deadlocks.length > 0) {
       lines.push("", "★ 死锁环：");
       for (const cycle of deadlocks) lines.push(`  ${cycle.join(" → ")}`);
@@ -265,12 +271,6 @@ export function status(dir: string, actor: Principal): CommandResult {
           ...(o.waitingOn === undefined ? {} : { waitingOn: o.waitingOn }),
           ...(o.originNode === undefined ? {} : { originNode: o.originNode }),
         })),
-      })),
-      locks: locks.map((l) => ({
-        kind: l.kind,
-        holder: l.holder,
-        key: l.key,
-        ...(l.waitingOn === undefined ? {} : { waitingOn: l.waitingOn }),
       })),
       queued: pending.map((m) => ({ id: m.id, ...m.target })),
       claimed: claimed.map((m) => ({ id: m.id, ...m.target })),

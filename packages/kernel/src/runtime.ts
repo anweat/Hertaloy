@@ -63,7 +63,6 @@ import { InvariantError, invariant } from "./errors.js";
 import { compileContext, formatContextFailures } from "./context.js";
 import { type VarBag, extractPortVars, formatExtractionFailures } from "./extract.js";
 import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instances.js";
-import { LockView } from "./locks.js";
 import { type Message, type MessageState, MessageQueue, isLive } from "./queue.js";
 import { formatProblems, stateProblems } from "./invariants.js";
 import { type Candidate, type Scheduler, acceptedPick, fifo } from "./scheduling.js";
@@ -300,10 +299,6 @@ export class Runtime implements Snapshotable {
    * 在 `#commit` 里调 ⇒ 天然在事务内，回滚一起回滚。
    * 只在明显超量时才扫，免得把平方级的磁盘写入换成平方级的内存扫描。
    */
-  get locks(): LockView {
-    return new LockView(this.obligations());
-  }
-
   /**
    * 落盘形状**逐键写明，不用展开**。
    *

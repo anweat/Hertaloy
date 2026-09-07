@@ -109,7 +109,7 @@ describe("主体模式", () => {
     perms.grant({ principal: "*", scope: "*", ops: ["DDL", "DML", "DQL"] });
     cp.define(alice, "anything", leafSpec);
     cp.spawn(stranger, "job-1", "k", "c1");
-    expect(cp.locks(bot, "job-1")).toHaveLength(1);
+    expect(cp.obligations(bot, "job-1")).toHaveLength(1);
   });
 });
 

@@ -23,14 +23,17 @@ export interface RunSnapshot {
   readonly records: readonly unknown[];
   readonly objects: readonly unknown[];
   /**
-   * 锁账本 —— **谁在等谁**。
+   * 未了结的义务 —— **谁还欠什么、在等谁**。
    *
-   * 这一块此前一个字段都没导出，于是"容器间关系"里最要紧的那一半
-   * （等待、请求、子容器阻塞父容器）渲染层根本看不见。而它完整地躺在内核里：
-   * `Lock` 有 holder / waitingOn / originNode / kind。
-   * `runtime.locks` 本来就是公开 getter —— 缺的从来只是这一行导出。
+   * 送的是内核自己的那份 `Obligation`，不再经 `Lock` 转一手：那层曾经是
+   * 同一批事实的第二套词汇（滤掉两种 kind、另发一个没人读的 id 与 since），
+   * 而"两份拷贝必然漂移"正是当初删掉锁账本的理由 —— 词汇本身也算一份。
+   *
+   * 四种 kind 全给，不预先筛：message / execution 是"自己还在跑"，
+   * request / child 才有 `waitingOn`。**谁挡着谁靠字段有无判**，
+   * 消费方不需要认识 kind 的闭集。
    */
-  readonly locks: readonly unknown[];
+  readonly obligations: readonly unknown[];
   /**
    * 每个节点**最后一次成功提交**消费的是哪条消息 —— 同步那半的事实。
    *
@@ -230,16 +233,15 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
       ...(v.provenance.traceid === undefined ? {} : { owner: v.provenance.traceid }),
     }));
 
-  const locks = runtime.locks
-    .all()
-    .filter((l) => inScope(l.holder))
-    .map((l) => ({
-      id: l.id,
-      holder: l.holder,
-      kind: l.kind,
-      key: l.key,
-      ...(l.waitingOn === undefined ? {} : { waitingOn: l.waitingOn }),
-      ...(l.originNode === undefined ? {} : { originNode: l.originNode }),
+  const obligations = runtime
+    .obligations()
+    .filter((o) => inScope(o.holder))
+    .map((o) => ({
+      holder: o.holder,
+      kind: o.kind,
+      key: o.key,
+      ...(o.waitingOn === undefined ? {} : { waitingOn: o.waitingOn }),
+      ...(o.originNode === undefined ? {} : { originNode: o.originNode }),
     }));
 
   /**
@@ -264,5 +266,5 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
   }
   const commits = [...lastCommit.values()];
 
-  return { root, instances, templates, messages, records, objects, locks, commits };
+  return { root, instances, templates, messages, records, objects, obligations, commits };
 }

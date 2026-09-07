@@ -599,9 +599,44 @@ export const FIXTURE: unknown = {
    "owner": "job-1"
   }
  ],
- "locks": [
+ "obligations": [
   {
-   "id": "lock-1",
+   "holder": "job-1",
+   "kind": "message",
+   "key": "msg-12",
+   "originNode": "review"
+  },
+  {
+   "holder": "job-1",
+   "kind": "message",
+   "key": "msg-13",
+   "originNode": "audit"
+  },
+  {
+   "holder": "job-1/a3",
+   "kind": "message",
+   "key": "msg-14",
+   "originNode": "scan"
+  },
+  {
+   "holder": "job-1",
+   "kind": "message",
+   "key": "msg-15",
+   "originNode": "merge"
+  },
+  {
+   "holder": "job-1",
+   "kind": "message",
+   "key": "msg-16",
+   "originNode": "merge"
+  },
+  {
+   "holder": "job-1",
+   "kind": "execution",
+   "key": "exec-1",
+   "originNode": "review"
+  },
+  {
    "holder": "job-1",
    "kind": "child",
    "key": "job-1/a3",

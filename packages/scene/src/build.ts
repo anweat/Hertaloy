@@ -506,14 +506,17 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
   /**
    * ── 等待：谁挡着谁 ──
    *
-   * 锁账本里 `waitingOn` 一直都在，只是快照从没导出过它 —— 于是"容器间关系"
+   * 义务里 `waitingOn` 一直都在，只是快照从没导出过它 —— 于是"容器间关系"
    * 里最要紧的那一半（父等子、请求方等服务方）渲染层根本看不见。
    * 这里不新造任何东西，只是把已有的读出来。
+   *
+   * **筛法是字段有无，不是 kind 闭集**：有 `waitingOn` 就是在等别人，
+   * 没有就是自己还在跑。后端加第五种等待形态时这里一行都不用改。
    */
-  for (const lock of snapshot.locks) {
-    if (lock.waitingOn === undefined) continue;
-    if (!inScope(lock.holder) || !inScope(lock.waitingOn)) continue;
-    tethers.push(tether(lock.holder, lock.waitingOn, "waits", lock.kind));
+  for (const o of snapshot.obligations) {
+    if (o.waitingOn === undefined) continue;
+    if (!inScope(o.holder) || !inScope(o.waitingOn)) continue;
+    tethers.push(tether(o.holder, o.waitingOn, "waits", o.kind));
   }
 
   /**

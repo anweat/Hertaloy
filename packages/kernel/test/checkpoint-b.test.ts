@@ -137,7 +137,7 @@ describe("Checkpoint B 主线", () => {
 
     // 同步链：发 REQUEST → 服务方回复 → 回复落 got → done 沿边到 writer
     rt.drain();
-    expect(rt.locks.held("job-1/coder-1").filter((l) => l.kind === "request")).toEqual([]);
+    expect(rt.obligations("job-1/coder-1").filter((o) => o.kind === "request")).toEqual([]);
 
     // agent 三段式：bind 段的卡片正文进了请求
     await rt.drainAgents();
@@ -259,7 +259,7 @@ describe("Checkpoint B 失败路径", () => {
     rt.step(); // 发出 REQUEST，锁记在 coder-1 上，waitingOn = discovery
 
     rt.truncate("job-1/discovery", "服务方挂了");
-    expect(rt.locks.held("job-1/coder-1").filter((l) => l.kind === "request")).toEqual([]);
+    expect(rt.obligations("job-1/coder-1").filter((o) => o.kind === "request")).toEqual([]);
 
     const t = rt.truncate("job-1", "整体截断");
     expect(t.cascaded).toContain("job-1/coder-1");

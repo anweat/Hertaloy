@@ -244,7 +244,7 @@ describe("批 0：状态不变量断言", () => {
     // 现在义务当场跟着消失，不变量仍然成立
     rt2.checkInvariants();
     expect(rt2.terminationBlockers("job-2")).toEqual([]);
-    expect(rt2.locks.all()).toEqual([]);
+    expect(rt2.obligations()).toEqual([]);
 
     // 走正规路径结果相同 —— 这正是"只有一个事实来源"的意思
     r2.setStatus("job-2/c1", "OPEN");

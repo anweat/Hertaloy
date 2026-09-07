@@ -261,7 +261,7 @@ describe("服务方死亡：了结走正常回复路径", () => {
     expect(notices).toBe(ROUNDS);
     // pending 跟着头全量落盘，泄漏一条就是永久多一条 —— 现在是 0
     expect((rt.snapshot() as { pending: Map<string, unknown> }).pending.size).toBe(0);
-    expect(rt.locks.all().filter((l) => l.kind === "request")).toEqual([]);
+    expect(rt.obligations().filter((o) => o.kind === "request")).toEqual([]);
   });
 });
 

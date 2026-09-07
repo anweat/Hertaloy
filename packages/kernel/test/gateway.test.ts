@@ -95,14 +95,14 @@ describe("REQUEST / REPLY 与锁账本", () => {
     // 第一步：发出 REQUEST，锁记在**容器**上
     const first = rt.step() as StepResult;
     expect(first.delivered).toHaveLength(1);
-    const requestLocks = rt.locks.held("job-1/coder-1").filter((l) => l.kind === "request");
+    const requestLocks = rt.obligations("job-1/coder-1").filter((o) => o.kind === "request");
     expect(requestLocks).toHaveLength(1);
     expect(requestLocks[0]?.originNode).toBe("worker");
 
     // 第二步：服务方回复，锁销账，回复落 got 端口
     const second = rt.step() as StepResult;
     expect(second.traceid).toBe("job-1/discovery");
-    expect(rt.locks.held("job-1/coder-1").filter((l) => l.kind === "request")).toHaveLength(0);
+    expect(rt.obligations("job-1/coder-1").filter((o) => o.kind === "request")).toHaveLength(0);
 
     const reply = rt.message(second.delivered[0] as string);
     expect(reply.target).toEqual({ traceid: "job-1/coder-1", node: "worker", port: "got" });
@@ -141,7 +141,7 @@ describe("REQUEST / REPLY 与锁账本", () => {
 describe("子容器锁（L1 第 2 种）", () => {
   it("spawn 对父容器记一把 child 锁", () => {
     rt.spawn("job-1", "askers", "coder-1");
-    const childLocks = rt.locks.held("job-1").filter((l) => l.kind === "child");
+    const childLocks = rt.obligations("job-1").filter((o) => o.kind === "child");
     expect(childLocks).toHaveLength(1);
     expect(childLocks[0]?.waitingOn).toBe("job-1/coder-1");
   });
@@ -177,7 +177,7 @@ describe("强制截断（§9.6）", () => {
     expect(rt.canTerminate("job-1")).toBe(false);
 
     rt.truncate("job-1/coder-1", "子容器截断");
-    expect(rt.locks.causedBy("job-1/coder-1")).toEqual([]);
+    expect(rt.obligations().filter((o) => o.waitingOn === "job-1/coder-1")).toEqual([]);
     expect(rt.canTerminate("job-1")).toBe(true);
   });
 
@@ -407,7 +407,7 @@ describe("死锁检测只报警不裁决", () => {
 
     const before = rt.messages().length;
     // 反复问同一件事不产生任何消息 —— 它是纯查询
-    rt.locks.deadlocks();
+    deadlocks(rt.obligations());
     rt.obligations();
     expect(rt.messages()).toHaveLength(before);
   });

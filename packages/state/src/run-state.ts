@@ -184,9 +184,9 @@ export class RunState {
       const parts = decodeHeadParts(head);
       registry.restore(parts.registry);
       /**
-       * `parts.ledger` **故意不装**。锁不再是状态，是义务枚举的展示投影
-       * （见 kernel 的 `locks.ts`）—— 装回来就等于把已经删掉的第二份拷贝
-       * 从磁盘里请回来。字段本身保留，老 run 装得进来。
+       * `parts.ledger` **故意不装**。锁不再是状态 —— 它是义务枚举
+       * （`kernel/obligations.ts`）算出来的，装回来就等于把已经删掉的
+       * 第二份拷贝从磁盘里请回来。字段本身保留，老 run 装得进来。
        */
       runtime.restore(parts.runtime);
 
