@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import { buildScene, parseSnapshot } from "../src/index.js";
-import { diffScenes, emptyScene, isEmptyDelta, tetherKey } from "../src/diff.js";
+import { diffScenes, emptyScene, isEmptyDelta } from "../src/diff.js";
 import type { Scene } from "../src/scene.js";
 import { FIXTURE } from "./fixture.js";
 
@@ -56,14 +56,30 @@ describe("★ 变化按身份认，不按位置", () => {
   });
 
   /**
-   * tether 没有 id，用 `{from, to, relation}` 当键 —— 不给它造第二份身份。
+   * ★ tether 也按 `id` 认 —— 键由 scene 一处给出，消费方不自己拼（审核 F03）。
+   *
+   * 原来它没有 id：服务端拼 `from to relation`、页面拼 `from|to|relation`，
+   * 于是 `removed` 里的键在页面上**永远匹配不到** —— 解除的等待关系一直画着。
+   * 这条钉住 `removed` 给的就是 `t.id`，照着删就对。
    */
-  it("tether 按复合键认", () => {
+  it("★ tether 按 id 认，removed 给的就是那个 id", () => {
     expect(full.tethers.length).toBeGreaterThan(0);
     const t = full.tethers[0]!;
-    expect(tetherKey(t)).toBe(`${t.from} ${t.to} ${t.relation}`);
+    expect(t.id).toBe(`${t.from}|${t.to}|${t.relation}`);
     const next: Scene = { ...full, tethers: full.tethers.slice(1) };
-    expect(diffScenes(full, next).tethers.removed).toEqual([tetherKey(t)]);
+    expect(diffScenes(full, next).tethers.removed).toEqual([t.id]);
+  });
+
+  it("★ 按 id 删得掉 —— 用与页面同一条合并规则走一遍", () => {
+    const t = full.tethers[0]!;
+    const next: Scene = { ...full, tethers: full.tethers.slice(1) };
+    const delta = diffScenes(full, next);
+
+    // 页面就是这么合并的：只读 x.id，不推导任何键
+    const map = new Map(full.tethers.map((x) => [x.id, x]));
+    for (const k of delta.tethers.removed) map.delete(k);
+    expect(map.has(t.id)).toBe(false);
+    expect(map.size).toBe(full.tethers.length - 1);
   });
 });
 

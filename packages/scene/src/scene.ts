@@ -94,6 +94,13 @@ export interface Cell {
    */
   readonly progress?: { readonly done: number; readonly total: number };
   readonly phase: Phase;
+  /**
+   * 这个相位与进度取自**哪一次**执行。
+   *
+   * 重试是常态，"节点失败了"要能追到是哪一次失败的；而重试历史属于详情，
+   * 不铺在图上（审核 F02）。
+   */
+  readonly execution?: string;
   /** 0..1，最近窗口里的流量 → 亮度 */
   readonly activity: number;
   /** 内部规模 → 泡泡半径 / 子树宽度 */
@@ -155,6 +162,18 @@ export interface Flow {
  * 各取所需，谁也不用先过滤掉一半噪声。
  */
 export interface Tether {
+  /**
+   * 身份。**由这里给出，不由任何消费方自己拼。**
+   *
+   * 原来 tether 没有 id，理由是"`{from,to,relation}` 已经唯一确定它，
+   * 造个 id 就是第二份身份"。那句话对，但结果更糟：**两处各自手写了一遍
+   * 拼法**，服务端 `a b c`、页面 `a|b|c`，于是 `removed` 里的键在页面上
+   * 永远匹配不到 —— 解除的等待关系一直画在图上（审核 F03）。
+   *
+   * 给出 id 不是加第二份身份，而是**把唯一那份放在唯一一处**：cells / flows /
+   * cards 本来就都有 id，只有 tether 例外，而那个例外正是漂移的入口。
+   */
+  readonly id: string;
   readonly from: string;
   readonly to: string;
   readonly relation: "refs" | "derives" | "waits";

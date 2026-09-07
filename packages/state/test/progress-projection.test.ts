@@ -175,3 +175,36 @@ it("★ 进度格式坏掉 → 这条执行标不可用，整份快照仍然解�
     state.close();
   }
 });
+
+/**
+ * ★ 产物归属读 provenance，不从 object_id 切段推（审核 F07）。
+ *
+ * 资产名本来就允许多级（`reports/result.md`），于是 `job/reports/result.md`
+ * 被画布推成归属 `job/reports` —— **那个实例根本不存在**，卡片挂在一个空地址上。
+ *
+ * 归属不是猜出来的：写它的时候就写进 provenance 了。
+ */
+it("★ 多级资产名的归属是写它的实例，不是它的父路径", async () => {
+  const state = RunState.open(dir, { backend: new ReportsProgress() });
+  try {
+    const ref = registerContainerTemplate(state.store, "root", TEMPLATE, "root_config");
+    state.registry.createRoot(ref, "job-1");
+    // 多级资产名：写的人是 job-1，名字里带一层目录
+    state.store.put("job-1/reports/result.md", "artifact", { text: "结果" }, {
+      traceid: "job-1",
+      node_id: "slow",
+      derived_from: [],
+    });
+    state.persist();
+
+    const snap = exportSnapshot(state, HUMAN);
+    const obj = (snap.objects as { object_id: string; owner?: string }[]).find(
+      (o) => o.object_id === "job-1/reports/result.md",
+    );
+    // ★ 归属是 job-1，不是 job-1/reports
+    expect(obj?.owner).toBe("job-1");
+    expect(obj?.owner).not.toBe("job-1/reports");
+  } finally {
+    state.close();
+  }
+});

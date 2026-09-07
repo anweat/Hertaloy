@@ -501,94 +501,100 @@ export const FIXTURE: unknown = {
  ],
  "objects": [
   {
-   "object_id": "worker",
-   "kind": "container_template",
-   "version": 1
-  },
-  {
-   "object_id": "root",
-   "kind": "root_config",
-   "version": 1
-  },
-  {
    "object_id": "job-1/note-plan",
    "kind": "artifact",
-   "version": 1
+   "version": 1,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/$run",
    "kind": "run",
-   "version": 1
+   "version": 1,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/a1/note-scan",
    "kind": "artifact",
-   "version": 1
+   "version": 1,
+   "owner": "job-1/a1"
   },
   {
    "object_id": "job-1/a1/$run",
    "kind": "run",
-   "version": 1
+   "version": 1,
+   "owner": "job-1/a1"
   },
   {
    "object_id": "job-1/$run",
    "kind": "run",
-   "version": 2
+   "version": 2,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/a1/$run",
    "kind": "run",
-   "version": 2
+   "version": 2,
+   "owner": "job-1/a1"
   },
   {
    "object_id": "job-1/$run",
    "kind": "run",
-   "version": 3
+   "version": 3,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/a2/note-scan",
    "kind": "artifact",
-   "version": 1
+   "version": 1,
+   "owner": "job-1/a2"
   },
   {
    "object_id": "job-1/a2/$run",
    "kind": "run",
-   "version": 1
+   "version": 1,
+   "owner": "job-1/a2"
   },
   {
    "object_id": "job-1/a2/$run",
    "kind": "run",
-   "version": 2
+   "version": 2,
+   "owner": "job-1/a2"
   },
   {
    "object_id": "job-1/$run",
    "kind": "run",
-   "version": 4
+   "version": 4,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/a3/note-scan",
    "kind": "artifact",
-   "version": 1
+   "version": 1,
+   "owner": "job-1/a3"
   },
   {
    "object_id": "job-1/a3/$run",
    "kind": "run",
-   "version": 1
+   "version": 1,
+   "owner": "job-1/a3"
   },
   {
    "object_id": "job-1/a3/$run",
    "kind": "run",
-   "version": 2
+   "version": 2,
+   "owner": "job-1/a3"
   },
   {
    "object_id": "job-1/$run",
    "kind": "run",
-   "version": 5
+   "version": 5,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/$exec",
    "kind": "execution",
-   "version": 1
+   "version": 1,
+   "owner": "job-1"
   }
  ],
  "locks": [
@@ -599,6 +605,5 @@ export const FIXTURE: unknown = {
    "key": "job-1/a3",
    "waitingOn": "job-1/a3"
   }
- ],
- "audit": []
+ ]
 };

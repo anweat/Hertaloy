@@ -88,16 +88,52 @@ function touchIndex(messages: readonly SnapshotMessage[]): Map<string, number[]>
   return index;
 }
 
-function phaseOf(
+/**
+ * 这个节点**当前**那次执行。
+ *
+ * 原来相位与进度各自 `records.find(...)` 取第一条，两个后果：
+ *   - 取错了 —— 重试之后"第一条"几乎一定不是当前那条：exec-1 FAILED、
+ *     exec-2 RUNNING 时节点仍显示 failed（审核 F02）
+ *   - **两处可能取到不同的记录** —— 相位来自一次执行、进度来自另一次
+ *
+ * 收成一处，两者必然同源。选法：
+ *   1. 在跑的那条就是当前的
+ *   2. 否则取**最后一条非作废**的 —— 记录按执行创建顺序给出（导出侧的承诺）
+ *   3. VOIDED 永远不当当前：它的结论已被 generation 栅栏丢掉
+ */
+function currentRecord(
   traceid: string,
   nodeId: string,
   snapshot: Snapshot,
-): Phase {
-  const record = snapshot.records.find((r) => r.traceid === traceid && r.nodeId === nodeId);
+): Snapshot["records"][number] | undefined {
+  const mine = snapshot.records.filter((r) => r.traceid === traceid && r.nodeId === nodeId);
+  const running = mine.find((r) => r.status === "RUNNING");
+  if (running !== undefined) return running;
+  const settled = mine.filter((r) => r.status !== "VOIDED");
+  return settled[settled.length - 1] ?? mine[mine.length - 1];
+}
+
+function phaseOf(record: Snapshot["records"][number] | undefined): Phase {
   if (record === undefined) return "idle";
   if (record.status === "RUNNING") return "running";
   if (record.status === "VOIDED") return "voided";
   return record.termination === "DONE" ? "done" : "failed";
+}
+
+/** 身份只在这一处拼。消费方读 `id`，不重新推导。 */
+function tether(
+  from: string,
+  to: string,
+  relation: Tether["relation"],
+  because?: string,
+): Tether {
+  return {
+    id: `${from}|${to}|${relation}`,
+    from,
+    to,
+    relation,
+    ...(because === undefined ? {} : { because }),
+  };
 }
 
 export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
@@ -188,6 +224,8 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
       }));
       const id = nodeCellId(instance.traceid, nodeId);
       const own = spanOf(id, instance.status === "OPEN");
+      // 相位与进度取**同一次**执行 —— 分别去找就会各选各的
+      const current = currentRecord(instance.traceid, nodeId, snapshot);
       cells.push({
         id,
         kind: "node",
@@ -206,13 +244,11 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
          * 结构性那一半（覆盖率）在节点这一层没有意义 —— 节点是最小单位，
          * 没有分母。所以这里要么有 agent 自报的，要么就没有，不编。
          */
-        ...(() => {
-          const p = snapshot.records.find(
-            (r) => r.traceid === instance.traceid && r.nodeId === nodeId,
-          )?.progress;
-          return p === undefined ? {} : { progress: { done: p.done, total: p.total } };
-        })(),
-        phase: phaseOf(instance.traceid, nodeId, snapshot),
+        ...(current?.progress === undefined
+          ? {}
+          : { progress: { done: current.progress.done, total: current.progress.total } }),
+        phase: phaseOf(current),
+        ...(current?.executionId === undefined ? {} : { execution: current.executionId }),
         activity: activityOf(id),
         extent: ports.length,
         pinned: false,
@@ -418,12 +454,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
   for (const lock of snapshot.locks) {
     if (lock.waitingOn === undefined) continue;
     if (!inScope(lock.holder) || !inScope(lock.waitingOn)) continue;
-    tethers.push({
-      from: lock.holder,
-      to: lock.waitingOn,
-      relation: "waits",
-      because: lock.kind,
-    });
+    tethers.push(tether(lock.holder, lock.waitingOn, "waits", lock.kind));
   }
 
   /**
@@ -437,24 +468,38 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
    * 2. **`$` 开头的是内核内务**（`$run` / `$exec`），不上画布。执行记录该表现为
    *    节点的 `phase`，不该在旁边再摆一张卡说同一件事。
    */
-  const latest = new Map<string, { kind: string; version: number }>();
+  const latest = new Map<string, { kind: string; version: number; owner?: string }>();
   for (const obj of snapshot.objects) {
     const seen = latest.get(obj.object_id);
     if (seen === undefined || obj.version > seen.version) {
-      latest.set(obj.object_id, { kind: obj.kind, version: obj.version });
+      latest.set(obj.object_id, {
+        kind: obj.kind,
+        version: obj.version,
+        ...(obj.owner === undefined ? {} : { owner: obj.owner }),
+      });
     }
   }
 
   const cards: Card[] = [];
-  for (const [objectId, { kind, version }] of latest) {
+  for (const [objectId, { kind, version, owner }] of latest) {
     const cut = objectId.lastIndexOf("/");
     if (cut === -1) continue; // 模板等全局对象不上画布
     const label = objectId.slice(cut + 1);
     if (label.startsWith("$")) continue; // 内核内务
-    const owner = objectId.slice(0, cut);
+    /**
+     * 归属读 provenance，**不从 object_id 切段推**。
+     *
+     * 原来是 `objectId.slice(0, cut)`：`job/reports/result.md` 被推成
+     * 归属 `job/reports`，而那个实例根本不存在（审核 F07）。资产名本来就
+     * 允许多级 —— **对象子路径不等于实例路径**。
+     *
+     * 没有 provenance 的（旧数据）就不上画布：宁可少一张卡，
+     * 也不要一张挂在不存在的容器上的卡。
+     */
+    if (owner === undefined) continue;
     if (!inScope(owner)) continue;
     cards.push({ id: objectId, label, kind, owner, version });
-    tethers.push({ from: owner, to: objectId, relation: "refs" });
+    tethers.push(tether(owner, objectId, "refs"));
   }
 
   return { range, cells, cards, flows, tethers, viewport: scope };

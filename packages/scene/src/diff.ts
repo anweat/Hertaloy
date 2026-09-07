@@ -38,19 +38,13 @@ export interface SceneDelta {
   readonly tethers: Change<Tether>;
 }
 
-/**
- * tether 没有 id —— `{from, to, relation}` 是它的天然复合键。
- *
- * 不给它造一个 id：造出来的 id 是第二份身份，而这三个字段已经唯一确定它。
- */
-export function tetherKey(t: Tether): string {
-  return `${t.from} ${t.to} ${t.relation}`;
-}
-
 /** 空场景 —— 第一帧的比较基准。 */
 export function emptyScene(viewport = ""): Scene {
   return { range: { from: 0, to: 0 }, cells: [], cards: [], flows: [], tethers: [], viewport };
 }
+
+/** 唯一的键法。`removed` 里给的就是它，消费方照着删即可。 */
+const byId = (x: { readonly id: string }): string => x.id;
 
 function diffBy<T>(prev: readonly T[], next: readonly T[], key: (t: T) => string): Change<T> {
   const before = new Map(prev.map((t) => [key(t), t]));
@@ -77,10 +71,11 @@ export function diffScenes(prev: Scene, next: Scene): SceneDelta {
   return {
     viewport: next.viewport,
     range: next.range,
-    cells: diffBy(prev.cells, next.cells, (c) => c.id),
-    cards: diffBy(prev.cards, next.cards, (c) => c.id),
-    flows: diffBy(prev.flows, next.flows, (f) => f.id),
-    tethers: diffBy(prev.tethers, next.tethers, tetherKey),
+    // 四个集合现在都有 id，键法只剩一种 —— 少一处能各自走偏的地方
+    cells: diffBy(prev.cells, next.cells, byId),
+    cards: diffBy(prev.cards, next.cards, byId),
+    flows: diffBy(prev.flows, next.flows, byId),
+    tethers: diffBy(prev.tethers, next.tethers, byId),
   };
 }
 

@@ -73,6 +73,8 @@ export const SnapshotInstance = z.object({
 });
 
 export const SnapshotRecord = z.object({
+  /** 执行身份。没有它就只能靠"第几条"猜，而重试之后那是错的。 */
+  executionId: z.string().optional(),
   traceid: z.string(),
   nodeId: z.string(),
   status: z.string(),
@@ -81,6 +83,8 @@ export const SnapshotRecord = z.object({
   progress: z
     .object({ done: z.number(), total: z.number(), note: z.string().optional() })
     .optional(),
+  /** 报了但格式不合法时的说明 —— 与"没上报"分开表达。 */
+  progressUnavailable: z.string().optional(),
 });
 
 const PortDecl = z.object({
@@ -115,6 +119,8 @@ export const SnapshotObject = z.object({
   object_id: z.string(),
   kind: z.string(),
   version: z.number(),
+  /** 真实归属（`provenance.traceid`）—— 不从 object_id 切段推。 */
+  owner: z.string().optional(),
 });
 
 export const SnapshotLock = z.object({

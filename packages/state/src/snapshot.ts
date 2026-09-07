@@ -171,6 +171,10 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
     }
   }
 
+  /**
+   * 记录**按执行创建顺序**给出（`runtime.records()` 是账本的插入序，
+   * 而 id 由账本单调发放）。消费方据此判定"最后一次"，这是本投影的一条承诺。
+   */
   const records = runtime
     .records()
     .filter((r) => inScope(r.traceid))
@@ -180,6 +184,11 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
       const progress = progressOf.get(r.executionId);
       const broken = progressBroken.get(r.executionId);
       return {
+        /**
+         * 执行身份。**投影里必须带** —— 没有它，消费方只能靠"第几条"猜，
+         * 而重试之后"第一条"几乎一定不是当前那条（审核 F02）。
+         */
+        executionId: r.executionId,
         traceid: r.traceid,
         nodeId: r.nodeId,
         status: r.status,
@@ -190,10 +199,25 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
       };
     });
 
+  /**
+   * 对象清单带上**真实归属**（`provenance.traceid`）。
+   *
+   * 画布原来是从 object_id 切最后一段推的：`job/reports/result.md` 被推成
+   * 归属 `job/reports` —— 那个实例根本不存在（审核 F07）。
+   * **对象子路径不等于实例路径**：资产名本来就允许多级（`reports/result.md`），
+   * 而写它的是 `job`。
+   *
+   * 归属不是猜出来的，它在 provenance 里写着，写的时候就定了。
+   */
   const objects = state.store
     .appended(0)
     .filter((v) => inScope(v.object_id))
-    .map((v) => ({ object_id: v.object_id, kind: v.kind, version: v.version }));
+    .map((v) => ({
+      object_id: v.object_id,
+      kind: v.kind,
+      version: v.version,
+      ...(v.provenance.traceid === undefined ? {} : { owner: v.provenance.traceid }),
+    }));
 
   const locks = runtime.locks
     .all()

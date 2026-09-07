@@ -157,17 +157,20 @@ async function api(path) {
 let templates = {};
 let scene = { cells: [], flows: [], tethers: [], cards: [], range: { from: 1, to: 1 }, viewport: "" };
 
-const tetherKey = (t) => t.from + "|" + t.to + "|" + t.relation;
-
+/**
+ * 四个集合都按 `id` 合并 —— **页面不自己拼任何键**。
+ *
+ * 原来 tether 没有 id，页面按 `from|to|relation` 拼，而服务端按 `from to relation`
+ * 拼：`removed` 里的键在这边永远匹配不到，**解除的等待关系一直画在图上**
+ * （审核 F03）。身份现在只在 scene 那一处给出。
+ */
 function apply(delta) {
-  const colls = [["cells", (x) => x.id], ["flows", (x) => x.id],
-                 ["cards", (x) => x.id], ["tethers", tetherKey]];
-  for (const [coll, keyer] of colls) {
+  for (const coll of ["cells", "flows", "cards", "tethers"]) {
     const d = delta[coll];
     if (d === undefined) continue;
-    const map = new Map(scene[coll].map((x) => [keyer(x), x]));
+    const map = new Map(scene[coll].map((x) => [x.id, x]));
     for (const k of d.removed ?? []) map.delete(k);
-    for (const x of [...(d.added ?? []), ...(d.changed ?? [])]) map.set(keyer(x), x);
+    for (const x of [...(d.added ?? []), ...(d.changed ?? [])]) map.set(x.id, x);
     scene[coll] = [...map.values()];
   }
   if (delta.range !== undefined) scene.range = delta.range;

@@ -306,3 +306,110 @@ describe("★ 流的四种来路", () => {
     );
   });
 });
+
+/**
+ * ★ 卡挂在真实归属上（审核 F07）。
+ *
+ * 原来 owner 是从 object_id 切最后一段推的：`job/reports/result.md` 推成
+ * `job/reports` —— 那个 cell 根本不存在，卡片挂在空地址上。
+ */
+describe("★ 多级资产名的归属", () => {
+  const snap = {
+    root: "job",
+    instances: {
+      job: { traceid: "job", templateRef: "t@1", status: "OPEN", bindings: [] },
+    },
+    templates: { "t@1": { nodes: {}, edges: {}, children: {} } },
+    messages: [],
+    records: [],
+    locks: [],
+    objects: [
+      // 写它的是 job，名字里带一层目录
+      { object_id: "job/reports/result.md", kind: "artifact", version: 1, owner: "job" },
+    ],
+  };
+
+  it("卡的 owner 是写它的实例，refs 也指向那个实例", () => {
+    const s = buildScene(parseSnapshot(snap));
+    const card = s.cards.find((c) => c.id === "job/reports/result.md");
+    expect(card?.owner).toBe("job");
+    expect(card?.label).toBe("result.md");
+    const ref = s.tethers.find((t) => t.relation === "refs");
+    expect(ref?.from).toBe("job");
+    // ★ 不是那个不存在的中间路径
+    expect(s.cells.map((c) => c.id)).not.toContain("job/reports");
+  });
+
+  it("没有 provenance 归属的旧对象不上画布 —— 宁可少一张卡", () => {
+    const withoutOwner = {
+      ...snap,
+      objects: [{ object_id: "job/reports/result.md", kind: "artifact", version: 1 }],
+    };
+    expect(buildScene(parseSnapshot(withoutOwner)).cards).toHaveLength(0);
+  });
+});
+
+/**
+ * ★ 相位与进度必须选**同一次适用执行**（审核 F02）。
+ *
+ * 原来两处各自 `records.find(...)` 取第一条：exec-1 FAILED、exec-2 RUNNING 时
+ * 节点仍是 `failed`；exec-2 DONE 之后仍是 `failed` + 1/10，而实际最新是 9/10。
+ *
+ * 重试是常态，"第一条"几乎一定不是当前那条。
+ */
+describe("★ 重试后选当前那次执行", () => {
+  const base = {
+    root: "job",
+    instances: { job: { traceid: "job", templateRef: "t@1", status: "OPEN", bindings: [] } },
+    templates: {
+      "t@1": {
+        nodes: { w: { agent: { argv: ["x"] }, ports: { in: { direction: "receive" } } } },
+        edges: {},
+        children: {},
+      },
+    },
+    messages: [],
+    locks: [],
+    objects: [],
+  };
+  const node = (s: unknown) => buildScene(parseSnapshot(s)).cells.find((c) => c.id === "job#w");
+
+  it("★ 上次失败、这次在跑 → running，不是 failed", () => {
+    const c = node({
+      ...base,
+      records: [
+        { executionId: "exec-1", traceid: "job", nodeId: "w", status: "SETTLED", termination: "FAILED", progress: { done: 1, total: 10 } },
+        { executionId: "exec-2", traceid: "job", nodeId: "w", status: "RUNNING" },
+      ],
+    });
+    expect(c?.phase).toBe("running");
+    expect(c?.execution).toBe("exec-2");
+    // 旧 attempt 的进度不冒充当前进度
+    expect(c?.progress).toBeUndefined();
+  });
+
+  it("★ 上次失败、这次成功 → done，进度取这次的", () => {
+    const c = node({
+      ...base,
+      records: [
+        { executionId: "exec-1", traceid: "job", nodeId: "w", status: "SETTLED", termination: "FAILED", progress: { done: 1, total: 10 } },
+        { executionId: "exec-2", traceid: "job", nodeId: "w", status: "SETTLED", termination: "DONE", progress: { done: 9, total: 10 } },
+      ],
+    });
+    expect(c?.phase).toBe("done");
+    expect(c?.execution).toBe("exec-2");
+    expect(c?.progress).toEqual({ done: 9, total: 10 });
+  });
+
+  it("作废的那次不当当前 —— 它的结论被栅栏丢掉了", () => {
+    const c = node({
+      ...base,
+      records: [
+        { executionId: "exec-1", traceid: "job", nodeId: "w", status: "SETTLED", termination: "DONE", progress: { done: 5, total: 5 } },
+        { executionId: "exec-2", traceid: "job", nodeId: "w", status: "VOIDED" },
+      ],
+    });
+    expect(c?.phase).toBe("done");
+    expect(c?.execution).toBe("exec-1");
+  });
+});
