@@ -34,10 +34,10 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 - **外部副作用只能承诺 at-least-once**。generation fence 拦得住迟到的内核 apply，
   撤不回已发的邮件或已推的 commit。
 - **`--as` 是自报身份不是认证**。当前只适合本机；开放出去必须由认证会话注入主体。
-- **对象已写、head 未换的崩溃窗口会让 run 拒载**。修法已想清（对象文件写入序号，
-  装载时按 cursor 截断），未做。
-- **对象回收没有设计路径**。沙箱与头都已封顶，唯独对象版本只增不减 ——
-  `status` 会报保留了多少，至少让人看得见。
+- **提交边界已使用 head format 2 的 objectHeads 清单**，未提交对象不纳入当前读取；
+  损坏或缺失的已提交对象仍拒绝加载。对象提交中断实验见 ITERATION 的 H07。
+- **对象回收没有设计路径**。沙箱可以手工 reclaim，消息窗口有上限，
+  但对象版本及 objectHeads 清单仍会增长。
 - **整树操作只接受根 scope 并检查根权限**：`run`、`runAgents`、`settleAll`、
   `reconcile`、`causesOf`。真实的子树调度尚未实现；子树查询和定点 send/truncate 可用。
 - **CLI 用 driver.lock 排斥同一 run 的并发 drain**，head.lock 仍在 agent 执行期间释放。
@@ -47,17 +47,18 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 
 ```
 packages/contracts    68 条   身份/路径/变量/端口/消息/契约/模板/执行面/权限/资源
-packages/kernel      305 条   store · tx · instances · obligations · aliases · context · extract · routing · runtime · control
-packages/sandbox     153 条   契约目录 · runner(local/wsl/docker) · 出网 · git 观察 · profile · 资源
-packages/state        65 条   对象落盘 · 可变头 · 目录锁 · 权限/资源文件 · claim 耐久性
-packages/cli         153 条   状态命令 · 内置 handler · 模板构造器 · agent · JSON 契约 · 驱动排他
-packages/mcp          17 条   11 个工具 · 授权 · 注册校验 · 失败持久化
-packages/scene        52 条   层积渲染的纯函数投影
-合计                 813 条   806 passed / 7 skipped（Docker daemon 未运行）
+packages/kernel      310 条   store · tx · instances · obligations · aliases · context · extract · routing · runtime · control
+packages/sandbox     199 条   契约目录 · runner(local/wsl/docker) · 出网 · git 观察 · profile · 资源
+packages/state        85 条   对象落盘 · 可变头 · 目录锁 · 权限/资源文件 · claim 耐久性
+packages/cli         195 条   状态命令 · 模板/操作反馈 · agent · JSON 契约 · 驱动排他
+packages/mcp          19 条   13 个工具 · 授权 · 结构化注册校验 · 失败持久化
+packages/scene        60 条   层积渲染的纯函数投影
+合计                 936 条   929 passed / 7 skipped（Docker daemon 未运行）
 ```
 
-以上为 2026-09-06 Windows + WSL 环境实测；test、typecheck、reachability 均退出 0。
+以上为 2026-09-07 Windows + WSL 环境实测；test、typecheck、reachability 均退出 0，203 个导出无孤儿。
 批次证据和未完成项见 [ITERATION.md](./ITERATION.md)。
+S4–S6 的信息反馈已接通，真实本地执行与浏览器验证见 [可见性实验](./experiments/2026-09-07-s6/README.md)；前端布局仍是实验原型。
 
 **上手看 [DEVELOPING.md](./DEVELOPING.md)** —— 每一条都对应一次真踩过的坑。
 

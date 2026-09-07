@@ -1,0 +1,514 @@
+{
+  "baseline": "36fe19c62f04c53f63f280c423013f9ab58b5053",
+  "mode": "real Node + LocalRunner + CLI process + HTTP",
+  "paidModelCalls": 0,
+  "running": {
+    "execution": {
+      "executionId": "exec-1",
+      "traceid": "visibility",
+      "nodeId": "work",
+      "status": "RUNNING",
+      "generation": 0,
+      "claimed": [
+        "msg-1"
+      ]
+    },
+    "observation": {
+      "available": false,
+      "why": "未采集：这次执行没有留下 $exec"
+    },
+    "artifacts": [],
+    "live": {
+      "available": true,
+      "entries": [
+        {
+          "op": "progress",
+          "done": 1,
+          "total": 3,
+          "note": "正在读取实验输入",
+          "seq": 1
+        }
+      ]
+    }
+  },
+  "liveUpdated": {
+    "execution": {
+      "executionId": "exec-1",
+      "traceid": "visibility",
+      "nodeId": "work",
+      "status": "RUNNING",
+      "generation": 0,
+      "claimed": [
+        "msg-1"
+      ]
+    },
+    "observation": {
+      "available": false,
+      "why": "未采集：这次执行没有留下 $exec"
+    },
+    "artifacts": [],
+    "live": {
+      "available": true,
+      "entries": [
+        {
+          "op": "progress",
+          "done": 1,
+          "total": 3,
+          "note": "正在读取实验输入",
+          "seq": 1
+        },
+        {
+          "op": "progress",
+          "done": 2,
+          "total": 3,
+          "note": "正在验证第二阶段",
+          "seq": 2
+        }
+      ]
+    }
+  },
+  "failed": {
+    "execution": {
+      "executionId": "exec-1",
+      "traceid": "visibility",
+      "nodeId": "work",
+      "status": "SETTLED",
+      "termination": "FAILED",
+      "generation": 0,
+      "claimed": [
+        "msg-1"
+      ],
+      "usage": {
+        "inTokens": 0,
+        "outTokens": 0,
+        "costUsd": 0,
+        "wallClockSeconds": 0.383,
+        "toolCalls": 0,
+        "compactions": 0
+      }
+    },
+    "observation": {
+      "available": true,
+      "ref": "visibility/$exec@1"
+    },
+    "artifacts": []
+  },
+  "failedScene": {
+    "range": {
+      "from": 1,
+      "to": 1
+    },
+    "cells": [
+      {
+        "id": "visibility",
+        "kind": "instance",
+        "parent": null,
+        "depth": 0,
+        "label": "visibility",
+        "identity": "root@1",
+        "ports": [],
+        "span": {
+          "from": 1,
+          "to": null
+        },
+        "marks": [
+          1
+        ],
+        "coverage": {
+          "done": 1,
+          "total": 1
+        },
+        "phase": "idle",
+        "lifecycle": "OPEN",
+        "activity": 0,
+        "extent": 1,
+        "pinned": false
+      },
+      {
+        "id": "visibility#work",
+        "kind": "node",
+        "parent": "visibility",
+        "depth": 1,
+        "label": "work",
+        "identity": "agent:C:\\Program Files\\nodejs\\node.exe",
+        "ports": [
+          {
+            "name": "in",
+            "direction": "receive"
+          },
+          {
+            "name": "out",
+            "direction": "emit"
+          }
+        ],
+        "span": {
+          "from": 1,
+          "to": null
+        },
+        "marks": [
+          1
+        ],
+        "phase": "running",
+        "execution": "exec-2",
+        "activity": 1,
+        "extent": 2,
+        "pinned": false
+      },
+      {
+        "id": "visibility~future",
+        "kind": "slot",
+        "parent": "visibility",
+        "depth": 1,
+        "label": "future",
+        "identity": "mid@1",
+        "ports": [],
+        "span": {
+          "from": 1,
+          "to": null
+        },
+        "marks": [],
+        "phase": "idle",
+        "activity": 0,
+        "extent": 0,
+        "pinned": false
+      }
+    ],
+    "cards": [],
+    "flows": [
+      {
+        "id": "signal:msg-1",
+        "from": null,
+        "to": {
+          "cell": "visibility#work",
+          "port": "in"
+        },
+        "certainty": 1,
+        "activity": 1,
+        "at": [
+          1
+        ]
+      }
+    ],
+    "tethers": [],
+    "viewport": "visibility"
+  },
+  "settled": {
+    "execution": {
+      "executionId": "exec-2",
+      "traceid": "visibility",
+      "nodeId": "work",
+      "status": "SETTLED",
+      "termination": "DONE",
+      "generation": 0,
+      "claimed": [
+        "msg-1"
+      ],
+      "usage": {
+        "inTokens": 0,
+        "outTokens": 0,
+        "costUsd": 0,
+        "wallClockSeconds": 0.374,
+        "toolCalls": 0,
+        "compactions": 0
+      }
+    },
+    "observation": {
+      "available": true,
+      "ref": "visibility/$exec@2"
+    },
+    "artifacts": [
+      {
+        "ref": "visibility/reports/answer.md@1",
+        "kind": "artifact"
+      }
+    ]
+  },
+  "finalNode": {
+    "id": "visibility#work",
+    "kind": "node",
+    "parent": "visibility",
+    "depth": 1,
+    "label": "work",
+    "identity": "agent:C:\\Program Files\\nodejs\\node.exe",
+    "ports": [
+      {
+        "name": "in",
+        "direction": "receive"
+      },
+      {
+        "name": "out",
+        "direction": "emit"
+      }
+    ],
+    "span": {
+      "from": 1,
+      "to": 1
+    },
+    "marks": [
+      1
+    ],
+    "progress": {
+      "done": 3,
+      "total": 3,
+      "note": "验证完成，产物已生成"
+    },
+    "phase": "done",
+    "execution": "exec-2",
+    "activity": 1,
+    "extent": 2,
+    "pinned": false
+  },
+  "artifact": {
+    "object_id": "visibility/reports/answer.md",
+    "version": 1,
+    "kind": "artifact",
+    "content_hash": "3439783c9e1d293f1c5c0315176f467ea021c72afb1f2c103e29c019d153ecf8",
+    "body": {
+      "text": "VISIBILITY VERIFIED: retry produced this artifact."
+    },
+    "provenance": {
+      "traceid": "visibility",
+      "node_id": "work",
+      "execution_id": "exec-2",
+      "derived_from": []
+    }
+  },
+  "message": {
+    "message": {
+      "id": "msg-1",
+      "target": {
+        "traceid": "visibility",
+        "node": "work",
+        "port": "in"
+      },
+      "state": "CONSUMED",
+      "attempts": 1
+    },
+    "lastFailure": "执行终止于 FAILED",
+    "payload": {},
+    "causes": []
+  },
+  "operations": {
+    "scope": "visibility",
+    "channel": "http",
+    "status": "TERMINAL",
+    "actions": [
+      {
+        "operation": "define",
+        "target": "root",
+        "permission": {
+          "allowed": true,
+          "reason": "当前授权允许"
+        },
+        "available": false,
+        "reasons": [
+          {
+            "code": "read_only_transport",
+            "message": "HTTP 只提供读取和干跑校验，写操作使用 CLI/MCP"
+          }
+        ],
+        "requires": [
+          "spec"
+        ]
+      },
+      {
+        "operation": "send",
+        "target": "visibility",
+        "permission": {
+          "allowed": true,
+          "reason": "当前授权允许"
+        },
+        "available": false,
+        "reasons": [
+          {
+            "code": "read_only_transport",
+            "message": "HTTP 只提供读取和干跑校验，写操作使用 CLI/MCP"
+          },
+          {
+            "code": "terminal_instance",
+            "message": "实例已 TERMINAL"
+          }
+        ],
+        "requires": [
+          "node",
+          "port"
+        ],
+        "endpoints": [
+          {
+            "node": "work",
+            "port": "in"
+          }
+        ]
+      },
+      {
+        "operation": "spawn",
+        "target": "visibility",
+        "permission": {
+          "allowed": true,
+          "reason": "当前授权允许"
+        },
+        "available": false,
+        "reasons": [
+          {
+            "code": "read_only_transport",
+            "message": "HTTP 只提供读取和干跑校验，写操作使用 CLI/MCP"
+          },
+          {
+            "code": "terminal_instance",
+            "message": "实例已 TERMINAL"
+          }
+        ],
+        "requires": [
+          "slot",
+          "segment"
+        ],
+        "slots": [
+          "future"
+        ]
+      },
+      {
+        "operation": "run",
+        "target": "visibility",
+        "permission": {
+          "allowed": true,
+          "reason": "当前授权允许"
+        },
+        "available": false,
+        "reasons": [
+          {
+            "code": "read_only_transport",
+            "message": "HTTP 只提供读取和干跑校验，写操作使用 CLI/MCP"
+          }
+        ],
+        "requires": [],
+        "note": "agent 执行需要 --runner；提交时重新检查驱动权"
+      },
+      {
+        "operation": "truncate",
+        "target": "visibility",
+        "permission": {
+          "allowed": true,
+          "reason": "当前授权允许"
+        },
+        "available": false,
+        "reasons": [
+          {
+            "code": "read_only_transport",
+            "message": "HTTP 只提供读取和干跑校验，写操作使用 CLI/MCP"
+          }
+        ],
+        "requires": [],
+        "note": "截断提供逻辑栅栏；不承诺跨进程物理取消"
+      }
+    ]
+  },
+  "definitions": {
+    "root@1": {
+      "ref": "root@1",
+      "kind": "root_config",
+      "body": {
+        "nodes": {
+          "work": {
+            "kind": "handler",
+            "agent": {
+              "argv": [
+                "C:\\Program Files\\nodejs\\node.exe",
+                "-e",
+                "\nconst fs = require('node:fs');\nconst cp = require('node:child_process');\nconst path = require('node:path');\nconst control = \"C:\\\\Users\\\\anwea\\\\AppData\\\\Local\\\\Temp\\\\hertaloy-s6-visibility-lpsTU0\";\nconst again = fs.existsSync(path.join(control, 'attempted'));\nfs.writeFileSync(path.join(control, 'attempted'), 'yes');\nconst tool = (...args) => cp.execFileSync(process.execPath, ['../.hertaloy/bin/hertaloy.mjs', ...args]);\n(async () => {\n  if (again) {\n    const until = Date.now() + 900000;\n    while (!fs.existsSync(path.join(control, 'retry'))) {\n      if (Date.now() > until) throw new Error('retry gate timeout');\n      await new Promise(r => setTimeout(r, 100));\n    }\n  }\n  tool('progress', '1', '3', '正在读取实验输入');\n  if (!again) {\n    const until = Date.now() + 900000;\n    while (!fs.existsSync(path.join(control, 'more'))) {\n      if (Date.now() > until) throw new Error('gate timeout');\n      await new Promise(r => setTimeout(r, 100));\n    }\n    tool('progress', '2', '3', '正在验证第二阶段');\n    while (!fs.existsSync(path.join(control, 'fail'))) {\n      if (Date.now() > until) throw new Error('gate timeout');\n      await new Promise(r => setTimeout(r, 100));\n    }\n    process.stderr.write('EXPECTED FIRST ATTEMPT FAILURE');\n    process.exitCode = 1;\n    return;\n  }\n  fs.mkdirSync('../.hertaloy/artifacts/reports', {recursive:true});\n  fs.writeFileSync('../.hertaloy/artifacts/reports/answer.md', 'VISIBILITY VERIFIED: retry produced this artifact.');\n  tool('progress', '3', '3', '验证完成，产物已生成');\n  tool('emit', 'out', JSON.stringify({result:'verified'}));\n})().catch(e => { process.stderr.write(String(e)); process.exitCode = 1; });\n"
+              ]
+            },
+            "ports": {
+              "in": {
+                "direction": "receive",
+                "servo": {
+                  "vars": {}
+                }
+              },
+              "out": {
+                "direction": "emit"
+              }
+            }
+          }
+        },
+        "edges": {},
+        "children": {
+          "future": {
+            "template": "mid@1"
+          }
+        },
+        "bindings": [],
+        "selfBindings": []
+      },
+      "usedBy": [
+        "visibility"
+      ],
+      "dependencies": [
+        {
+          "ref": "mid@1",
+          "where": "children.future.template"
+        }
+      ]
+    },
+    "mid@1": {
+      "ref": "mid@1",
+      "kind": "container_template",
+      "body": {
+        "nodes": {},
+        "edges": {},
+        "children": {
+          "nested": {
+            "template": "leaf@1"
+          }
+        },
+        "bindings": [],
+        "selfBindings": []
+      },
+      "usedBy": [],
+      "dependencies": [
+        {
+          "ref": "leaf@1",
+          "where": "children.nested.template"
+        }
+      ]
+    },
+    "leaf@1": {
+      "ref": "leaf@1",
+      "kind": "container_template",
+      "body": {
+        "nodes": {
+          "placeholder": {
+            "kind": "handler",
+            "handler": "noop",
+            "ports": {
+              "in": {
+                "direction": "receive"
+              }
+            }
+          }
+        },
+        "edges": {},
+        "children": {},
+        "bindings": [],
+        "selfBindings": []
+      },
+      "usedBy": [],
+      "dependencies": []
+    }
+  },
+  "restartedOldTokenStatus": 401,
+  "deniedStreamStatus": 403,
+  "invariants": "passed",
+  "validation": {
+    "valid": false,
+    "level": "registration",
+    "registered": false,
+    "issues": [
+      {
+        "where": "children.broken.template",
+        "message": "子模板 absent@1 无法解析为合法容器模板",
+        "code": "link_error",
+        "severity": "error"
+      }
+    ]
+  }
+}

@@ -191,9 +191,14 @@ scenario({ id: "review", spec: template({
 
 ```bash
 hertaloy validate ./template.json
+hertaloy validate-definition ./run draft ./template.json --json
+hertaloy define ./run draft ./template.json --json
 ```
 
-或 MCP 的 `validate_template`。错误是给模型读的文字，不是栈——
+第一条只做本地校验；跨模板、根别名及 overlay 合并要用带 run 上下文的第二条。
+第三条正式注册并返回实际 `id@N`，不会更换既有运行固定的模板。
+MCP 的 `validate_template` 给 `id` 时做完整校验，不给时做本地校验。
+错误保留字段位置，既有可读文字也有结构化结果——
 AI 生成模板 → 拿到错误 → 自己改。这是 G1 自我修正的内循环。
 
 ---
@@ -341,3 +346,50 @@ hertaloy status ./run --as agent:planner    # 默认会被拒
 
 **docker 用例必须门控。** `describe.skipIf(!HAS_DOCKER)` ——忘了加就等于
 任何没装 docker 的机器跑这套测试都是红的，而"红"应该只意味着代码坏了。
+
+## 8. 前端信息反馈接口（S4–S6）
+
+模板配置与运行状态分开读取，关联键是精确 ref、traceid、executionId、messageId。
+
+| 需要的信息 | CLI | HTTP |
+|---|---|---|
+| 运行摘要、结构化义务、在途消息/执行 | `status <dir> --json` | `GET /status`（根范围） |
+| 场景与实时差量 | `scene <dir> [--scope trace] [--watch]` | `GET /scene`、`GET /scene/stream` |
+| 实例固定的模板正文 | `templates <dir> [--scope trace]` | `GET /templates` |
+| 声明依赖与版本使用者 | `definitions <dir> [--scope trace]` | `GET /definitions?scope=trace` |
+| 执行结论、观测引用、产物、运行现场 | `execution <dir> <id> [--runner local\|wsl\|docker]` | `GET /execution?id=` |
+| 消息正文、历史失败、因果 | `message <dir> <id>` | `GET /message?id=` |
+| 精确对象正文 | `show <dir> <id@N>` | `GET /object?ref=` |
+| 操作条件与通道限制 | `operations <dir> [--scope trace]` | `GET /operations?scope=trace` |
+| 完整草稿校验 | `validate-definition <dir> <id> <file> [kind]` | `POST /validate-definition` |
+
+查询参数需要 URL 编码。HTTP 由 `serve <dir> --runner ...` 提供，主体在服务启动时确定，
+请求使用 `x-hertaloy-token`。服务仍是本机可信的只读服务；唯一 POST 是不落盘的纯校验，
+不提供注册、投消息、推进或截断的 HTTP 写入口。接这些写操作前需明确认证边界。
+
+`definitions` 返回以精确 ref 为键的对象，每项是
+`{ref,kind,body,usedBy,dependencies:[{ref,where}]}`。起点是获准子树实际固定的版本，
+展开子模板、端口契约和 overlay 基定义；未实例化依赖的 `usedBy` 为空。
+这不是全局模板目录，未使用资产和后来注册的版本不会混进来。
+MCP 可使用 `get_definitions`、`get_operations`。
+
+校验 POST 正文为 `{id,spec,kind?}`，上限 256 KiB。
+完整校验解析任意已有定义，因此要求全库 DQL；正式 `define` 按定义 id 的 DDL 判定。
+成功返回 `{valid:true,level:"registration",registered:false,issues:[],definition}`；
+失败的 `issues` 保留 `where/code/message/severity`。`where` 是既有模板校验器的字段位置，
+执行规格错误至少定位到对应节点的 agent 段。HTTP 非法草稿为 400、无权为 403、
+无 token 为 401、超限为 413、读取故障为 500。正式注册仍重验，返回实际 ref，不预留版本。
+本地 `validate --json` 返回 `level:"local"` 和 `unchecked`，不能当完整注册校验通过。
+MCP 的校验、注册和上述新增查询同时提供 `structuredContent`。
+
+渲染时需要保留这些区别：
+
+- `Cell.lifecycle` 是实例 OPEN/TERMINAL；`phase` 是节点当前执行相位。TERMINAL 不表示执行成功。
+- `coverage` 是结构覆盖率；`progress` 是 agent 自报进度，可带 note。`progressUnavailable` 表示采集格式非法。
+- 执行 `live.available:false` 表示现场不可读；可读且 entries 为空才是尚无日志。现场给最近 20 条 journal，需配置与执行一致的 runner；它不是任意外部 CLI 的完整 stdout 流。
+- 重试成功后 `message.state` 可以是 CONSUMED，同时仍带 `lastFailure`。后者是历史，不是当前失败。
+- `causesUnavailable` 表示完整因果无权读取，不可把空 causes 当成零前因。
+- `operations` 的 permission、available、reasons、requires 分别表达权限、当前条件、受限原因和待填参数。预览不预留执行权，实际调用仍重新校验。
+- 每条新场景连接的首帧都从空场景重建；401/403 停止自动重连并提示刷新。对象与模板正文按精确 ref 查询，保持与所选执行关联。
+
+本轮可复现实验及验收边界见 [S6 可见性实验](./experiments/2026-09-07-s6/README.md)。
