@@ -112,7 +112,8 @@
             text-transform: uppercase; font-weight: 600; }
   #detail { flex: 1 1 52%; }
   #legend { flex: 0 0 auto; }
-  #outside, #authz { flex: 1 1 24%; }
+  #live { flex: 1 1 26%; }
+  #outside, #authz { flex: 1 1 20%; }
   pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px;
         color: #c6cfdd; }
   .row { display: flex; gap: 8px; font-size: 10.5px; padding: 1.5px 0; align-items: baseline; }
@@ -133,6 +134,7 @@
   <div id="side">
     <div id="status">连接中…</div>
     <div class="sec" id="detail"><h2>配置</h2><pre id="detail-body">点任意一个容器 / 子槽 / 节点</pre></div>
+    <div class="sec" id="live"><h2>执行中的现场</h2><div id="live-body">选一个正在跑的节点</div></div>
     <div class="sec" id="legend"><h2>线型</h2><div id="legend-body"></div></div>
     <div class="sec" id="outside"><h2>图外来的（人 / CLI 投的）</h2><div id="outside-body"></div></div>
     <div class="sec" id="authz"><h2>授权流水</h2><div id="authz-body"></div></div>
@@ -246,10 +248,73 @@ function renderDetail() {
   const body = document.getElementById("detail-body");
   if (cell === undefined) {
     body.textContent = selected === null ? "点任意一个容器 / 子槽 / 节点" : `${selected}（已不在视口里）`;
+    liveFor = null;
     return;
   }
   body.textContent = JSON.stringify(detailOf(cell), null, 2);
+  // 选中的是**正在跑**的节点，就把现场也盯上
+  liveFor = cell.phase === "running" && cell.execution ? cell.execution : null;
+  renderLive();
 }
+
+/**
+ * ── 执行中的现场 ──
+ *
+ * 场景流只在**有消息流动**时才变，而一个 agent 可以跑很久一条消息都不发 ——
+ * 那段时间里场景是静止的，可它正在干活。所以现场要自己的一条轮询，
+ * 而且只在"选中的节点正在跑"时开，别让静止的页面白转。
+ */
+let liveFor = null;
+let livePending = false;
+
+async function renderLive() {
+  const box = document.getElementById("live-body");
+  if (liveFor === null) {
+    box.replaceChildren(el("div", "row", "选一个正在跑的节点，这里显示它到这一刻的输出"));
+    return;
+  }
+  if (livePending) return; // 上一次还没回来，不叠加请求
+  livePending = true;
+  try {
+    const d = await api(`/execution?id=${encodeURIComponent(liveFor)}`);
+    if (liveFor === null) return; // 期间换了选中项
+    const live = d.live;
+    if (live === undefined) {
+      box.replaceChildren(el("div", "row", "这次执行已经结束 —— 看 $exec"));
+      return;
+    }
+    if (!live.available) {
+      // **读不到 ≠ 没输出** —— 原因照实说
+      box.replaceChildren(el("div", "row", live.why));
+      return;
+    }
+    if (live.entries.length === 0) {
+      box.replaceChildren(el("div", "row", "还没有输出"));
+      return;
+    }
+    box.replaceChildren(
+      ...live.entries.map((e) => {
+        const { seq, op, ...rest } = e;
+        const row = el("div", "row");
+        row.append(
+          el("span", "seq", `#${seq}`),
+          el("span", "who", op),
+          el("span", "", JSON.stringify(rest)),
+        );
+        return row;
+      }),
+    );
+  } catch (e) {
+    box.replaceChildren(el("div", "row", `读不到：${e.message}`));
+  } finally {
+    livePending = false;
+  }
+}
+
+// 现场自己的节拍：场景不变不代表 agent 没在动
+setInterval(() => {
+  if (liveFor !== null) void renderLive();
+}, 1000);
 
 /* ── 渲染：CSS 管嵌套，SVG 管连线 ─────────────────────────────────── */
 const childrenOf = (id) => scene.cells.filter((c) => c.parent === id);
