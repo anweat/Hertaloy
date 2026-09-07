@@ -21,7 +21,7 @@ it("完整干跑与注册携带相同字段错误，拒绝后没有新版本", (
   const checked = call("validate_template", args);
   const written = call("define_template", args);
   expect(checked).toHaveProperty("data.valid", false);
-  expect(written).toHaveProperty("data.issues", (checked as { data: { issues: unknown } }).data.issues);
+  expect(written.data).toEqual(checked.data);
   const s = RunState.open(dir, { readOnly: true });
   try { expect(s.store.appendCount).toBe(0); } finally { s.close(); }
 });
