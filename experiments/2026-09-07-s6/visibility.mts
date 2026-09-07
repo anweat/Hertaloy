@@ -1,7 +1,7 @@
 /** 无模型调用的可见性实验。--interactive 等待门文件，便于浏览器观察各阶段。 */
 import { strict as assert } from "node:assert";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,9 @@ import { RunState } from "../../packages/state/src/run-state.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
+const outputFlag = process.argv.indexOf("--output-dir");
+const output = outputFlag < 0 ? here : resolve(process.argv[outputFlag + 1] ?? here);
+mkdirSync(output, { recursive: true });
 const dir = mkdtempSync(join(tmpdir(), "hertaloy-s6-visibility-"));
 const interactive = process.argv.includes("--interactive");
 const HUMAN = { kind: "human", id: "local" } as const;
@@ -100,7 +103,7 @@ const get = async (path: string) => {
   return r.json();
 };
 const info = { dir, url: `http://127.0.0.1:${port}/` };
-writeFileSync(join(here, "session.json"), JSON.stringify(info, null, 2));
+writeFileSync(join(output, "session.json"), JSON.stringify(info, null, 2));
 console.log(JSON.stringify(info));
 const results: Record<string, unknown> = { baseline: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), mode: "real Node + LocalRunner + CLI process + HTTP", paidModelCalls: 0 };
 try {
@@ -181,7 +184,7 @@ try {
   try { state.runtime.checkInvariants(); } finally { state.close(); }
   results.invariants = "passed";
   results.validation = invalid.data;
-  writeFileSync(join(here, "results.json"), JSON.stringify(results, null, 2));
+  writeFileSync(join(output, "results.json"), JSON.stringify(results, null, 2));
   if (process.argv.includes("--hold-result")) await waitFor("stop", () => existsSync(join(dir, "stop")), 15 * 60 * 1000);
   await gate("stop");
   console.log("PASS visibility experiment");

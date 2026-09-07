@@ -385,6 +385,7 @@ MCP 的校验、注册和上述新增查询同时提供 `structuredContent`。
 渲染时需要保留这些区别：
 
 - `Cell.lifecycle` 是实例 OPEN/TERMINAL；`phase` 是节点当前执行相位。TERMINAL 不表示执行成功。
+- agent 的相位关联 `Cell.execution`；同步节点通过 `Cell.result.message.{id,available}` 和可选的 `commit` 精确引用追溯证据。首次失败也有消息入口；消息已回收时不能当作尚未运行，成功提交仍可用 `/object` 读取。
 - `coverage` 是结构覆盖率；`progress` 是 agent 自报进度，可带 note。`progressUnavailable` 表示采集格式非法。
 - 执行 `live.available:false` 表示现场不可读；可读且 entries 为空才是尚无日志。现场给最近 20 条 journal，需配置与执行一致的 runner；它不是任意外部 CLI 的完整 stdout 流。
 - 重试成功后 `message.state` 可以是 CONSUMED，同时仍带 `lastFailure`。后者是历史，不是当前失败。
@@ -393,3 +394,4 @@ MCP 的校验、注册和上述新增查询同时提供 `structuredContent`。
 - 每条新场景连接的首帧都从空场景重建；401/403 停止自动重连并提示刷新。对象与模板正文按精确 ref 查询，保持与所选执行关联。
 
 本轮可复现实验及验收边界见 [S6 可见性实验](./experiments/2026-09-07-s6/README.md)。
+外部第十轮改动后的复验见 [可见性复审](./experiments/2026-09-07-visibility-review/README.md)。

@@ -47,18 +47,19 @@ V5 的第一性变化是：容器成为实例，资产归约为变量，跨网�
 
 ```
 packages/contracts    68 条   身份/路径/变量/端口/消息/契约/模板/执行面/权限/资源
-packages/kernel      310 条   store · tx · instances · obligations · aliases · context · extract · routing · runtime · control
+packages/kernel      314 条   store · tx · instances · obligations · aliases · context · extract · routing · runtime · control
 packages/sandbox     199 条   契约目录 · runner(local/wsl/docker) · 出网 · git 观察 · profile · 资源
-packages/state        85 条   对象落盘 · 可变头 · 目录锁 · 权限/资源文件 · claim 耐久性
-packages/cli         195 条   状态命令 · 模板/操作反馈 · agent · JSON 契约 · 驱动排他
+packages/state        87 条   对象落盘 · 可变头 · 目录锁 · 权限/资源文件 · claim 耐久性
+packages/cli         198 条   状态命令 · 模板/操作反馈 · agent · JSON 契约 · 驱动排他
 packages/mcp          19 条   13 个工具 · 授权 · 结构化注册校验 · 失败持久化
-packages/scene        60 条   层积渲染的纯函数投影
-合计                 936 条   929 passed / 7 skipped（Docker daemon 未运行）
+packages/scene        66 条   层积渲染的纯函数投影
+合计                 951 条   944 passed / 7 skipped（Docker daemon 未运行）
 ```
 
 以上为 2026-09-07 Windows + WSL 环境实测；test、typecheck、reachability 均退出 0，203 个导出无孤儿。
 批次证据和未完成项见 [ITERATION.md](./ITERATION.md)。
 S4–S6 的信息反馈已接通，真实本地执行与浏览器验证见 [可见性实验](./experiments/2026-09-07-s6/README.md)；前端布局仍是实验原型。
+最新外部改动后的检查与补充见 [第十一轮可见性复审](./experiments/2026-09-07-visibility-review/README.md)。
 
 **上手看 [DEVELOPING.md](./DEVELOPING.md)** —— 每一条都对应一次真踩过的坑。
 
