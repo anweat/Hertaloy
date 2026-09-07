@@ -14,6 +14,8 @@ import { RunState, writePermissions } from "@nodeflow/state";
 import {
   authz,
   drain,
+  execution,
+  message,
   history,
   permissions,
   resources,
@@ -433,5 +435,49 @@ describe("★ templates：配置流", () => {
     const r = templates(dir, AGENT);
     expect(r.code).toBe(1);
     expect(r.text).toMatch(/拒绝/);
+  });
+});
+
+/**
+ * ★ 详情查询（S4）：从节点追到失败、消息与产物，四种"没有"分开。
+ */
+describe("★ 详情查询", () => {
+  it("★ status 的 data 给结构化义务，中文只留在 text 里", () => {
+    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    const r = status(dir, HUMAN);
+    const data = r.data as { instances: { blockers: { kind: string; key: string }[] }[] };
+    const blockers = data.instances[0]?.blockers ?? [];
+    expect(blockers.length).toBeGreaterThan(0);
+    // 机器读的那份是结构化的
+    expect(blockers[0]).toHaveProperty("kind");
+    expect(blockers[0]).toHaveProperty("key");
+    // 人看的那份仍然是中文，但它在 text 里
+    expect(r.text).toMatch(/阻塞/);
+  });
+
+  it("消息详情：端点、来源、因果都在", () => {
+    const sent = send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    const id = (sent.data as { messageId: string }).messageId;
+    const r = message(dir, HUMAN, id);
+    expect(r.code).toBe(0);
+    const d = r.data as { message: { target: { node: string } }; causes: string[] };
+    expect(d.message.target.node).toBe("gate");
+    // 人投的：来源是图外
+    expect(r.text).toMatch(/图外/);
+    expect(d.causes).toEqual([]);
+  });
+
+  it("★ 不存在的 id → 说清是哪个没找到，不是空结果", () => {
+    expect(message(dir, HUMAN, "msg-999").text).toMatch(/没有消息 msg-999/);
+    expect(execution(dir, HUMAN, "exec-999").text).toMatch(/没有 execution exec-999/);
+  });
+
+  it("★ 无权主体 → 拒绝，而且与「没有」分不出来", () => {
+    const a = message(dir, AGENT, "msg-999");
+    expect(a.code).toBe(1);
+    expect(a.text).toMatch(/拒绝/);
+    // 存在的那条也是同一个答案 —— 存在性不是泄漏面
+    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    expect(message(dir, AGENT, "msg-1").text).toMatch(/拒绝/);
   });
 });

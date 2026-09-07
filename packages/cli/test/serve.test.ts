@@ -268,3 +268,41 @@ describe("★ 流：先授权再写头，失败要收口（F01）", () => {
     await res.body?.cancel();
   });
 });
+
+/**
+ * ★ HTTP 的详情三口（S4）——「CLI 与 HTTP 语义一致」。
+ *
+ * 同一件事在两个渠道要给同一个答案：无权都是 403、没有都是 400 并说清是哪个 id。
+ */
+describe("★ 详情出口与 CLI 语义一致", () => {
+  it("/status 给运行摘要，blockers 是结构化的", async () => {
+    const body = (await (await withToken("/status")).json()) as {
+      root: string;
+      instances: { blockers: unknown[] }[];
+    };
+    expect(body.root).toBe("job-1");
+    expect(Array.isArray(body.instances[0]?.blockers)).toBe(true);
+  });
+
+  it("/execution 与 /message：缺 id 是 400，不存在的 id 也说得清", async () => {
+    expect((await withToken("/execution")).status).toBe(400);
+    const miss = await withToken("/message?id=msg-999");
+    expect(miss.status).toBe(400);
+    expect(((await miss.json()) as { error: string }).error).toMatch(/msg-999/);
+  });
+
+  it("★ 无权主体在三个口上都是 403 —— 与 /scene 同一个答案", async () => {
+    const noRights = await listen({ dir, actor: AGENT, intervalMs: 30 });
+    try {
+      const at = (p: string) =>
+        fetch(`http://127.0.0.1:${noRights.port()}${p}`, {
+          headers: { "x-hertaloy-token": noRights.token },
+        });
+      expect((await at("/status")).status).toBe(403);
+      expect((await at("/execution?id=exec-1")).status).toBe(403);
+      expect((await at("/message?id=msg-1")).status).toBe(403);
+    } finally {
+      await noRights.close();
+    }
+  });
+});

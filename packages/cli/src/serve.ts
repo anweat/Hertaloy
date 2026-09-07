@@ -41,7 +41,15 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Principal } from "@nodeflow/contracts";
-import { authz, scene, templates, watchScene } from "./state-commands.js";
+import {
+  authz,
+  execution,
+  message,
+  scene,
+  status,
+  templates,
+  watchScene,
+} from "./state-commands.js";
 
 export interface ServeOptions {
   readonly dir: string;
@@ -117,6 +125,31 @@ function createServer(options: ServeOptions): ServeHandle {
       case "/templates":
         fromCommand(res, templates(options.dir, options.actor, scope));
         return;
+      /**
+       * 详情三口。都按 id 取，授权在 ControlPlane 那层按目标的 traceid 判 ——
+       * 无权与"没有"分不出来是有意的（见 `ControlPlane.execution`）。
+       */
+      case "/status":
+        fromCommand(res, status(options.dir, options.actor));
+        return;
+      case "/execution": {
+        const id = url.searchParams.get("id");
+        if (id === null) {
+          sendJson(res, 400, { error: "缺少 id 参数" });
+          return;
+        }
+        fromCommand(res, execution(options.dir, options.actor, id));
+        return;
+      }
+      case "/message": {
+        const id = url.searchParams.get("id");
+        if (id === null) {
+          sendJson(res, 400, { error: "缺少 id 参数" });
+          return;
+        }
+        fromCommand(res, message(options.dir, options.actor, id));
+        return;
+      }
       case "/authz": {
         const n = Number(url.searchParams.get("limit") ?? "50");
         fromCommand(res, authz(options.dir, options.actor, Number.isFinite(n) ? n : 50));

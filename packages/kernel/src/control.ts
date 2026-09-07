@@ -24,6 +24,7 @@ import {
   type TraceId,
 } from "@nodeflow/contracts";
 import { AuthorizationError, InvariantError } from "./errors.js";
+import type { Obligation } from "./obligations.js";
 import type { AuthzLog } from "./authz-log.js";
 
 import {
@@ -210,6 +211,55 @@ export class ControlPlane {
   blockers(actor: Principal, trace: TraceId): readonly string[] {
     this.#authorize(actor, "query", trace);
     return this.#runtime.terminationBlockers(trace);
+  }
+
+  /**
+   * 未了结的义务 —— **结构化的那一份**。
+   *
+   * `blockers` 一直只给中文文案，而那份文案同时被当成了 `status --json` 的
+   * 机器数据（审核指出：不能把中文字符串当机器协议）。
+   *
+   * 但结构化的形式**不是缺的东西** —— `Obligation` 本来就是
+   * `{kind, holder, waitingOn, key, originNode}`，中文那份只是它的渲染。
+   * 缺的是带授权的出口。这跟 `exportSnapshot` 曾经零调用方是同一个形状：
+   * 事实在，路没通。
+   */
+  obligations(actor: Principal, trace: TraceId): readonly Obligation[] {
+    this.#authorize(actor, "query", trace);
+    return this.#runtime.obligations(trace);
+  }
+
+  /**
+   * 按 id 查一次执行。
+   *
+   * `executionId` 是 `exec-1` 这种**每个 run 从 1 起**的号，不带 traceid，
+   * 而授权按 traceid 前缀判。所以顺序只能是：先找到记录 → 拿它的 traceid → 授权。
+   *
+   * **找不到时按根授权**：这样一个只有子树权限的主体去探别人子树里的 id，
+   * 拿到的是"无权"而不是"没有" —— 否则存在性本身成了泄漏面。代价是无权时
+   * 分不出"没有"和"没权限"，而那正是应该的。
+   */
+  execution(actor: Principal, executionId: string): ExecutionRecord | undefined {
+    const found = this.#runtime.records().find((r) => r.executionId === executionId);
+    const target = found?.traceid ?? this.#registry.rootTrace ?? executionId;
+    this.#authorize(actor, "query", target);
+    // **缺席是答复，不是异常**：`InvariantError` 是给"不变量被破"用的，
+    // 而"你查的 id 不存在"是一个正常结果，该由调用方决定怎么呈现。
+    return found;
+  }
+
+  /** 按 id 查一条消息。授权规则与 `execution` 同（见那条的说明）。 */
+  message(actor: Principal, messageId: string): Message | undefined {
+    const found = this.#runtime.messages().find((m) => m.id === messageId);
+    const target = found?.target.traceid ?? this.#registry.rootTrace ?? messageId;
+    this.#authorize(actor, "query", target);
+    return found;
+  }
+
+  /** 某实例的提交快照（因果权威）。按 trace 授权。 */
+  snapshots(actor: Principal, trace: TraceId): readonly ObjectVersion[] {
+    this.#authorize(actor, "query", trace);
+    return this.#runtime.snapshots(trace);
   }
 
   messages(actor: Principal, trace: TraceId): readonly Message[] {

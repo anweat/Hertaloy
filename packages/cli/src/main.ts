@@ -33,6 +33,8 @@ import {
   resources,
   send,
   authz,
+  execution as executionCmd,
+  message as messageCmd,
   scene as sceneCmd,
   templates as templatesCmd,
   watchScene,
@@ -57,6 +59,8 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy init    <dir> <scenario.json>        从场景文件建一个持久化的 run
   hertaloy status  <dir>                        实例树 / 阻塞原因 / 在途消息 / 死锁
   hertaloy show    <dir> <object-id[@n]>        读一个对象版本
+  hertaloy execution <dir> <execution-id>       一次执行：状态、观测、产物
+  hertaloy message <dir> <message-id>           一条消息：端点、尝试、失败、因果
   hertaloy authz   <dir> [条数]                 授权决策流水（谁做了什么，含被拒的）
   hertaloy serve   <dir> [--port N] [--interval 毫秒]   起只读观测服务 + 画布
        只绑 127.0.0.1，主体在启动时定死（--as），一次性 token 走 header
@@ -106,6 +110,10 @@ ${USAGE}`, code: 2 } : null;
   switch (command) {
     case "status":
       return need(1) ?? status(dir as string, actor);
+    case "execution":
+      return need(2) ?? executionCmd(dir as string, actor, a as string);
+    case "message":
+      return need(2) ?? messageCmd(dir as string, actor, a as string);
     case "authz":
       return need(1) ?? authz(dir as string, actor, a === undefined ? undefined : Number(a));
     case "serve": {

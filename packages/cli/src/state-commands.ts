@@ -237,12 +237,25 @@ export function status(dir: string, actor: Principal): CommandResult {
       root,
       permissions: s.permissions.source,
       dirLocks: dirLocks.map((l) => ({ name: l.name, pid: l.pid, since: l.since })),
+      /**
+       * `data` 里给**结构化**义务，中文那份只留在 `text` 里。
+       *
+       * 原来两边都是 `blockers` 的中文字符串 —— 而那是给人看的渲染，
+       * 不该被当成机器协议（审核指出）。结构化的形式不是缺的东西：
+       * `Obligation` 本来就是 `{kind, holder, waitingOn, key, originNode}`，
+       * 缺的只是带授权的出口，现在补上了。
+       */
       instances: subtree.map((i) => ({
         traceid: i.traceid,
         status: i.status,
         seq: i.seq,
         generation: i.generation,
-        blockers: [...control.blockers(actor, i.traceid)],
+        blockers: control.obligations(actor, i.traceid).map((o) => ({
+          kind: o.kind,
+          key: o.key,
+          ...(o.waitingOn === undefined ? {} : { waitingOn: o.waitingOn }),
+          ...(o.originNode === undefined ? {} : { originNode: o.originNode }),
+        })),
       })),
       locks: locks.map((l) => ({
         kind: l.kind,
@@ -273,6 +286,110 @@ export function show(dir: string, actor: Principal, ref: string): CommandResult 
     } catch (error) {
       return fail((error as Error).message);
     }
+  });
+}
+
+/**
+ * 一次执行的详情 —— 从节点追到失败、观测与产物。
+ *
+ * 四种"没有"分开表达（审核要求）：
+ *
+ *   无权          `拒绝：…`，理由照抄授权表的说明
+ *   从来没有过     `没有 execution …`
+ *   有过但没采集   记录在，`observation` 缺席并说明为什么
+ *   有过但已回收   沙箱那侧由 `retained` 与实际存在与否共同回答
+ *
+ * 无权与"没有"分不出来是**有意的**：否则存在性本身成了泄漏面（见
+ * `ControlPlane.execution` 的说明）。
+ */
+export function execution(dir: string, actor: Principal, executionId: string): CommandResult {
+  return readOnly(dir, (s) => {
+    const record = s.control.execution(actor, executionId);
+    // 从来没有过 —— 与"无权"分开：无权在上面就抛了（拒绝路径）
+    if (record === undefined) return fail(`没有 execution ${executionId}`);
+
+    // 观测：`<traceid>/$exec` 的历史里找本次那一版
+    const observation = s.control
+      .history(actor, `${record.traceid}/$exec`)
+      .find((v) => (v.body as { execution_id?: string }).execution_id === executionId);
+
+    // 产物：provenance 记着是哪次执行写的 —— 不靠名字猜
+    const artifacts = s.store
+      .appended(0)
+      .filter((v) => v.provenance.execution_id === executionId)
+      .map((v) => ({ ref: `${v.object_id}@${String(v.version)}`, kind: v.kind }));
+
+    const lines = [
+      `${record.executionId}  ${record.traceid}/${record.nodeId}`,
+      `  状态 ${record.status}${record.termination === undefined ? "" : ` · ${record.termination}`}` +
+        `  generation ${String(record.generation)}`,
+      `  消费的消息：${record.claimed.join("、") || "（无）"}`,
+      observation === undefined
+        ? "  观测：未采集（这次执行没有留下 $exec —— backend 没给 diagnostics）"
+        : `  观测：${record.traceid}/$exec@${String(observation.version)}（\`show\` 看详情）`,
+      `  产物 ${String(artifacts.length)} 个${artifacts.length === 0 ? "" : `：${artifacts.map((a) => a.ref).join("、")}`}`,
+    ];
+    return ok(lines.join("\n"), {
+      execution: {
+        executionId: record.executionId,
+        traceid: record.traceid,
+        nodeId: record.nodeId,
+        status: record.status,
+        ...(record.termination === undefined ? {} : { termination: record.termination }),
+        generation: record.generation,
+        claimed: [...record.claimed],
+        ...(record.usage === undefined ? {} : { usage: record.usage }),
+      },
+      observation:
+        observation === undefined
+          ? { available: false, why: "未采集：这次执行没有留下 $exec" }
+          : { available: true, ref: `${record.traceid}/$exec@${String(observation.version)}` },
+      artifacts,
+    } as never);
+  });
+}
+
+/**
+ * 一条消息的详情 —— 端点、尝试、失败原因、因果。
+ *
+ * `failure` 与 `attempts` 是**历史痕迹**：一条重试后成功的消息仍然留着上次的
+ * 失败说明。所以这里把「当前状态」与「历史失败」分成两个字段，
+ * 而不是把 failure 直接当成当前结论（审核特别点名的那条）。
+ */
+export function message(dir: string, actor: Principal, messageId: string): CommandResult {
+  return readOnly(dir, (s) => {
+    const m = s.control.message(actor, messageId);
+    if (m === undefined) return fail(`没有消息 ${messageId}`);
+    const causes = s.control.causesOf(actor, s.registry.rootTrace ?? messageId, messageId);
+    const settled = m.state !== "QUEUED" && m.state !== "CLAIMED";
+    const lines = [
+      `${m.id}  →  ${m.target.traceid}/${m.target.node}.${m.target.port}`,
+      `  状态 ${m.state}${m.attempts > 0 ? `  已试 ${String(m.attempts)} 次` : ""}`,
+      m.source === undefined
+        ? "  来源：图外（人 / CLI 投的）"
+        : m.source.node === undefined
+          ? `  来源：实例 ${m.source.traceid} 的生命周期信号`
+          : `  来源：${m.source.traceid}/${m.source.node}.${m.source.port ?? "?"}`,
+      ...(m.failure === undefined
+        ? []
+        : [`  历史失败：${m.failure}${settled ? "" : "（当前仍在途 —— 这是上一次尝试留下的）"}`]),
+      `  由 ${causes.length} 条消息导致${causes.length === 0 ? "" : `：${causes.join("、")}`}`,
+    ];
+    return ok(lines.join("\n"), {
+      message: {
+        id: m.id,
+        target: m.target,
+        state: m.state,
+        attempts: m.attempts,
+        ...(m.source === undefined ? {} : { source: m.source }),
+        ...(m.alias === undefined ? {} : { alias: m.alias }),
+        ...(m.requestId === undefined ? {} : { requestId: m.requestId }),
+      },
+      // 与当前状态分开 —— 重试成功之后它仍然在，但它说的是上一次
+      ...(m.failure === undefined ? {} : { lastFailure: m.failure }),
+      payload: m.payload,
+      causes: [...causes],
+    } as never);
   });
 }
 
