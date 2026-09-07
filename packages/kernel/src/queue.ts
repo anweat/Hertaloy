@@ -111,14 +111,29 @@ export class MessageQueue implements Snapshotable {
     return this.#order.map((id) => this.#messages.get(id) as Message);
   }
 
-  /** 还在排队的（`QUEUED`）。调度从这里取活。 */
+  /**
+   * 还在排队的（`QUEUED`）。调度从这里取活。
+   *
+   * 直接按投递顺序挑，**不先 `all()` 物化整张表再过滤** —— `#pickWork`
+   * 每一步都调它，中间那个 M 长数组是纯浪费（M 条消息 ⇒ M 步 ⇒ M² 次分配）。
+   */
   queued(): readonly Message[] {
-    return this.all().filter((m) => m.state === "QUEUED");
+    return this.#select((m) => m.state === "QUEUED");
   }
 
   /** 某实例名下还会动的消息（`QUEUED` / `CLAIMED`）。 */
   liveFor(trace: TraceId): readonly Message[] {
-    return this.all().filter((m) => m.target.traceid === trace && isLive(m));
+    return this.#select((m) => m.target.traceid === trace && isLive(m));
+  }
+
+  /** 按投递顺序筛，只分配结果那一份。 */
+  #select(keep: (m: Message) => boolean): readonly Message[] {
+    const out: Message[] = [];
+    for (const id of this.#order) {
+      const m = this.#messages.get(id) as Message;
+      if (keep(m)) out.push(m);
+    }
+    return out;
   }
 
   setState(id: string, state: MessageState, failure?: string): void {
