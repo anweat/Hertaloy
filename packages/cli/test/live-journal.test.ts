@@ -14,6 +14,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "@nodeflow/state";
@@ -102,10 +103,20 @@ it("沙箱不在（已回收 / 配错 workRoot）也是读不到，不是空", (
   // 不建沙箱，直接查
   const r = execution(dir, HUMAN, rec.executionId, "local");
   const d = r.data as { live: { available: boolean; entries?: unknown[]; why?: string } };
-  // readJournal 对不存在的目录返回空数组 —— 于是这里是"能定位但没内容"
-  expect(d.live.available).toBe(true);
-  expect(d.live.entries).toEqual([]);
-  expect(r.text).toContain("还没有输出");
+  expect(d.live.available).toBe(false);
+  expect(d.live.why).toContain("读不到");
+  expect(r.text).not.toContain("还没有输出");
+});
+
+it("真实 CLI 把 --runner 传给现场查询", () => {
+  const rec = claimOne();
+  const runner = new LocalRunner(join(dir, "sandboxes"));
+  createSandbox(runner.allocate(`${rec.traceid}/${rec.nodeId}/${rec.executionId}`));
+  const output = execFileSync(process.execPath, [
+    "--import", "tsx", "src/main.ts", "execution", dir, rec.executionId,
+    "--runner", "local", "--json",
+  ], { encoding: "utf8" });
+  expect(JSON.parse(output).live).toEqual({ available: true, entries: [] });
 });
 
 it("已结束的执行不查现场 —— 那时该看 $exec", () => {

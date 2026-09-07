@@ -352,7 +352,10 @@ function liveJournal(
   }
   try {
     const root = runner.locate(`${record.traceid}/${record.nodeId}/${record.executionId}`);
-    const entries = readJournal(sandboxPaths(root));
+    const paths = sandboxPaths(root);
+    // readJournal 为结算容忍目录缺席；观察接口不能把缺席解释成空现场。
+    readdirSync(paths.journal);
+    const entries = readJournal(paths);
     return { available: true, entries: entries.slice(-LIVE_WINDOW) };
   } catch (error) {
     return { available: false, why: `读不到沙箱现场：${(error as Error).message}` };

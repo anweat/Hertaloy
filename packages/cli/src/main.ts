@@ -113,10 +113,9 @@ ${USAGE}`, code: 2 } : null;
     case "status":
       return need(1) ?? status(dir as string, actor);
     case "execution": {
-      const at = args.indexOf("--runner");
       return (
         need(2) ??
-        executionCmd(dir as string, actor, a as string, at === -1 ? undefined : args[at + 1])
+        executionCmd(dir as string, actor, a as string, runner)
       );
     }
     case "message":

@@ -249,11 +249,14 @@ function renderDetail() {
   if (cell === undefined) {
     body.textContent = selected === null ? "点任意一个容器 / 子槽 / 节点" : `${selected}（已不在视口里）`;
     liveFor = null;
+    renderLive();
     return;
   }
   body.textContent = JSON.stringify(detailOf(cell), null, 2);
   // 选中的是**正在跑**的节点，就把现场也盯上
-  liveFor = cell.phase === "running" && cell.execution ? cell.execution : null;
+  const next = cell.phase === "running" && cell.execution ? cell.execution : null;
+  if (liveFor !== next) document.getElementById("live-body").replaceChildren(el("div", "row", "读取中…"));
+  liveFor = next;
   renderLive();
 }
 
@@ -274,10 +277,11 @@ async function renderLive() {
     return;
   }
   if (livePending) return; // 上一次还没回来，不叠加请求
+  const requested = liveFor;
   livePending = true;
   try {
-    const d = await api(`/execution?id=${encodeURIComponent(liveFor)}`);
-    if (liveFor === null) return; // 期间换了选中项
+    const d = await api(`/execution?id=${encodeURIComponent(requested)}`);
+    if (liveFor !== requested) return; // 期间换了选中项
     const live = d.live;
     if (live === undefined) {
       box.replaceChildren(el("div", "row", "这次执行已经结束 —— 看 $exec"));
@@ -305,7 +309,7 @@ async function renderLive() {
       }),
     );
   } catch (e) {
-    box.replaceChildren(el("div", "row", `读不到：${e.message}`));
+    if (liveFor === requested) box.replaceChildren(el("div", "row", `读不到：${e.message}`));
   } finally {
     livePending = false;
   }
