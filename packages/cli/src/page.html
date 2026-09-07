@@ -520,7 +520,13 @@ async function consume() {
     let touched = false;
     for (const l of lines) {
       if (l.length === 0) continue;
-      apply(JSON.parse(l));
+      const frame = JSON.parse(l);
+      /**
+       * 服务端在流**中途**失败时会发一帧 `{error}` 再收口（头已经是 200，
+       * 状态码改不回来了）。把它当差量合并进去只会污染场景，所以单独认。
+       */
+      if (frame.error !== undefined) throw new Error(frame.error);
+      apply(frame);
       touched = true;
     }
     if (!touched) continue;

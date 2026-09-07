@@ -213,3 +213,58 @@ describe("★ /scene/stream：差量流", () => {
     for (const l of lines) expect(() => JSON.parse(l) as unknown).not.toThrow();
   }, 20_000);
 });
+
+/**
+ * ★ 流的授权与失败收口（审核 F01）。
+ *
+ * 原实现两处错：
+ *
+ *   1. `res.writeHead(200)` 排在授权**之前** —— 同一个无权主体 `GET /scene`
+ *      是 403，`GET /scene/stream` 却是 200。头一旦写出去就改不了状态码了。
+ *   2. `void watchScene(...)` 没有 `.catch()` —— 授权抛出变成**未处理的
+ *      Promise rejection**，整个观测服务以 code=1 退出。
+ *
+ * 第二条尤其要紧：**一次被拒的读取把服务打死了**，而拒绝本身是正常答复。
+ */
+describe("★ 流：先授权再写头，失败要收口（F01）", () => {
+  it("★ 无权主体的流也是 403 —— 与 /scene 同一个答案", async () => {
+    const noRights = await listen({ dir, actor: AGENT, intervalMs: 30 });
+    try {
+      const one = await fetch(`http://127.0.0.1:${noRights.port()}/scene`, {
+        headers: { "x-hertaloy-token": noRights.token },
+      });
+      const stream = await fetch(`http://127.0.0.1:${noRights.port()}/scene/stream`, {
+        headers: { "x-hertaloy-token": noRights.token },
+      });
+      expect(one.status).toBe(403);
+      expect(stream.status).toBe(403);
+      await stream.body?.cancel();
+    } finally {
+      await noRights.close();
+    }
+  });
+
+  it("★ 被拒之后服务还活着 —— 拒绝是正常答复，不是故障", async () => {
+    const noRights = await listen({ dir, actor: AGENT, intervalMs: 30 });
+    try {
+      const first = await fetch(`http://127.0.0.1:${noRights.port()}/scene/stream`, {
+        headers: { "x-hertaloy-token": noRights.token },
+      });
+      await first.body?.cancel();
+      // 还能继续答复 —— 原来这里进程已经带着 code=1 退了
+      const again = await fetch(`http://127.0.0.1:${noRights.port()}/scene`, {
+        headers: { "x-hertaloy-token": noRights.token },
+      });
+      expect(again.status).toBe(403);
+    } finally {
+      await noRights.close();
+    }
+  });
+
+  it("有权主体照常拿到流", async () => {
+    const res = await withToken("/scene/stream");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("ndjson");
+    await res.body?.cancel();
+  });
+});

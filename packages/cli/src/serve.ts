@@ -123,6 +123,19 @@ function createServer(options: ServeOptions): ServeHandle {
         return;
       }
       case "/scene/stream": {
+        /**
+         * **先授权，再写头。**
+         *
+         * 原来 `writeHead(200)` 排在最前面，于是同一个无权主体 `GET /scene`
+         * 是 403、`GET /scene/stream` 却是 200 —— 头一旦写出去就改不了状态码。
+         * 这里先算一帧（走的是同一条带授权的路），拒绝就按普通答复回。
+         */
+        const preflight = scene(options.dir, options.actor, scope);
+        if (preflight.code !== 0) {
+          fromCommand(res, preflight);
+          return;
+        }
+
         res.writeHead(200, {
           "content-type": "application/x-ndjson; charset=utf-8",
           "cache-control": "no-store",
@@ -139,9 +152,25 @@ function createServer(options: ServeOptions): ServeHandle {
             if (!res.writableEnded) res.write(`${line}\n`);
           },
           abort.signal,
-        ).finally(() => {
-          if (!res.writableEnded) res.end();
-        });
+        )
+          /**
+           * **流里失败也要收口。**
+           *
+           * 原来是 `void watchScene(...)` 没有 catch —— 抛出变成未处理的
+           * Promise rejection，整个观测服务以 code=1 退出。**一次被拒的读取
+           * 把服务打死了**，而拒绝本身是正常答复。
+           *
+           * 头已经是 200，改不回状态码；能做的是在流里说清再收口。
+           * 客户端按 `error` 字段识别 —— 普通帧没有这个键。
+           */
+          .catch((error: unknown) => {
+            if (res.writableEnded) return;
+            const text = error instanceof Error ? error.message : String(error);
+            res.write(`${JSON.stringify({ error: text })}\n`);
+          })
+          .finally(() => {
+            if (!res.writableEnded) res.end();
+          });
         return;
       }
       default:
