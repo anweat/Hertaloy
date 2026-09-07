@@ -401,3 +401,74 @@ S4 运行摘要与执行/消息/产物详情查询、S5 语义进度与日志采
 - 经用户明确允许，使用 Codex 内置浏览器验证日志自动追加、未实例化子槽定义、终态详情与产物正文、凭据失效提示及刷新恢复。最终页面另核实生命周期、覆盖率和观测/产物分离。实验监听已关闭，临时 run 留作排查证据。
 - S4/S5 复审与 S6 已完成。在本机只读观测及现有 CLI/MCP 操作范围内，基础可见性满足进入前端信息结构与交互设计讨论的要求；接口约定汇总到 [DEVELOPING.md 第 8 节](./DEVELOPING.md#8-前端信息反馈接口s4s6)。
 - 后续设计仍需明确 HTTP 写入与认证、全局模板目录和草稿、完整历史/日志回放，以及数据规模与保留上界；跨进程物理取消仍无承诺。旧页面只作为消费接口的实验载体，本轮不冻结前端设计。
+
+## 第十轮：内核复审 —— 一个真 bug、两套并存机制、一处二次成本
+
+通读 kernel 包（22 个文件 4858 行）之后逐条落地。基线 `0944dd2`。
+
+### 一、请求方被截断，代价落在服务方身上（`b574fc3`）
+
+`#truncate` 第 3 步删掉请求方名下的 `#pending`，而服务方还是 OPEN、入站请求
+还在队列里；它出货时 `lookupRequest` 拿到 undefined，排期整批判失败。归因错成
+"拒绝重复回复"，而且 **agent 服务方按 INVALID_OUTPUT 重跑三次** —— 对一个
+永远不会变好的条件付三次模型钱。
+
+那条拒绝里塞着两种读法，只有"已作废"到得了；"已回复"不可构造（一条 requestId
+只挂一条消息，commit 成功即 CONSUMED，重试意味着上次没 commit、条目还在）。
+改成 `dangling`，与本函数里"PUBLISH 零订阅者"同一个判法。对称的那半（服务方
+被截断→代发 `unavailable`）早就修好了，这次补的是反方向。
+
+### 二、同步 handler 的相位不再永远 idle（`b28ae6c`）
+
+`ExecutionRecord` 只覆盖 agent 节点，那是内核对的地方；错的是把"没有记录"
+读成 idle —— idle 是一句正面断言。事实一直在 `$run`（成功）与 FAILED 消息
+（失败）里，两处都耐久。新增 `RunSnapshot.commits`（每个节点最后一次提交），
+`phaseOfNode` 按投递顺序判定。`Phase` 一个值都没加。
+
+### 三、删掉没有读者的字段与重复实现（`3faa172`）
+
+`Message.inReplyTo`（§3.2 拒绝过的形状，换个名字活了下来）、
+`ContextOutcome.tokens`、`StagedRequest.generation` + `StageContext.generation`、
+`ControlPlane.snapshots`（`history(trace+"/$run")` 的薄别名）、
+`Runtime.record()` 的线性扫描、`#claim` 的死局部、四处 `#busy` 陈迹。
+
+未删并说明理由：`StepResult.dangling`（在第一条里成了"回复没有接收方"的唯一
+痕迹）、`drivingCount()`（我先前报成死方法是错的，测试里四处用到）、
+`CommitEvent`（注入缝，不是投影）。
+
+### 四、`Lock` 收进 `Obligation`（`5e026b4`）
+
+锁账本第八轮就删了，但**展示投影本身还是第二套词汇**，且已爬进机器协议：
+`status --json` 里 `blockers` 与 `locks` 是同一批事实的两种形状。全仓真读到的
+字段只有 `kind/holder/key/waitingOn`——`Obligation` 的真子集；`Lock.id` 与
+`since` 全链路无人读。删 `locks.ts`（115 行，生产价值 = 一个过滤谓词）。
+
+快照线上 `locks[]` → `obligations[]`，四种 kind 全给。`build.ts` 的筛法本来
+就是 `waitingOn === undefined` 就跳过 —— 一直在按字段有无判，那段一行没改。
+「阻塞锁」留作给人看的词，落在渲染层。
+
+顺带补上 `ControlPlane.deadlocks(actor, scope?)`：此前 `status` 直连
+`runtime.locks.deadlocks()`，不授权也不裁剪，子树主体能读到整棵树的等待环。
+
+### 五、drain 的二次成本（`634f5d0`）
+
+原题目是"事务内记一次义务派生"。先量了再改，量出来的不一样：
+`#template(ref)` 每次调用都全量 zod 解析，而 `#pickWork` 对每一步的每一条
+排队消息都调它 ⇒ M²/2 次解析，**1600 条消息 27 秒**。按 `ObjectVersion`
+对象记一份（键是内容本身，过期在结构上不可能）后 **36–42 倍**。
+
+一个被推翻的中间结论：同进程连跑两组互相污染，据此得出的"生产默认清理更慢"
+不成立，照它改的 `prune()` 门槛已撤回（而且那改动本身是错的）。
+数字、复现程序与这段更正在 [experiments/2026-09-07-perf](./experiments/2026-09-07-perf/README.md)。
+
+### 验收
+
+全量 **937 passed / 7 skipped**，7 个包 typecheck 通过，reachability 202 无孤儿。
+
+### 留着没做
+
+- `#pickWork` 每步扫一遍 `queued()`，drain 仍是二次（常数已小一个量级）。
+  压掉它要建 QUEUED 索引 —— 那是要维护的第二份状态。
+- `settleAll` 在 N 上二次（N=801 约 196ms），本轮没动。
+- `objectHeads` 规模上界（第四轮登记）。
+- 页面「执行现场与结果」仍以 `cell.execution` 为门，handler 节点进不去。
