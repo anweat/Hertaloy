@@ -31,6 +31,7 @@ it("结构化注册版本与运行定义闭包可由 MCP 消费", () => {
   expect(call("get_definitions", {})).toHaveProperty("data.root@1.usedBy", ["job-1"]);
   expect(call("define_template", { id: "new", spec: {} })).toHaveProperty("data.ref", "new@1");
   expect(call("get_definitions", {}, AGENT).isError).toBe(true);
+  expect(call("get_operations", {})).toHaveProperty("data.channel", "mcp");
 });
 
 function ctx(actor = HUMAN): ToolContext {

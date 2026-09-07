@@ -371,3 +371,10 @@ S4 运行摘要与执行/消息/产物详情查询、S5 语义进度与日志采
 - MCP `validate_template` 给 id 时完整校验，不给时保留本地校验并明示 unchecked；注册、校验与新增 `get_definitions` 返回 structuredContent。旧 `validate --json` 也有机器结果。
 - 注册返回实际 ref，干跑不预测或预留版本；正式注册仍重跑全部检查。HTTP 的读取异常收口到当前请求。
 - 验证：kernel 310/310，相关 CLI 41/41，MCP 19/19；CLI/kernel/MCP 类型检查通过。含四种非法草稿与注册拒绝一致、overlay、实际 CLI、HTTP 错误/超限/无 token、head 不变。
+
+### S6c：操作条件与通道反馈
+
+- CLI `operations`、HTTP `/operations`、MCP `get_operations` 返回同一份操作条件，明确 permission、available、reasons 与 requires。权限仍由 ControlPlane 判定。
+- 根作用域、终态、空端口/子槽、CLI 驱动锁与通道缺口分别编码；HTTP 写操作始终标为不可用。可用性只是当前条件预览，正式操作重新授权、检查参数及获取锁。
+- 实验页面显示所选实例的操作条件，保留模板与运行分离；现场/操作查询遇到凭据失效停止轮询，避免场景流停了侧栏仍空转。
+- 验证：CLI 模板/页面反馈 17/17，MCP 19/19，CLI/MCP typecheck 通过。覆盖 DQL-only 预览与拒绝注册、终态/子树/通道限制，以及 HTTP 配置损坏后恢复读取。

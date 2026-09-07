@@ -66,3 +66,14 @@ it("未实例化子槽的详情消费声明闭包，拉取失败后仍能补齐"
   expect(result.定义).toEqual({ nodes: { work: {} } });
   expect(result.使用实例).toEqual([]);
 });
+
+it("现场凭据失效后停止轮询，保留可操作的刷新提示", async () => {
+  const { ctx, elements } = page();
+  await runInContext(`
+    api = async () => { throw new Expired('凭据失效，请刷新'); };
+    liveFor = 'exec-1';
+    renderLive();
+  `, ctx);
+  expect(runInContext("liveFor", ctx)).toBeNull();
+  expect(JSON.stringify(elements.get("live-body"))).toContain("请刷新");
+});

@@ -8,7 +8,7 @@
 
 export { BUILTIN_HANDLERS, BUILTIN_NAMES } from "./builtins.js";
 export { validate, run } from "./commands.js";
-export { define, definitions, validateDefinition } from "./template-commands.js";
+export { define, definitions, operations, validateDefinition } from "./template-commands.js";
 export type { CommandResult } from "./state-commands.js";
 export {
   drain,

@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import { listen } from "./serve.js";
 import { join } from "node:path";
 import { run, validate } from "./commands.js";
-import { define, definitions, validateDefinition } from "./template-commands.js";
+import { define, definitions, operations, validateDefinition } from "./template-commands.js";
 import { nodeIO, openAiClient, runAgent, runExec, spawnRunner } from "./agent.js";
 import { diagnose, formatChecks } from "./doctor.js";
 import type { ExecutionBackend, Principal } from "@nodeflow/contracts";
@@ -71,6 +71,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy definitions <dir> [--scope <traceid>]  固定版本及声明依赖，含未实例化的子模板
   hertaloy validate-definition <dir> <id> <template.json> [kind]  完整干跑校验，--json 给字段错误
   hertaloy define <dir> <id> <template.json> [kind]  注册并返回实际精确 ref
+  hertaloy operations <dir> [--scope <traceid>]  当前权限、通道限制及待填参数
   hertaloy scene   <dir> [--scope <traceid>]    导出渲染用的场景 JSON
        加 --watch [--interval 毫秒] 持续输出**场景差量**（NDJSON，一行一帧）
        第一帧是与空场景的差量，所以流上只有一种形状；没变化的轮次不输出
@@ -171,6 +172,10 @@ ${USAGE}`, code: 2 } : null;
     case "definitions": {
       const at = args.indexOf("--scope");
       return need(1) ?? definitions(dir as string, actor, at === -1 ? undefined : args[at + 1]);
+    }
+    case "operations": {
+      const at = args.indexOf("--scope");
+      return need(1) ?? operations(dir as string, actor, at === -1 ? undefined : args[at + 1]);
     }
     case "templates": {
       const at = args.indexOf("--scope");

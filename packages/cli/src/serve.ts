@@ -41,7 +41,7 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Principal } from "@nodeflow/contracts";
-import { definitions, validateDefinition } from "./template-commands.js";
+import { definitions, operations, validateDefinition } from "./template-commands.js";
 import { z } from "zod";
 import {
   authz,
@@ -166,6 +166,9 @@ function createServer(options: ServeOptions): ServeHandle {
         return;
       case "/definitions":
         fromCommand(res, definitions(options.dir, options.actor, scope));
+        return;
+      case "/operations":
+        fromCommand(res, operations(options.dir, options.actor, scope, "http"));
         return;
       /**
        * 详情三口。都按 id 取，授权在 ControlPlane 那层按目标的 traceid 判 ——

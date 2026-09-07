@@ -135,6 +135,7 @@
     <div id="status">连接中…</div>
     <div class="sec" id="detail"><h2>配置</h2><pre id="detail-body">点任意一个容器 / 子槽 / 节点</pre></div>
     <div class="sec" id="live"><h2>执行中的现场</h2><div id="live-body">选一个正在跑的节点</div></div>
+    <div class="sec"><h2>操作条件（当前 HTTP 通道）</h2><pre id="operation-body">选一个实例或节点</pre></div>
     <div class="sec" id="legend"><h2>线型</h2><div id="legend-body"></div></div>
     <div class="sec" id="outside"><h2>图外来的（人 / CLI 投的）</h2><div id="outside-body"></div></div>
     <div class="sec" id="authz"><h2>授权流水</h2><div id="authz-body"></div></div>
@@ -150,6 +151,7 @@ async function api(path) {
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     const why = body && body.error ? body.error : res.status;
+    if (res.status === 401 || res.status === 403) throw new Expired(`${path}：${why}，请刷新页面`);
     throw new Error(`${path}：${why}`);
   }
   return body;
@@ -256,9 +258,15 @@ function renderDetail() {
     body.textContent = selected === null ? "点任意一个容器 / 子槽 / 节点" : `${selected}（已不在视口里）`;
     liveFor = null;
     renderLive();
+    operationFor = null;
+    renderOperations();
     return;
   }
   body.textContent = JSON.stringify(detailOf(cell), null, 2);
+  const nextScope = cell.kind === "instance" ? cell.id : cell.parent;
+  if (operationFor !== nextScope) document.getElementById("operation-body").textContent = "读取中…";
+  operationFor = nextScope;
+  renderOperations();
   // 选中的是**正在跑**的节点，就把现场也盯上
   const next = cell.phase === "running" && cell.execution ? cell.execution : null;
   if (liveFor !== next) document.getElementById("live-body").replaceChildren(el("div", "row", "读取中…"));
@@ -275,6 +283,25 @@ function renderDetail() {
  */
 let liveFor = null;
 let livePending = false;
+let operationFor = null;
+let operationPending = false;
+async function renderOperations() {
+  const box = document.getElementById("operation-body");
+  if (operationFor === null) { box.textContent = "选一个实例或节点"; return; }
+  if (operationPending) return;
+  const requested = operationFor;
+  operationPending = true;
+  try {
+    const data = await api(`/operations?scope=${encodeURIComponent(requested)}`);
+    if (operationFor === requested) box.textContent = JSON.stringify(data, null, 2);
+  } catch (error) {
+    if (operationFor === requested) {
+      box.textContent = `读不到：${error.message}`;
+      if (error instanceof Expired) operationFor = null;
+    }
+  } finally { operationPending = false; }
+}
+setInterval(() => { if (operationFor !== null) void renderOperations(); }, 5000);
 
 async function renderLive() {
   const box = document.getElementById("live-body");
@@ -315,7 +342,10 @@ async function renderLive() {
       }),
     );
   } catch (e) {
-    if (liveFor === requested) box.replaceChildren(el("div", "row", `读不到：${e.message}`));
+    if (liveFor === requested) {
+      box.replaceChildren(el("div", "row", `读不到：${e.message}`));
+      if (e instanceof Expired) liveFor = null;
+    }
   } finally {
     livePending = false;
   }
@@ -664,6 +694,8 @@ async function main() {
       if (e instanceof Expired) {
         // 页面里的 token 是加载时定死的，重连救不回来
         status(`${e.message} —— 服务可能重启过，请刷新页面`);
+        liveFor = null;
+        operationFor = null;
         return;
       }
       status(`断开：${e.message}，${Math.round(backoff / 100) / 10}s 后重连`);

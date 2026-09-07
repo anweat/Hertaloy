@@ -30,6 +30,7 @@ import {
   define as defineCommand,
   validateDefinition,
   definitions,
+  operations,
 } from "@nodeflow/cli";
 
 export interface ToolContext {
@@ -144,6 +145,16 @@ const getDefinitions: Tool = {
   schema: z.object({ scope: z.string().optional() }),
   handler: (ctx, args) => guard(() => {
     const r = definitions(ctx.dir, ctx.actor, args.scope as string | undefined);
+    return { text: r.text, isError: r.code !== 0, ...(r.data === undefined ? {} : { data: r.data }) };
+  }),
+};
+
+const getOperations: Tool = {
+  name: "get_operations", title: "查看操作可用性",
+  description: "返回当前作用域的权限、MCP 通道限制与必填参数。只是预览，正式操作仍重新授权和校验。",
+  schema: z.object({ scope: z.string().optional() }),
+  handler: (ctx, args) => guard(() => {
+    const r = operations(ctx.dir, ctx.actor, args.scope as string | undefined, "mcp");
     return { text: r.text, isError: r.code !== 0, ...(r.data === undefined ? {} : { data: r.data }) };
   }),
 };
@@ -355,6 +366,7 @@ const causes: Tool = {
 export const TOOLS: readonly Tool[] = [
   validate,
   getDefinitions,
+  getOperations,
   createRun,
   define,
   status,
