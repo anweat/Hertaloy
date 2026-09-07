@@ -517,10 +517,29 @@ const status = (text) => {
   document.getElementById("status").textContent = text;
 };
 
-/** 读一段流，直到它结束或出错。返回是否正常收尾。 */
+/** 凭据失效（服务重启换了 token）—— 退避重连救不了，只能刷新页面。 */
+class Expired extends Error {}
+
+/**
+ * 读一段流，直到它结束或出错。
+ *
+ * **每条新连接先把本地基线清空**（审核 F04）。服务端每条连接的第一帧是
+ * 「空场景 → 当前场景」的差量 —— 它是一份**基线**，不是接着上一条流的增量。
+ * 断线期间旧流里的东西可能已经离开消息窗口，新基线里不会再提它们，
+ * 于是继续合并就会让它们**永久残留**在画面上。
+ *
+ * 合并只在**一条连接之内**成立；跨连接要重来。
+ */
 async function consume() {
   const res = await fetch("/scene/stream", { headers: { "x-hertaloy-token": TOKEN } });
+  if (res.status === 401 || res.status === 403) {
+    await res.body?.cancel();
+    throw new Expired(res.status === 401 ? "凭据已失效" : "无权读取");
+  }
   if (!res.ok) throw new Error(`/scene/stream：${res.status}`);
+
+  // ★ 基线重来：本地不留上一条连接的残余
+  scene = { cells: [], flows: [], tethers: [], cards: [], range: { from: 1, to: 1 }, viewport: "" };
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = "";
@@ -558,6 +577,10 @@ async function consume() {
  *
  * 服务重启、机器休眠、代理超时都会断流；原来断了就停在"流已结束"四个字上，
  * 而画面还留着旧数据 —— 看着像活的，其实早就不动了。
+ *
+ * **临时断线与凭据失效要分开**（审核 F05）：服务在原端口重启会换一个 token，
+ * 页面里这个 `TOKEN` 是加载时内嵌的常量，退避多少次都不会变成新的那个。
+ * 那种情况下继续重连是纯粹的空转，得让人知道要刷新。
  */
 async function main() {
   templates = await api("/templates");
@@ -568,6 +591,11 @@ async function main() {
       backoff = 500;
       status("流已结束，重连中…");
     } catch (e) {
+      if (e instanceof Expired) {
+        // 页面里的 token 是加载时定死的，重连救不回来
+        status(`${e.message} —— 服务可能重启过，请刷新页面`);
+        return;
+      }
       status(`断开：${e.message}，${Math.round(backoff / 100) / 10}s 后重连`);
       backoff = Math.min(8000, backoff * 2);
     }
