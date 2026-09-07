@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { RunState } from "@nodeflow/state";
-import { drain, init, send, status, truncate } from "../src/state-commands.js";
+import { drain, init, scene, send, status, truncate } from "../src/state-commands.js";
 
 const HUMAN = { kind: "human", id: "local" } as const;
 let dir: string;
@@ -140,3 +140,32 @@ it("锁文件内容坏掉时报「读不出」，不假装没有锁", () => {
   writeFileSync(join(dir, "driver.lock"), "这不是 JSON");
   expect(status(dir, HUMAN).text).toContain("（读不出）");
 });
+
+/**
+ * ★ 坏的可选观测不该毁掉整张图（审核 F06 的接缝那一半）。
+ *
+ * 导出侧挡住坏进度已经在 state 那侧验了；这里验**整条链**：
+ * `exportSnapshot → parseSnapshot → buildScene`。原来一次坏采集会让
+ * `parseSnapshot` 整份拒绝，于是 `hertaloy scene` 直接不可用。
+ */
+it("★ backend 报了坏进度，scene 仍然出得来", async () => {
+  const result = await drain(dir, HUMAN, {
+    async run(request) {
+      return {
+        executionId: request.executionId,
+        emissions: {},
+        termination: "DONE",
+        // 合法 JSON，但不是合法进度
+        diagnostics: { runner: "fixture", progress: { done: "九", total: 10 } } as never,
+      };
+    },
+    async cancel() {},
+  });
+  expect(result.code).toBe(0);
+
+  const r = scene(dir, HUMAN);
+  expect(r.code).toBe(0);
+  const built = JSON.parse(r.text) as { cells: { id: string }[] };
+  // 图照常出得来，节点也在
+  expect(built.cells.map((c) => c.id)).toContain("job#a");
+}, 30_000);

@@ -485,16 +485,26 @@ async function renderAuthz() {
  * 已经有的 ref 一律不重取；只要出现一个不认识的就整份重拉一次
  * （服务端给的就是"这个视口用到的全部"，比逐个请求少一次往返）。
  */
+/**
+ * 只问**实例**用的模板 —— 那正是 `/templates` 承诺的范围。
+ *
+ * 上一版把子槽的 `identity` 也算进来了。子槽的那份是**已声明依赖**：
+ * 槽还没实例化时 `/templates` 里根本没有它，于是每帧都发现"缺一个"、
+ * 每帧都重拉一次、每帧仍然缺 —— 一个不会收敛的空转（审核指出）。
+ *
+ * 「已声明依赖」与「运行实例所用模板」是两个查询范围，前者目前没有接口。
+ * 在它出现之前，这里不假装能拿到；`asked` 也兜住一层：问过一次仍然没有的
+ * ref 不再反复问，免得服务端行为变化时又转起来。
+ */
+const asked = new Set();
 async function topUpTemplates() {
-  const wanted = new Set(
-    scene.cells.filter((c) => c.kind !== "node" && c.identity).map((c) => c.identity),
-  );
-  for (const ref of wanted) {
-    if (templates[ref] === undefined) {
-      templates = await api("/templates");
-      return;
-    }
-  }
+  const wanted = scene.cells
+    .filter((c) => c.kind === "instance" && c.identity)
+    .map((c) => c.identity);
+  const missing = wanted.filter((ref) => templates[ref] === undefined && !asked.has(ref));
+  if (missing.length === 0) return;
+  for (const ref of missing) asked.add(ref);
+  templates = await api("/templates");
 }
 
 addEventListener("resize", () => requestAnimationFrame(drawWires));

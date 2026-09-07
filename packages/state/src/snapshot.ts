@@ -58,6 +58,31 @@ export interface RunSnapshot {
  * 不收它；而它偏偏是最敏感的那份（"谁被拒了"），注释里还写着**不按 scope 过滤**。
  * 既是化石又是泄漏点。要看审计有 `authz.jsonl`，那是它该在的地方（§17.6）。
  */
+interface ProgressReport {
+  readonly done: number;
+  readonly total: number;
+  readonly note?: string;
+}
+
+/**
+ * 校验一份**可选观测**。不合法返回 null，不抛。
+ *
+ * 分工：**结构事实严格，观测宽容**。实例、消息、执行状态是内核自己维护的，
+ * 它们坏了就该炸；而 `diagnostics` 是执行面塞进来的普通 JSON —— 内核不该管
+ * 里面的语义，导出这一层也就成了唯一能挡住它的地方。
+ *
+ * 挡不住的后果实测过：backend 把 `progress.done` 写成字符串，`parseSnapshot`
+ * 整份拒绝 —— **一次坏采集让整张图不可用**（审核 F06）。
+ */
+function checkProgress(raw: unknown): ProgressReport | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const p = raw as { done?: unknown; total?: unknown; note?: unknown };
+  if (typeof p.done !== "number" || !Number.isFinite(p.done)) return null;
+  if (typeof p.total !== "number" || !Number.isFinite(p.total)) return null;
+  if (p.note !== undefined && typeof p.note !== "string") return null;
+  return { done: p.done, total: p.total, ...(p.note === undefined ? {} : { note: p.note }) };
+}
+
 export function exportSnapshot(state: RunState, actor: Principal, scope?: string): RunSnapshot {
   const runtime = state.runtime;
   const root = state.registry.rootTrace;
@@ -127,16 +152,21 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
    * 按它建索引即可 —— 不需要新字段，也不需要第二处记账。整棵子树扫一遍，
    * 不是每条记录各扫一遍。
    */
-  const progressOf = new Map<string, unknown>();
+  const progressOf = new Map<string, ProgressReport>();
+  const progressBroken = new Map<string, string>();
   for (const instance of roots) {
     for (const version of state.store.history(`${instance.traceid}/$exec`)) {
       const body = version.body as {
         execution_id?: string;
         diagnostics?: { progress?: unknown };
       };
-      const p = body.diagnostics?.progress;
-      if (body.execution_id !== undefined && p !== undefined) {
-        progressOf.set(body.execution_id, p);
+      const raw = body.diagnostics?.progress;
+      if (body.execution_id === undefined || raw === undefined) continue;
+      const checked = checkProgress(raw);
+      if (checked === null) {
+        progressBroken.set(body.execution_id, "进度观测格式不合法，本次采集不可用");
+      } else {
+        progressOf.set(body.execution_id, checked);
       }
     }
   }
@@ -148,12 +178,15 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
       // agent 自报的语义进度 —— 推不出来的那一半，只能从执行观测里带出来。
       // 没有对应观测就**不带**，不拿别人的顶上。
       const progress = progressOf.get(r.executionId);
+      const broken = progressBroken.get(r.executionId);
       return {
         traceid: r.traceid,
         nodeId: r.nodeId,
         status: r.status,
         ...(r.termination === undefined ? {} : { termination: r.termination }),
         ...(progress === undefined ? {} : { progress }),
+        // 「没上报」与「报了但坏」是两回事 —— 未知不显示 0%，坏了要说是坏了
+        ...(broken === undefined ? {} : { progressUnavailable: broken }),
       };
     });
 
