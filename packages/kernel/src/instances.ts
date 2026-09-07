@@ -37,7 +37,7 @@ import {
 } from "@nodeflow/contracts";
 import { extractPortVars, formatExtractionFailures } from "./extract.js";
 import { InvariantError, TemplateValidationError, invariant } from "./errors.js";
-import { ObjectStore } from "./store.js";
+import { ObjectStore, deepFreeze } from "./store.js";
 import type { Snapshotable } from "./tx.js";
 import {
   type MaterializedBinding,
@@ -280,6 +280,8 @@ export class InstanceRegistry implements Snapshotable {
           .join("；")}`,
       );
     }
+    // zod 解析生成新对象；原版本冻结不代表解析结果也冻结。
+    deepFreeze(parsed.data);
     this.#parsed.set(version, parsed.data);
     return parsed.data;
   }

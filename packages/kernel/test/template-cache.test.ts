@@ -67,3 +67,14 @@ it("坏模板照旧当场报错，失败不进缓存也不变成静默成功", (
   // 第二次仍然报错 —— 解析失败不写缓存，也没被上一版的成功结果顶替
   expect(() => reg.template("job")).toThrow(/不是合法容器模板/);
 });
+
+it("缓存的解析结果不能被调用方改写，固定版本与运行读取保持一致", () => {
+  const store = new ObjectStore();
+  store.put("tpl", "root_config", tplWith("a"));
+  const reg = new InstanceRegistry(store);
+  reg.createRoot("tpl@1", "job");
+  const parsed = reg.template("job");
+  try { parsed.nodes.a!.ports.in!.direction = "emit"; } catch { /* 冻结对象拒绝赋值 */ }
+  expect(reg.template("job").nodes.a!.ports.in!.direction).toBe("receive");
+  expect(store.resolve("tpl@1").body).toEqual(tplWith("a"));
+});

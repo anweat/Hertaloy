@@ -52,7 +52,7 @@ export function contentHash(body: JsonObject): string {
  * 不做这一步，调用方入库后修改 `body.tasks[0]` 就能让**已存版本的内容变化而
  * content_hash 不变**，V2（独立于实例）与 V3（内容寻址）同时破防。
  */
-function deepFreeze<T>(value: T): T {
+export function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object") return value;
   for (const key of Object.keys(value as Record<string, unknown>)) {
     deepFreeze((value as Record<string, unknown>)[key]);
