@@ -135,11 +135,9 @@ function phaseOf(record: Snapshot["records"][number] | undefined): Phase {
  *   失败 → 消息进 FAILED / DISCARDED（队列只回收 CONSUMED，
  *          FAILED 留着当排查现场）→ `snapshot.messages`
  *
- * 排序用**投递顺序** —— `messages` 就是队列的 `#order`。不去解析 `msg-N`
- * 里的数字：那会把队列的发号格式变成渲染层的隐藏依赖，改格式时静默地错。
- *
- * 被回收掉的提交比任何还在的消息都老（回收只丢**最老的 CONSUMED**），
- * 所以它们只用来打底，随后按顺序走一遍现存消息，后面的覆盖前面的。
+ * 按投递序号比较最后一次成功与失败/截断，沿用本投影的 `seqOf` 刻度。
+ * FAILED / DISCARDED 不回收，所以现存消息可能比已回收的成功更老；
+ * 不能拿“仍在窗口里”当作“更新”。没有成功提交也不等于没有失败。
  */
 function phaseOfNode(
   traceid: string,
@@ -150,16 +148,15 @@ function phaseOfNode(
   if (record !== undefined) return phaseOf(record);
 
   const commit = snapshot.commits.find((c) => c.traceid === traceid && c.node === nodeId);
-  if (commit === undefined) return phaseOf(undefined);
-
-  const present = new Set(snapshot.messages.map((m) => m.id));
-  // 最后一次提交消费的那条消息已经被回收 ⇒ 那次成功比现存任何消息都早
-  let phase: Phase = commit.consumed.some((id) => !present.has(id)) ? "done" : "idle";
+  let latest = Math.max(0, ...(commit?.consumed.map(seqOf) ?? []));
+  let phase: Phase = commit === undefined ? "idle" : "done";
   for (const m of snapshot.messages) {
-    if (m.target.traceid !== traceid || m.target.node !== nodeId) continue;
+    if (m.target.traceid !== traceid || m.target.node !== nodeId || seqOf(m.id) < latest) continue;
     if (m.state === "CONSUMED") phase = "done";
     else if (m.state === "FAILED") phase = "failed";
     else if (m.state === "DISCARDED") phase = "voided";
+    else continue;
+    latest = seqOf(m.id);
   }
   return phase;
 }

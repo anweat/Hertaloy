@@ -204,6 +204,20 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("failed");
   });
 
+  it.each([['FAILED', 'failed'], ['DISCARDED', 'voided']])("首次处理就是 %s，没有成功提交也要显示 %s", (state, phase) => {
+    const snapshot = parseSnapshot(FIXTURE);
+    snapshot.messages.push({ id: "msg-99", target: { traceid: "job-1", node: "idle", port: "in" }, state });
+    expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#idle")?.phase).toBe(phase);
+  });
+
+  it("旧失败仍保留、后一次成功消息已回收时，旧失败不覆盖新成功", () => {
+    const snapshot = parseSnapshot(FIXTURE);
+    snapshot.messages = snapshot.messages.filter((m) => m.target.traceid !== "job-1" || m.target.node !== "plan");
+    snapshot.messages.push({ id: "msg-90", target: { traceid: "job-1", node: "plan", port: "in" }, state: "FAILED" });
+    snapshot.commits.find((c) => c.traceid === "job-1" && c.node === "plan")!.consumed = ["msg-99"];
+    expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("done");
+  });
+
   it("提交被回收掉也不退回 idle —— 队列只丢 CONSUMED，那次成功比现存的都老", () => {
     const snapshot = parseSnapshot(FIXTURE);
     snapshot.messages = snapshot.messages.filter((m) => m.id !== "msg-1");
