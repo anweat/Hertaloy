@@ -102,6 +102,10 @@ export interface Cell {
     readonly total: number;
     readonly note?: string;
   };
+  /** 采集过但格式非法；缺省表示没有这类采集故障。 */
+  readonly progressUnavailable?: string;
+  /** 实例原始生命周期。OPEN 不等于执行空闲，TERMINAL 不保证执行成功。 */
+  readonly lifecycle?: string;
   readonly phase: Phase;
   /**
    * 这个相位与进度取自**哪一次**执行。

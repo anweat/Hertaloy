@@ -13,6 +13,19 @@ const scene = buildScene(parseSnapshot(FIXTURE));
 const flow = (from: string | null, to: string) =>
   scene.flows.find((f) => (f.from?.cell ?? null) === from && f.to.cell === to);
 
+it("坏进度的不可用原因穿过 Scene，不在最后一次投影里丢失", () => {
+  const snapshot = parseSnapshot(FIXTURE);
+  snapshot.records.push({ executionId: "broken", traceid: "job-1/a1", nodeId: "scan",
+    status: "SETTLED", termination: "DONE", progressUnavailable: "采集格式不合法" });
+  expect(buildScene(snapshot).cells.find((c) => c.id === "job-1/a1#scan"))
+    .toHaveProperty("progressUnavailable", "采集格式不合法");
+});
+
+it("实例保留真实生命周期，不让 OPEN 被文案解释为执行空闲", () => {
+  expect(scene.cells.find((c) => c.id === "job-1"))
+    .toHaveProperty("lifecycle", parseSnapshot(FIXTURE).instances["job-1"]!.status);
+});
+
 describe("★ 实体：容器即实例，不是两种元素", () => {
   it("三种 kind：声明的槽、它的实例、实例里的节点", () => {
     const kinds = new Set(scene.cells.map((c) => c.kind));

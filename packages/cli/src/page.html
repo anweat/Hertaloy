@@ -231,7 +231,7 @@ function portsOf(cell) {
 }
 function detailOf(cell) {
   if (cell.kind === "instance")
-    return { 实例: cell.id, 模板: cell.identity, 相位: cell.phase,
+    return { 实例: cell.id, 模板: cell.identity, 生命周期: cell.lifecycle,
              生存期: cell.span, 覆盖率: cell.coverage, 定义: templates[cell.identity] };
   if (cell.kind === "slot")
     return { 子槽: cell.label, 所属: cell.parent, 子模板: cell.identity,
@@ -412,7 +412,7 @@ function renderBox(cell) {
 
   const hd = el("div", "hd");
   hd.append(el("span", "name", slot ? "▢ " + cell.label : cell.label));
-  hd.append(el("span", "meta" + (cell.phase === "idle" ? " open" : ""), slot ? "子槽" : cell.phase));
+  hd.append(el("span", "meta" + (cell.phase === "idle" ? " open" : ""), slot ? "子槽" : cell.lifecycle ?? cell.phase));
   // 盒子上是**结构覆盖率**（有环时分母不动），不是完成度
   if (cell.coverage) {
     const bar = el("div", "bar");
@@ -420,7 +420,7 @@ function renderBox(cell) {
     fill.style.width =
       Math.round((cell.coverage.done / Math.max(1, cell.coverage.total)) * 100) + "%";
     bar.append(fill);
-    hd.append(bar, el("span", "meta", cell.coverage.done + "/" + cell.coverage.total));
+    hd.append(bar, el("span", "meta", "覆盖 " + cell.coverage.done + "/" + cell.coverage.total));
   }
   const waiting = scene.tethers.filter((t) => t.relation === "waits" && t.from === cell.id);
   if (waiting.length > 0) {
