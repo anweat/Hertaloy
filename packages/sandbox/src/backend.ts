@@ -369,8 +369,20 @@ export class SandboxBackend implements ExecutionBackend {
        */
       const journal = readJournal(paths);
       const emitted = emissionsFromJournal(journal) ?? readEmit(paths);
+      /**
+       * **文件名就是对象名**，不去扩展名。
+       *
+       * 原来是 `a.name.replace(/\.[^./]+$/, "")`，两个后果：
+       *   - `.gitignore` 整个被吃掉 → 空 object_id → 命名空间校验拒绝 →
+       *     整次执行 INVALID_OUTPUT、零产物，而错误信息指不到文件名上
+       *   - `answer.md` 与 `answer.txt` 静默合并成同一个对象的两版，
+       *     文件的可区分性没了
+       *
+       * 而资产名的合法形状（`ASSET_SEGMENT`）本来就允许点号 —— 去扩展名
+       * 从一开始就是多余的一步，它没换来任何东西，只是把身份弄丢了。
+       */
       const artifacts = collectArtifacts(paths).map((a) => ({
-        object_id: a.name.replace(/\.[^./]+$/, ""),
+        object_id: a.name,
         kind: "artifact",
         body: { text: a.content } as never,
         derived_from: [] as never,

@@ -8,6 +8,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionRequest } from "@nodeflow/contracts";
 import { SandboxBackend, redact, type SandboxDiagnostics } from "../src/backend.js";
@@ -74,7 +75,8 @@ describe("★ 主链：注入 → 跑命令行 → 读 emit → 观察 → 收�
 
     expect(result.termination).toBe("DONE");
     expect(result.emissions).toEqual({ out: { done: true, port: "out" } });
-    expect(result.artifacts?.[0]?.object_id).toBe("plan");
+    // 文件名就是对象名 —— 不去扩展名（见 R02）
+    expect(result.artifacts?.[0]?.object_id).toBe("plan.md");
     expect(result.artifacts?.[0]?.body).toEqual({ text: "计划:写个导出功能" });
 
     // ★ git 观察到了工作区的改动，agent 全程不知道
@@ -173,7 +175,7 @@ describe("★ 告诉 agent 的话必须是对的", () => {
     const result = await backend.run(request(["node", agent]));
     expect(result.termination).toBe("DONE");
     expect(result.emissions).toEqual({ out: { ok: true } });
-    expect(result.artifacts?.map((a) => a.object_id)).toContain("note");
+    expect(result.artifacts?.map((a) => a.object_id)).toContain("note.txt");
   }, 60_000);
 });
 describe("★ profile 渲染真的发生了", () => {
@@ -229,7 +231,15 @@ describe("★ 平权自证：hertaloy agent 与外部 CLI 走同一条路", () =
    * 这条测试的意义就是这个 —— 如果我们自己的 agent 需要特殊待遇，
    * "agent 就是命令行"那条归约就是假的。
    */
-  const CLI = join(process.cwd(), "..", "cli", "src", "main.ts");
+  /**
+   * 从**本文件的位置**推 CLI 入口，不从 `process.cwd()`。
+   *
+   * 用 cwd 时，这三条只在 `vitest` 恰好从 `packages/sandbox` 启动时才通；
+   * 从仓库根跑整套（`vitest --root .`）就会去找 `D:\codeproject\cli\src\main.ts`
+   * 而报 ERR_MODULE_NOT_FOUND —— 于是"全仓一次跑完"这件事做不到，
+   * 而失败信息指向模块解析，看不出是测试自己的路径假设。
+   */
+  const CLI = fileURLToPath(new URL("../../cli/src/main.ts", import.meta.url));
   /**
    * 用 `node <tsx/cli.mjs>` 而不是 `npx tsx`。
    *
@@ -407,4 +417,48 @@ describe("★ 沙箱工具集：从装到合成", () => {
     expect(r.termination).toBe("DONE");
     expect(r.emissions).toEqual({ out: { 照着做: true } });
   });
+});
+
+/**
+ * ★ 产物文件名到对象身份的映射（审核 R02）。
+ *
+ * 原实现 `a.name.replace(/\.[^./]+$/, "")` 去掉最后一段扩展名，两个后果：
+ *
+ *   1. `.gitignore` 整个被吃掉 → **空 object_id** → 命名空间校验拒绝 →
+ *      整次执行 INVALID_OUTPUT、零产物，而错误信息完全指不到文件名上
+ *   2. `answer.md` 与 `answer.txt` **静默合并**成同一个对象的 @1 / @2 ——
+ *      文件的可区分性没了，而且没有任何提示
+ *
+ * 而资产名的合法形状本来就允许点号（`ASSET_SEGMENT`），去扩展名这一步
+ * 从一开始就是多余的。
+ */
+describe("★ 产物名即对象名（R02）", () => {
+  const writes = (files: Readonly<Record<string, string>>): string =>
+    fakeAgent(
+      `import { writeFileSync } from "node:fs";
+` +
+        Object.entries(files)
+          .map(([name, text]) => `writeFileSync(${JSON.stringify(`../.hertaloy/artifacts/${name}`)}, ${JSON.stringify(text)});
+`)
+          .join("") +
+        `writeFileSync("../.hertaloy/emit.json", "{}");
+`,
+    );
+
+  it("同名不同扩展的两个文件是两个对象，不是同一个的两版", async () => {
+    const result = await backend.run(
+      request(["node", writes({ "answer.md": "markdown 版", "answer.txt": "纯文本版" })]),
+    );
+    expect(result.termination).toBe("DONE");
+    expect((result.artifacts ?? []).map((a) => a.object_id).sort()).toEqual([
+      "answer.md",
+      "answer.txt",
+    ]);
+  }, 60_000);
+
+  it("★ 点开头的文件也留得下来 —— 不再变成空 object_id", async () => {
+    const result = await backend.run(request(["node", writes({ ".gitignore": "node_modules" })]));
+    expect(result.termination).toBe("DONE");
+    expect((result.artifacts ?? []).map((a) => a.object_id)).toEqual([".gitignore"]);
+  }, 60_000);
 });
