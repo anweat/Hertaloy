@@ -113,27 +113,49 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
       ...(m.alias === undefined ? {} : { alias: m.alias }),
     }));
 
+  /**
+   * 进度按**执行**索引，不按实例取最新。
+   *
+   * 原来是 `store.head(`${r.traceid}/$exec`)` —— 一个实例只取最新那一版，
+   * 于是同实例的所有执行记录都被投影成最新那次的进度：A 上报 1/10、
+   * B 上报 9/10，`$exec` 历史各自都对，投出来两条都是 9/10。
+   *
+   * 这比"没有进度"更坏：它给的是一个看起来合理、实际张冠李戴的数字，
+   * 而画布上没有任何东西提示它不可信。
+   *
+   * `$exec` 的正文里本来就带 `execution_id`（`#recordExecution` 写的），
+   * 按它建索引即可 —— 不需要新字段，也不需要第二处记账。整棵子树扫一遍，
+   * 不是每条记录各扫一遍。
+   */
+  const progressOf = new Map<string, unknown>();
+  for (const instance of roots) {
+    for (const version of state.store.history(`${instance.traceid}/$exec`)) {
+      const body = version.body as {
+        execution_id?: string;
+        diagnostics?: { progress?: unknown };
+      };
+      const p = body.diagnostics?.progress;
+      if (body.execution_id !== undefined && p !== undefined) {
+        progressOf.set(body.execution_id, p);
+      }
+    }
+  }
+
   const records = runtime
     .records()
     .filter((r) => inScope(r.traceid))
-    .map((r) => ({
-      traceid: r.traceid,
-      nodeId: r.nodeId,
-      status: r.status,
-      ...(r.termination === undefined ? {} : { termination: r.termination }),
-      // agent 自报的语义进度 —— 推不出来的那一半，只能从执行记录里带出来
-      ...(() => {
-        try {
-          const body = state.store.head(`${r.traceid}/$exec`).body as {
-            diagnostics?: { progress?: unknown };
-          };
-          const p = body.diagnostics?.progress;
-          return p === undefined ? {} : { progress: p };
-        } catch {
-          return {};
-        }
-      })(),
-    }));
+    .map((r) => {
+      // agent 自报的语义进度 —— 推不出来的那一半，只能从执行观测里带出来。
+      // 没有对应观测就**不带**，不拿别人的顶上。
+      const progress = progressOf.get(r.executionId);
+      return {
+        traceid: r.traceid,
+        nodeId: r.nodeId,
+        status: r.status,
+        ...(r.termination === undefined ? {} : { termination: r.termination }),
+        ...(progress === undefined ? {} : { progress }),
+      };
+    });
 
   const objects = state.store
     .appended(0)
