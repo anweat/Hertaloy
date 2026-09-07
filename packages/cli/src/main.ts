@@ -59,10 +59,12 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
   hertaloy init    <dir> <scenario.json>        从场景文件建一个持久化的 run
   hertaloy status  <dir>                        实例树 / 阻塞原因 / 在途消息 / 死锁
   hertaloy show    <dir> <object-id[@n]>        读一个对象版本
-  hertaloy execution <dir> <execution-id>       一次执行：状态、观测、产物
+  hertaloy execution <dir> <execution-id> [--runner local|wsl|docker]
+       一次执行：状态、观测、产物；执行中还给沙箱现场（要 --runner 才定位得到）
   hertaloy message <dir> <message-id>           一条消息：端点、尝试、失败、因果
   hertaloy authz   <dir> [条数]                 授权决策流水（谁做了什么，含被拒的）
-  hertaloy serve   <dir> [--port N] [--interval 毫秒]   起只读观测服务 + 画布
+  hertaloy serve   <dir> [--port N] [--interval 毫秒] [--runner local|wsl|docker]
+       起只读观测服务 + 画布。--runner 只用于定位沙箱现场，不起执行面
        只绑 127.0.0.1，主体在启动时定死（--as），一次性 token 走 header
   hertaloy templates <dir> [--scope <traceid>]  用到的模板全文（配置那一条流，可永久缓存）
   hertaloy scene   <dir> [--scope <traceid>]    导出渲染用的场景 JSON
@@ -110,8 +112,13 @@ ${USAGE}`, code: 2 } : null;
   switch (command) {
     case "status":
       return need(1) ?? status(dir as string, actor);
-    case "execution":
-      return need(2) ?? executionCmd(dir as string, actor, a as string);
+    case "execution": {
+      const at = args.indexOf("--runner");
+      return (
+        need(2) ??
+        executionCmd(dir as string, actor, a as string, at === -1 ? undefined : args[at + 1])
+      );
+    }
     case "message":
       return need(2) ?? messageCmd(dir as string, actor, a as string);
     case "authz":
@@ -131,6 +138,7 @@ ${USAGE}`, code: 2 } : null;
         actor,
         port,
         intervalMs: interval,
+        ...(runner === undefined ? {} : { runner }),
         page: readFileSync(new URL("./page.html", import.meta.url), "utf8"),
       });
       process.stdout.write(

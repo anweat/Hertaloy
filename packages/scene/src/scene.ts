@@ -81,18 +81,27 @@ export interface Cell {
   /** 这个 cell 上发生过消息的序号 —— 带上的刻点。 */
   readonly marks: readonly number[];
   /**
-   * **结构性进度** —— 能从现有数据推出来的那一半。
+   * **结构覆盖率** —— 这个容器/子槽里有多少东西被碰过。
    *
-   *   子槽    已终止实例 / 已创建实例    扇出场景下这就是进度，也是最常用的那种
-   *   实例    已碰过的节点 / 模板节点数
+   * ⚠️ **对有环的流程没有意义**：循环会反复碰同一批节点，分母不动而分子
+   * 早就到顶。所以它是"覆盖率"不是"完成度"，别当进度条用。
    *
-   * ⚠️ 实例那一条**对有环的流程没有意义**：循环会反复碰同一批节点，
-   * 分母不动而分子早就到顶。所以它是"覆盖率"不是"完成度"，别当进度条用。
-   *
-   * 真正的语义进度（"我在跑第 3 组测试"）内核**原则上**推不出来 ——
-   * 有环的流程没有分母。那一半只能靠 agent 上报，是另一件事。
+   * 与 `progress` **分成两个字段**（审核要求"结构覆盖率另标含义"）：
+   * 原来一个 `progress` 在实例上是覆盖率、在节点上是语义进度，渲染器分不出来，
+   * 只能靠"这是什么 kind"去猜。同名两义是本仓一路在削的东西。
    */
-  readonly progress?: { readonly done: number; readonly total: number };
+  readonly coverage?: { readonly done: number; readonly total: number };
+  /**
+   * **语义进度** —— agent 自报的那一半，内核原则上推不出来。
+   *
+   * `note` 是它自己说的一句话（"正在跑第三组测试"）。原来投影到这里就丢了，
+   * 而那句话往往比 3/10 有用得多。
+   */
+  readonly progress?: {
+    readonly done: number;
+    readonly total: number;
+    readonly note?: string;
+  };
   readonly phase: Phase;
   /**
    * 这个相位与进度取自**哪一次**执行。

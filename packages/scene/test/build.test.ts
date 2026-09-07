@@ -223,26 +223,28 @@ describe("★ 结构性进度：能推的那一半", () => {
 
   it("★ 子槽进度 = 已终止 / 已创建 —— 扇出场景下这就是进度", () => {
     // a1/a2 收口、a3 还开着
-    expect(cell("job-1~a")?.progress).toEqual({ done: 2, total: 3 });
+    expect(cell("job-1~a")?.coverage).toEqual({ done: 2, total: 3 });
   });
 
   it("分母是「已创建」而不是「总共会有几个」—— 后者内核不知道", () => {
     // 随时还能再 spawn，所以说成已创建才是诚实的
-    expect(cell("job-1~a")?.progress?.total).toBe(3);
+    expect(cell("job-1~a")?.coverage?.total).toBe(3);
   });
 
   it("一次都没 spawn 的槽没有进度 —— 不是 0/0，是没有", () => {
-    expect(cell("job-1~b")?.progress).toBeUndefined();
+    expect(cell("job-1~b")?.coverage).toBeUndefined();
   });
 
   it("实例进度 = 碰过的节点 / 模板节点数", () => {
-    const p = cell("job-1/a1")?.progress;
+    const p = cell("job-1/a1")?.coverage;
     expect(p?.total).toBe(2);
     expect(p?.done).toBeGreaterThan(0);
     expect(p?.done).toBeLessThanOrEqual(2);
   });
 
   it("节点自己没有进度 —— 它是最小单位", () => {
+    // 节点没有覆盖率（它是最小单位，没有分母），也没有 agent 自报的进度
+    expect(cell("job-1#plan")?.coverage).toBeUndefined();
     expect(cell("job-1#plan")?.progress).toBeUndefined();
   });
 });

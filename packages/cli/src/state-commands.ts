@@ -14,7 +14,16 @@
  * `actor` 由 `--as` 注入，默认 `human:local`；绝不从载荷里取（§11.3）。
  */
 
-import { checkAgentSpec } from "@nodeflow/sandbox";
+import {
+  DockerRunner,
+  LocalRunner,
+  WslRunner,
+  checkAgentSpec,
+  readJournal,
+  sandboxPaths,
+  type JournalEntry,
+  type Runner,
+} from "@nodeflow/sandbox";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { headPath } from "@nodeflow/state";
 import { join } from "node:path";
@@ -302,7 +311,60 @@ export function show(dir: string, actor: Principal, ref: string): CommandResult 
  * 无权与"没有"分不出来是**有意的**：否则存在性本身成了泄漏面（见
  * `ControlPlane.execution` 的说明）。
  */
-export function execution(dir: string, actor: Principal, executionId: string): CommandResult {
+/**
+ * 只为**定位**沙箱而造的 runner —— 不起执行面。
+ *
+ * 观察方要看执行中的现场，就得算出沙箱在哪；而沙箱路径是 id 的确定性函数
+ * （`locate`）。所以只需要知道当初用的是哪个 runner、workRoot 在哪，
+ * 不需要任何上报通道 —— 那条通道要跨进程就得再落一份盘，而它要落的内容
+ * 恰好是这里能算出来的。
+ *
+ * **配不上就如实说读不到**，不能显示成"没有内容"。
+ */
+function locator(kind: string | undefined, dir: string): Runner | undefined {
+  if (kind === undefined) return undefined;
+  const workRoot = join(dir, "sandboxes");
+  if (kind === "local") return new LocalRunner(workRoot);
+  if (kind === "wsl") return new WslRunner();
+  if (kind === "docker") return new DockerRunner({ workRoot });
+  return undefined;
+}
+
+/** 一条 journal 记录压成一行 —— 长的截断，别让一条大输出把整个答复撑爆。 */
+function summarize(entry: JournalEntry): string {
+  const { seq: _seq, op: _op, ...rest } = entry;
+  const text = JSON.stringify(rest);
+  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+}
+
+/** 执行中的现场：agent 到这一刻为止都干了什么。窗口不是全量。 */
+const LIVE_WINDOW = 20;
+
+function liveJournal(
+  runner: Runner | undefined,
+  record: { traceid: string; nodeId: string; executionId: string },
+): { readonly available: false; readonly why: string } | { readonly available: true; readonly entries: readonly JournalEntry[] } {
+  if (runner === undefined) {
+    return {
+      available: false,
+      why: "要看执行中的现场得知道用的哪个 runner —— 加 --runner local|wsl|docker",
+    };
+  }
+  try {
+    const root = runner.locate(`${record.traceid}/${record.nodeId}/${record.executionId}`);
+    const entries = readJournal(sandboxPaths(root));
+    return { available: true, entries: entries.slice(-LIVE_WINDOW) };
+  } catch (error) {
+    return { available: false, why: `读不到沙箱现场：${(error as Error).message}` };
+  }
+}
+
+export function execution(
+  dir: string,
+  actor: Principal,
+  executionId: string,
+  runnerKind?: string,
+): CommandResult {
   return readOnly(dir, (s) => {
     const record = s.control.execution(actor, executionId);
     // 从来没有过 —— 与"无权"分开：无权在上面就抛了（拒绝路径）
@@ -319,6 +381,15 @@ export function execution(dir: string, actor: Principal, executionId: string): C
       .filter((v) => v.provenance.execution_id === executionId)
       .map((v) => ({ ref: `${v.object_id}@${String(v.version)}`, kind: v.kind }));
 
+    /**
+     * 执行中的现场 —— **重点不是进度数字，是它到这一刻在输出什么**。
+     *
+     * journal 本来就是那份过程观测：已经落在磁盘、一次工具调用一个文件、
+     * 自带条数与字节上限。只读方去读它**完全在提交路径之外** ——
+     * 观察失败不可能回滚提交，这是审核对 S5 的硬要求。
+     */
+    const live = record.status === "RUNNING" ? liveJournal(locator(runnerKind, dir), record) : null;
+
     const lines = [
       `${record.executionId}  ${record.traceid}/${record.nodeId}`,
       `  状态 ${record.status}${record.termination === undefined ? "" : ` · ${record.termination}`}` +
@@ -328,6 +399,16 @@ export function execution(dir: string, actor: Principal, executionId: string): C
         ? "  观测：未采集（这次执行没有留下 $exec —— backend 没给 diagnostics）"
         : `  观测：${record.traceid}/$exec@${String(observation.version)}（\`show\` 看详情）`,
       `  产物 ${String(artifacts.length)} 个${artifacts.length === 0 ? "" : `：${artifacts.map((a) => a.ref).join("、")}`}`,
+      ...(live === null
+        ? []
+        : live.available
+          ? [
+              `  现场（最近 ${String(LIVE_WINDOW)} 条）：`,
+              ...(live.entries.length === 0
+                ? ["    （还没有输出）"]
+                : live.entries.map((e) => `    #${String(e.seq)} ${e.op}  ${summarize(e)}`)),
+            ]
+          : [`  现场：${live.why}`]),
     ];
     return ok(lines.join("\n"), {
       execution: {
@@ -345,6 +426,7 @@ export function execution(dir: string, actor: Principal, executionId: string): C
           ? { available: false, why: "未采集：这次执行没有留下 $exec" }
           : { available: true, ref: `${record.traceid}/$exec@${String(observation.version)}` },
       artifacts,
+      ...(live === null ? {} : { live }),
     } as never);
   });
 }

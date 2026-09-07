@@ -202,7 +202,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
       ...(nodeIds.length === 0
         ? {}
         : {
-            progress: {
+            coverage: {
               done: nodeIds.filter((n) => (touched.get(nodeCellId(instance.traceid, n)) ?? []).length > 0)
                 .length,
               total: nodeIds.length,
@@ -244,9 +244,22 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
          * 结构性那一半（覆盖率）在节点这一层没有意义 —— 节点是最小单位，
          * 没有分母。所以这里要么有 agent 自报的，要么就没有，不编。
          */
+        /**
+         * 语义进度原样带过来，**note 不丢** —— 那句话（"正在跑第三组测试"）
+         * 往往比 3/10 有用得多，而它原来投影到这里就没了。
+         *
+         * 显式重建而不是整个透传：`exactOptionalPropertyTypes` 下
+         * `note?: string | undefined` 与 `note?: string` 不是一回事。
+         */
         ...(current?.progress === undefined
           ? {}
-          : { progress: { done: current.progress.done, total: current.progress.total } }),
+          : {
+              progress: {
+                done: current.progress.done,
+                total: current.progress.total,
+                ...(current.progress.note === undefined ? {} : { note: current.progress.note }),
+              },
+            }),
         phase: phaseOf(current),
         ...(current?.executionId === undefined ? {} : { execution: current.executionId }),
         activity: activityOf(id),
@@ -295,7 +308,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
           );
           return kids.length === 0
             ? {}
-            : { progress: { done: kids.filter((i) => i.status !== "OPEN").length, total: kids.length } };
+            : { coverage: { done: kids.filter((i) => i.status !== "OPEN").length, total: kids.length } };
         })(),
         phase: "idle",
         activity: 0,

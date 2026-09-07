@@ -56,6 +56,13 @@ export interface ServeOptions {
   readonly actor: Principal;
   readonly port?: number;
   readonly intervalMs?: number;
+  /**
+   * 只为**定位沙箱**用，不起执行面。
+   *
+   * 观察执行中的现场要算出沙箱在哪，而那是 id 的确定性函数 —— 只需知道
+   * 当初用的哪个 runner。不给就如实报"读不到"，不显示成"没有内容"。
+   */
+  readonly runner?: string;
   /** 页面 HTML。不给就只有 JSON 出口。 */
   readonly page?: string;
 }
@@ -138,7 +145,7 @@ function createServer(options: ServeOptions): ServeHandle {
           sendJson(res, 400, { error: "缺少 id 参数" });
           return;
         }
-        fromCommand(res, execution(options.dir, options.actor, id));
+        fromCommand(res, execution(options.dir, options.actor, id, options.runner));
         return;
       }
       case "/message": {
