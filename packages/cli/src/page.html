@@ -142,7 +142,16 @@
 <script type="module">
 const TOKEN = "__HERTALOY_TOKEN__";
 const SVGNS = "http://www.w3.org/2000/svg";
-const api = (p) => fetch(p, { headers: { "x-hertaloy-token": TOKEN } }).then((r) => r.json());
+/** 401/403/404 也是合法 JSON —— 不看状态码就会把 `{error:…}` 当成数据渲染。 */
+async function api(path) {
+  const res = await fetch(path, { headers: { "x-hertaloy-token": TOKEN } });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const why = body && body.error ? body.error : res.status;
+    throw new Error(`${path}：${why}`);
+  }
+  return body;
+}
 
 /** 配置流：不可变、按版本寻址 ⇒ 拉一次，缓存永不失效。不在每帧的场景里。 */
 let templates = {};
@@ -220,9 +229,24 @@ function detailOf(cell) {
   return { 节点: nodeId, 所属实例: cell.parent, 身份: cell.identity, 相位: cell.phase,
            定义: tpl && tpl.nodes ? tpl.nodes[nodeId] : undefined };
 }
-const show = (cell) => {
-  document.getElementById("detail-body").textContent = JSON.stringify(detailOf(cell), null, 2);
-};
+/**
+ * 选中的是**身份**不是那一刻的对象：场景每帧重算，`cell` 会换成新的一份。
+ * 记 id、每帧按 id 重新取，详情才会跟着状态变 —— 否则点开之后就冻在那一刻。
+ */
+let selected = null;
+function show(cell) {
+  selected = cell.id;
+  renderDetail();
+}
+function renderDetail() {
+  const cell = scene.cells.find((c) => c.id === selected);
+  const body = document.getElementById("detail-body");
+  if (cell === undefined) {
+    body.textContent = selected === null ? "点任意一个容器 / 子槽 / 节点" : `${selected}（已不在视口里）`;
+    return;
+  }
+  body.textContent = JSON.stringify(detailOf(cell), null, 2);
+}
 
 /* ── 渲染：CSS 管嵌套，SVG 管连线 ─────────────────────────────────── */
 const childrenOf = (id) => scene.cells.filter((c) => c.parent === id);
@@ -451,18 +475,45 @@ async function renderAuthz() {
   document.getElementById("authz-body").replaceChildren(...rows);
 }
 
+/**
+ * 配置流按需补齐。
+ *
+ * 模板按精确版本寻址、内容不可变，所以**缓存永不失效** —— 但缓存的**集合**
+ * 会变：spawn 出新的子实例之后就多了一份定义。原来只在启动时拉一次，
+ * 于是后来出现的实例节点没有端口、点开没有配置，而且没有任何提示。
+ *
+ * 已经有的 ref 一律不重取；只要出现一个不认识的就整份重拉一次
+ * （服务端给的就是"这个视口用到的全部"，比逐个请求少一次往返）。
+ */
+async function topUpTemplates() {
+  const wanted = new Set(
+    scene.cells.filter((c) => c.kind !== "node" && c.identity).map((c) => c.identity),
+  );
+  for (const ref of wanted) {
+    if (templates[ref] === undefined) {
+      templates = await api("/templates");
+      return;
+    }
+  }
+}
+
 addEventListener("resize", () => requestAnimationFrame(drawWires));
 document.getElementById("canvas").addEventListener("scroll", () => requestAnimationFrame(drawWires));
 
-async function main() {
-  templates = await api("/templates");
+const status = (text) => {
+  document.getElementById("status").textContent = text;
+};
+
+/** 读一段流，直到它结束或出错。返回是否正常收尾。 */
+async function consume() {
   const res = await fetch("/scene/stream", { headers: { "x-hertaloy-token": TOKEN } });
+  if (!res.ok) throw new Error(`/scene/stream：${res.status}`);
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = "";
   for (;;) {
     const chunk = await reader.read();
-    if (chunk.done) break;
+    if (chunk.done) return;
     buf += dec.decode(chunk.value, { stream: true });
     const lines = buf.split("\n");
     buf = lines.pop() || "";
@@ -472,9 +523,37 @@ async function main() {
       apply(JSON.parse(l));
       touched = true;
     }
-    if (touched) { render(); void renderAuthz(); }
+    if (!touched) continue;
+    await topUpTemplates();
+    render();
+    renderDetail();
+    // 侧栏两块各自收口：一块挂了不该把整条流带下去
+    renderAuthz().catch((e) => {
+      document.getElementById("authz-body").replaceChildren(el("div", "row", `读不到：${e.message}`));
+    });
   }
-  document.getElementById("status").textContent = "流已结束";
 }
-main().catch((e) => { document.getElementById("status").textContent = "出错：" + e.message; });
+
+/**
+ * 流断了就重连，退避到 8 秒封顶。
+ *
+ * 服务重启、机器休眠、代理超时都会断流；原来断了就停在"流已结束"四个字上，
+ * 而画面还留着旧数据 —— 看着像活的，其实早就不动了。
+ */
+async function main() {
+  templates = await api("/templates");
+  let backoff = 500;
+  for (;;) {
+    try {
+      await consume();
+      backoff = 500;
+      status("流已结束，重连中…");
+    } catch (e) {
+      status(`断开：${e.message}，${Math.round(backoff / 100) / 10}s 后重连`);
+      backoff = Math.min(8000, backoff * 2);
+    }
+    await new Promise((r) => setTimeout(r, backoff));
+  }
+}
+main().catch((e) => status("出错：" + e.message));
 </script>
