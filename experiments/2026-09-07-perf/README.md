@@ -47,3 +47,31 @@ corepack pnpm exec tsx experiments/2026-09-07-perf/bench.mts settle
 
 **分开跑，别合并** —— 同进程连跑会让后一组慢一到两倍，那是 GC 不是产品行为。
 每档取 3 次中位数。数字与机器相关，看的是**倍数与增长趋势**，不是绝对值。
+
+---
+
+## 头随历史增长多少（V6 阶段 1a 之后）
+
+`head-growth.mts`。同步节点也留执行记录之后，头里多了一项**无界**增长源：
+
+```
+M= 200  head.json 126.3 KiB  记录  200 条  队列里 200 条
+M= 800  head.json 378.9 KiB  记录  800 条  队列里 400 条
+M=2000  head.json 761.5 KiB  记录 2000 条  队列里 400 条
+```
+
+队列被 `keepConsumedMessages: 200` 压在 ~400 条，**记录没有任何上界**。
+
+两点要说准：
+
+- **落盘频率没变。**同步提交不 persist（`onCommit` 只在 claim 时落），
+  所以一趟 drain 只写一次头。第一版基准逐条 `persist()` 是不真实的负载，
+  已修正 —— 那一版把 40 秒记在了头上，其实是 drain 自己的二次项。
+- 对象库是**一版一个文件、只追加**（`flushObjects` 只写 cursor 之后的），
+  头才是全量重写。所以把终态记录搬进对象库，是把 O(总量) 的重写换成 O(1) 的追加。
+
+复现：
+
+```powershell
+corepack pnpm exec tsx experiments/2026-09-07-perf/head-growth.mts
+```
