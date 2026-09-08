@@ -90,7 +90,9 @@ it("★ 同一实例的两条执行记录各带自己的进度，不是都跟着
     );
 
     // 两次执行各自的 $exec 记录都在，历史本来就是对的
-    expect(state.store.history("job-1/$exec")).toHaveLength(2);
+    // （V6：`$exec` 按节点索引，各占一条，不再混在实例名下）
+    expect(state.store.history("job-1/slow/$exec")).toHaveLength(1);
+    expect(state.store.history("job-1/fast/$exec")).toHaveLength(1);
     // ★ 投影也要各归各的
     expect(byNode.get("slow")).toBe(1);
     expect(byNode.get("fast")).toBe(9);

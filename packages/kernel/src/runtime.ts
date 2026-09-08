@@ -66,7 +66,7 @@ import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instan
 import { type Message, type MessageState, MessageQueue, isLive } from "./queue.js";
 import { formatProblems, stateProblems } from "./invariants.js";
 import { type Candidate, type Scheduler, acceptedPick, fifo } from "./scheduling.js";
-import { type ExecutionRecord, ExecutionLedger } from "./executions.js";
+import { type ExecutionRecord, ExecutionLedger, execLog } from "./executions.js";
 import { resolveAlias } from "./aliases/index.js";
 import {
   type ObligationFacts,
@@ -178,7 +178,7 @@ export interface StepFailure {
 /**
  * 执行记录已抽到 `executions.ts`。这里再导出，保持既有 import 路径不变。
  */
-export { ExecutionLedger } from "./executions.js";
+export { ExecutionLedger, execLog } from "./executions.js";
 export type { ExecutionRecord, ExecutionStatus } from "./executions.js";
 
 export interface TruncationResult {
@@ -360,7 +360,7 @@ export class Runtime implements Snapshotable {
     const message = formatProblems(
       stateProblems({
         messages: this.#queue.all(),
-        executions: this.#ledger.all(),
+        executions: this.#ledger.running(),
         instances: root === null ? [] : this.#registry.subtree(root),
         obligations: this.obligations(),
       }),
@@ -373,13 +373,127 @@ export class Runtime implements Snapshotable {
     return [this, this.#registry, this.#store];
   }
 
-  records(): readonly ExecutionRecord[] {
-    return this.#ledger.all();
+  /**
+   * 一次执行**进终态**的唯一收口点（V6 阶段 5）。
+   *
+   * 终态记录写进 `<traceid>/<node>/$exec` 一版，然后移出在途表。理由不是规模，
+   * 是**一次终态执行原来被记了两遍**：账本一条、`$exec` 一版，四个字段重叠。
+   *
+   * **按节点索引，不按实例。**`$exec` 原来挂在实例上，是因为节点没有身份 ——
+   * 而那正是 V6 §1.1 列的四个缺口之一（"没有对象命名空间，node_id 降格成
+   * provenance 的一个字段"）。挂到节点下之后 `show job-1/worker/$exec`
+   * 直接答"worker 干了什么"，不用过滤；等节点成为实例，这个 id 原样就对。
+   * 而终态记录不参与任何控制决策（义务 / 孤儿 / 冲突域全都只看 RUNNING），
+   * 它是历史 —— 属于只追加的对象库，不属于每次提交全量重写的可变头。
+   *
+   * 正文是**既有 `$exec` 形状 + 完整终态记录**，靠 `status` 字段有无区分：
+   * 老版本没有它，那些只是观测；新版本有它，那些是记录。
+   *
+   * 观测（`diagnostics`）与记录一起写：此前观测排在 `#apply` 开头、
+   * 收口排在各条分支末尾，两个时机两处写。合成一处之后"失败时的观测比成功时
+   * 更值钱"由**每条终局路径都经过这里**保证，而不是靠把它排在最前面。
+   */
+  #settleExecution(terminal: ExecutionRecord, diagnostics?: JsonObject): void {
+    this.#store.put(
+      execLog(terminal.traceid, terminal.nodeId),
+      "execution",
+      {
+        execution_id: terminal.executionId,
+        node: terminal.nodeId,
+        status: terminal.status,
+        ...(terminal.termination === undefined ? {} : { termination: terminal.termination }),
+        claimed: [...terminal.claimed],
+        generation: terminal.generation,
+        ...(terminal.usage === undefined ? {} : { usage: terminal.usage as unknown as Json }),
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+      },
+      {
+        traceid: terminal.traceid,
+        node_id: terminal.nodeId,
+        execution_id: terminal.executionId,
+        derived_from: [],
+      },
+    );
+    this.#ledger.drop(terminal.executionId);
   }
 
-  /** 按 id 取。取不到是编程错误 —— id 只由账本发放，判定与文案都在它那儿。 */
+  /** 一版 `$exec` 还原成记录；不是记录（老观测）就给 undefined。 */
+  static #recordOf(body: unknown): ExecutionRecord | undefined {
+    const b = body as Record<string, unknown>;
+    if (typeof b.status !== "string" || typeof b.execution_id !== "string") return undefined;
+    return Object.freeze({
+      executionId: b.execution_id,
+      traceid: (b.traceid as string | undefined) ?? "",
+      nodeId: String(b.node ?? ""),
+      status: b.status as ExecutionRecord["status"],
+      ...(b.termination === undefined ? {} : { termination: b.termination as never }),
+      claimed: Array.isArray(b.claimed) ? (b.claimed as string[]) : [],
+      generation: typeof b.generation === "number" ? b.generation : 0,
+      ...(b.usage === undefined ? {} : { usage: b.usage as never }),
+    });
+  }
+
+  /** 某实例各节点的终态执行，按节点声明序 × 写入序。 */
+  #settledOf(trace: TraceId): readonly ExecutionRecord[] {
+    const out: ExecutionRecord[] = [];
+    for (const nodeId of Object.keys(this.#registry.template(trace).nodes)) {
+      for (const v of this.#store.history(execLog(trace, nodeId))) {
+        const r = Runtime.#recordOf(v.body);
+        if (r !== undefined) out.push({ ...r, traceid: trace, nodeId });
+      }
+    }
+    return out;
+  }
+
+  /** 还在途的。义务、不变量、孤儿、冲突域只该看这个。 */
+  running(): readonly ExecutionRecord[] {
+    return this.#ledger.running();
+  }
+
+  /**
+   * 全部执行 —— 在途（头）+ 终态（对象库），按 id 去重，在途优先。
+   *
+   * 观测路径用它；**控制路径用 `running()`**，别在这儿扫对象库。
+   */
+  records(): readonly ExecutionRecord[] {
+    const root = this.#registry.rootTrace;
+    const byId = new Map<string, ExecutionRecord>();
+    if (root !== null) {
+      for (const inst of this.#registry.subtree(root)) {
+        for (const r of this.#settledOf(inst.traceid)) byId.set(r.executionId, r);
+      }
+    }
+    for (const r of this.#ledger.all()) byId.set(r.executionId, r);
+    return [...byId.values()];
+  }
+
+  /**
+   * 某实例各节点**最近一次**执行的 id —— 从已落盘的事实派生。
+   *
+   * 执行面靠它找到上游留下的东西（`workspace.from`）。此前那份对应关系记在
+   * backend 进程内的一张 Map 里，而权威一直在记录里：换个进程那张 Map 就空了，
+   * 于是 `workspace.from` 在重启后必然失败。第二拷贝活得比权威短，就是这个下场。
+   *
+   * **VOIDED 不算**：那个状态的意思正是"这次不算数，结果被栅栏丢掉了"。
+   * 从它那儿接过工作树，等于把内核判定不算数的活儿传给下游。
+   *
+   * 读 `$exec` 历史（写入序）+ 在途，后写的覆盖先写的。
+   */
+  #latestPerNode(trace: TraceId): Readonly<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const r of [...this.#settledOf(trace), ...this.#ledger.all()]) {
+      if (r.traceid !== trace || r.status === "VOIDED") continue;
+      out[r.nodeId] = r.executionId;
+    }
+    return Object.freeze(out);
+  }
+
+  /** 按 id 取。先在途（热路径命中这儿），再翻历史。 */
   record(executionId: string): ExecutionRecord {
-    return this.#ledger.get(executionId);
+    if (this.#ledger.has(executionId)) return this.#ledger.get(executionId);
+    const found = this.records().find((r) => r.executionId === executionId);
+    if (found === undefined) throw new InvariantError(`未知 execution：${executionId}`);
+    return found;
   }
 
   /**
@@ -632,7 +746,7 @@ export class Runtime implements Snapshotable {
      * `workspace.from: <自己这个节点>` 会指向自己那个刚建好的空沙箱，
      * 而不是报错。用例第一次跑就抓到了这条。
      */
-    const priorExecutions = this.#ledger.latestPerNode(traceid);
+    const priorExecutions = this.#latestPerNode(traceid);
     this.#queue.setState(input.id, "CLAIMED");
 
     const record: ExecutionRecord = Object.freeze({
@@ -684,9 +798,11 @@ export class Runtime implements Snapshotable {
      * 却没有 `$exec` 指向它 —— `status` 看不到、`reclaim` 找不到、
      * 退出码与 stderr 全丢，而 DEVELOPING 还教人"失败先看 show $exec"。
      *
-     * 现在真的是第一件事。同一个事务，回滚时一起回滚。
+     * **V6 阶段 5 之后它不再是单独一步**：观测跟着**收口**一起写
+     * （`#settleExecution`），而下面每一条终局路径都经过收口。
+     * "失败时的观测比成功时更值钱"因此由**路径覆盖**保证，
+     * 而不是靠把它排在最前面 —— 后者曾经就被一条提前 return 绕过去过。
      */
-    this.#recordExecution(record, result);
 
     /**
      * 冲突域复核 —— **两半都要查**。
@@ -704,7 +820,7 @@ export class Runtime implements Snapshotable {
       return m === undefined || m.state !== "CLAIMED";
     });
     if (stolen.length > 0) {
-      this.#ledger.replace(record.executionId, { status: "VOIDED" });
+      this.#settleExecution({ ...record, status: "VOIDED" }, result.diagnostics);
       return {
         consumed: record.claimed[0] ?? "",
         traceid: record.traceid,
@@ -716,7 +832,7 @@ export class Runtime implements Snapshotable {
       };
     }
     if (instance.status !== "OPEN" || instance.generation !== record.generation) {
-      this.#ledger.replace(record.executionId, { status: "VOIDED" });
+      this.#settleExecution({ ...record, status: "VOIDED" }, result.diagnostics);
       return {
         consumed: input.id,
         traceid: record.traceid,
@@ -735,6 +851,7 @@ export class Runtime implements Snapshotable {
         result.termination,
         `执行终止于 ${result.termination}`,
         result.usage,
+        result.diagnostics,
       );
     }
 
@@ -754,6 +871,7 @@ export class Runtime implements Snapshotable {
         "INVALID_OUTPUT",
         describeUndeclared(node, record.nodeId, offenders),
         result.usage,
+        result.diagnostics,
       );
     }
 
@@ -766,6 +884,7 @@ export class Runtime implements Snapshotable {
           "INVALID_OUTPUT",
           `端口 \`${portName}\` 出站契约不符：${issue}`,
           result.usage,
+          result.diagnostics,
         );
       }
     }
@@ -797,6 +916,7 @@ export class Runtime implements Snapshotable {
           "INVALID_OUTPUT",
           `产物名非法：${(error as Error).message}`,
           result.usage,
+          result.diagnostics,
         );
       }
     }
@@ -806,7 +926,7 @@ export class Runtime implements Snapshotable {
       result.emissions,
     );
     if (!outcome.ok) {
-      return this.#applyFailure(record, input, "INVALID_OUTPUT", outcome.reason, result.usage);
+      return this.#applyFailure(record, input, "INVALID_OUTPUT", outcome.reason, result.usage, result.diagnostics);
     }
 
     // 产物与下游一起提交：先全部校验通过，再一次性落。
@@ -822,12 +942,12 @@ export class Runtime implements Snapshotable {
 
     const delivered = this.#commitPlan(outcome.plan);
     this.#queue.setState(input.id, "CONSUMED");
-    this.#ledger.put({
+    this.#settleExecution({
       ...record,
       status: "SETTLED" as const,
       termination: "DONE" as const,
       ...(result.usage === undefined ? {} : { usage: result.usage }),
-    });
+    }, result.diagnostics);
     this.#recordSnapshot(record.traceid, record.nodeId, [input.id], delivered, {
       execution: record.executionId,
       termination: result.termination,
@@ -858,13 +978,14 @@ export class Runtime implements Snapshotable {
     termination: Termination,
     reason: string,
     usage?: Usage,
+    diagnostics?: JsonObject,
   ): StepFailure {
-    this.#ledger.put({
+    this.#settleExecution({
       ...record,
       status: "SETTLED" as const,
       termination,
       ...(usage === undefined ? {} : { usage }),
-    });
+    }, diagnostics);
 
     if (NON_RETRYABLE.includes(termination)) {
       this.#terminateMessage(input, "DISCARDED", reason);
@@ -915,7 +1036,8 @@ export class Runtime implements Snapshotable {
     const root = this.#registry.rootTrace;
     return {
       messages: this.messages(),
-      executions: this.records(),
+      // 义务只从 RUNNING 记录来 —— 终态的不参与，也就不必去翻对象库
+      executions: this.running(),
       requests: [...this.#pending.values()],
       instances: root === null ? [] : this.#registry.subtree(root),
     };
@@ -1044,13 +1166,9 @@ export class Runtime implements Snapshotable {
 
     // 1. 取消在途 execution（best effort；真正保证靠第 0 步）
     let cancelledExecutions = 0;
-    for (const rec of this.records()) {
-      if (rec.traceid !== trace || rec.status !== "RUNNING") continue;
-      this.#ledger.put({
-        ...rec,
-        status: "SETTLED",
-        termination: "CANCELLED",
-      });
+    for (const rec of this.running()) {
+      if (rec.traceid !== trace) continue;
+      this.#settleExecution({ ...rec, status: "SETTLED", termination: "CANCELLED" });
       /**
        * 驱动标记也要放掉。
        *
@@ -1241,7 +1359,7 @@ export class Runtime implements Snapshotable {
      */
     const executionId = this.#ledger.nextId();
     const settle = (termination: Termination): void => {
-      this.#ledger.put({
+      this.#settleExecution({
         executionId,
         traceid,
         nodeId,
@@ -1292,42 +1410,6 @@ export class Runtime implements Snapshotable {
       dangling: outcome.plan.dangling,
       vars: prepared.portVars,
     };
-  }
-
-  /**
-   * 执行观测 —— 落成**对象**，不给 `ExecutionRecord` 加字段。
-   *
-   * 之前 backend 算出的 `diagnostics`（含沙箱外 git 观察：改了哪些文件、加删多少行）
-   * **被原地丢弃** —— `#apply` 只读 emissions / artifacts / usage / termination。
-   * 归约 5 的招牌机制断在最后一步。
-   *
-   * 修法不是给记录结构加字段，那会让可变头随执行次数增长。而是**落进版本层**：
-   * 一次执行一版 `<traceid>/$exec`，于是它自动获得不可变、内容寻址、
-   * 可按前缀查询、随事务提交 —— 全是 C5 已经提供的性质。
-   * 顺带 `hertaloy show` / `history` 立刻就能读，不需要新命令。
-   *
-   * 放在 `#apply` 开头而不是结尾：后面每条 INVALID_OUTPUT 分支都会提前 return，
-   * 而**失败时的观测比成功时更值钱**。同一个事务，回滚时它一起回滚。
-   */
-  #recordExecution(record: ExecutionRecord, result: ExecutionResult): void {
-    if (result.diagnostics === undefined) return;
-    this.#store.put(
-      `${record.traceid}/$exec`,
-      "execution",
-      {
-        execution_id: record.executionId,
-        node: record.nodeId,
-        termination: result.termination,
-        ...(result.usage === undefined ? {} : { usage: result.usage as unknown as Json }),
-        diagnostics: result.diagnostics,
-      },
-      {
-        traceid: record.traceid,
-        node_id: record.nodeId,
-        execution_id: record.executionId,
-        derived_from: [],
-      },
-    );
   }
 
   /**

@@ -1,8 +1,21 @@
 /**
- * 执行记录 —— claim / execute / apply 的持久事实。
+ * 执行记录 —— **在途**执行的表。
  *
  * 从 `runtime.ts` 抽出来的第三块。与 `queue.ts` 同一个路子：这里只回答
  * "有哪些执行、各自什么状态"，不回答"下一步该 claim 谁"（那是调度）。
+ *
+ * ## 终态不在这儿（V6 阶段 5）
+ *
+ * 这个表以前装**全部**执行，跟着可变头落盘，而头每次提交全量重写、记录没有
+ * 任何上界。真正的判据不是规模，是**一次终态执行被记了两遍**：这儿一条，
+ * `<traceid>/<node>/$exec` 一版，四个字段重叠。
+ *
+ * 而终态记录**不参与任何控制决策** —— 义务只看 RUNNING、孤儿只看 RUNNING、
+ * 冲突域只看 RUNNING。它是历史，属于只追加的对象库。于是收口时它被写进
+ * `$exec` 并从这里移除（`Runtime.#settleExecution`），这儿只剩在途的。
+ *
+ * 装载老 head 时终态记录会跟着回来 —— 不拒绝它们，`running()` 按 status 过滤，
+ * `Runtime.records()` 合并时按 id 去重。新的收口一律走对象库。
  *
  * ## 两种寿命，刻意分开
  *
@@ -119,6 +132,20 @@ export class ExecutionLedger implements Snapshotable {
     this.put({ ...this.get(executionId), ...patch });
   }
 
+  has(executionId: string): boolean {
+    return this.#records.has(executionId);
+  }
+
+  /** 收口之后移出在途表 —— 终态那份已经写进 `$exec`。 */
+  drop(executionId: string): void {
+    this.#records.delete(executionId);
+  }
+
+  /** 还在途的。按 status 过滤而不是假设 —— 老 head 里可能带着终态记录。 */
+  running(): readonly ExecutionRecord[] {
+    return this.all().filter((r) => r.status === "RUNNING");
+  }
+
   // --- 进程本地：本进程在驱动谁 -------------------------------------------
 
   isDriving(traceid: TraceId, nodeId: string): boolean {
@@ -139,32 +166,6 @@ export class ExecutionLedger implements Snapshotable {
   }
 
   /**
-   * 某实例各节点**最近一次**执行的 id —— 从已落盘的记录派生。
-   *
-   * 执行面要靠它找到上游留下的东西（目前只有一处用途：工作区交接
-   * `workspace.from`）。此前那份对应关系记在 backend 进程内的一张 Map 里，
-   * 而**权威一直就在这儿**：`records` 跨进程还在，那张 Map 换个进程就空了 ——
-   * 于是 `workspace.from` 在重启后必然失败，报错还把归因指向"上游没跑"
-   * 和"沙箱被回收"，两个都不是真因。第二拷贝活得比权威短，就是这个下场。
-   *
-   * **VOIDED 不算**：那个状态的意思正是"这次不算数，结果被栅栏丢掉了"。
-   * 从它那儿接过工作树，等于把内核判定不算数的活儿传给下游。
-   * （旧的那张 Map 是"最后写的赢"，包括后来被作废的那次 —— 这是一处
-   * 有意的行为改变。）
-   *
-   * 后写的覆盖先写的：`#records` 是插入序，而 id 由本类单调发放。
-   */
-  latestPerNode(traceid: TraceId): Readonly<Record<string, string>> {
-    const out: Record<string, string> = {};
-    for (const r of this.#records.values()) {
-      if (r.traceid !== traceid) continue;
-      if (r.status === "VOIDED") continue;
-      out[r.nodeId] = r.executionId;
-    }
-    return Object.freeze(out);
-  }
-
-  /**
    * 孤儿：记录还是 `RUNNING`，而**本进程没在驱动它**。
    *
    * 判定同时读两种寿命的东西，这正是它们放在一个类里的理由。
@@ -172,4 +173,14 @@ export class ExecutionLedger implements Snapshotable {
   orphans(): readonly ExecutionRecord[] {
     return this.all().filter((r) => r.status === "RUNNING" && !this.isDriving(r.traceid, r.nodeId));
   }
+}
+
+/**
+ * 一个节点的执行日志对象 id。
+ *
+ * **按节点索引，不按实例** —— `$exec` 原来挂在实例上是因为节点没有身份。
+ * `$` 前缀是内核内务的约定（用户资产名是 `Ident`，不含 `$`），所以撞不上。
+ */
+export function execLog(traceid: TraceId, nodeId: string): string {
+  return `${traceid}/${nodeId}/$exec`;
 }

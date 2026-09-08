@@ -87,8 +87,8 @@ describe("★ P0-3 失败执行也要留下现场", () => {
     rt.send({ traceid: "job-1", node: "n", port: "in" }, {});
     await rt.stepAgent();
 
-    expect(store.has("job-1/$exec")).toBe(true);
-    const body = store.head("job-1/$exec").body as Record<string, unknown>;
+    expect(store.has("job-1/n/$exec")).toBe(true);
+    const body = store.head("job-1/n/$exec").body as Record<string, unknown>;
     expect(body.termination).toBe("INVALID_OUTPUT");
     expect(JSON.stringify(body.diagnostics)).toContain("炸了");
   });
@@ -106,7 +106,7 @@ describe("★ P0-3 失败执行也要留下现场", () => {
     const rt = boot(AGENT_FLOW, backend);
     rt.send({ traceid: "job-1", node: "n", port: "in" }, {});
     await rt.stepAgent();
-    expect(store.head("job-1/$exec").body).toMatchObject({ termination: "DONE" });
+    expect(store.head("job-1/n/$exec").body).toMatchObject({ termination: "DONE" });
   });
 });
 

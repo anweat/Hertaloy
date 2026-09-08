@@ -120,11 +120,11 @@ describe("★ 执行观测落成对象，不给 ExecutionRecord 加字段", () =
   it("agent 跑完 → git 观察进对象库 → show 立刻读得到（修之前算完就丢）", async () => {
     await drain(dir, HUMAN, backend());
 
-    const h = history(dir, HUMAN, "job-1/$exec");
+    const h = history(dir, HUMAN, "job-1/worker/$exec");
     expect(h.code).toBe(0);
     expect(h.text).toContain("1 版");
 
-    const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
+    const v = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec").text);
     expect(v.body.node).toBe("worker");
     expect(v.body.termination).toBe("DONE");
     // 观测本身：runner 是谁、隔离与出网受不受控
@@ -135,7 +135,8 @@ describe("★ 执行观测落成对象，不给 ExecutionRecord 加字段", () =
 
   it("观测在 status 里露头，不用先知道对象名", async () => {
     await drain(dir, HUMAN, backend());
-    expect(status(dir, HUMAN).text).toContain("执行观测 1 条");
+    // V6 阶段 5：同步节点也留执行记录，所以 sink 那次也计入
+    expect(status(dir, HUMAN).text).toContain("执行 2 次");
   }, 120_000);
 
   it("★ 观测挂在版本层 → 多次执行自然成为多版，无需新结构", async () => {
@@ -148,7 +149,7 @@ describe("★ 执行观测落成对象，不给 ExecutionRecord 加字段", () =
       s.close();
     }
     await drain(dir, HUMAN, backend());
-    expect(history(dir, HUMAN, "job-1/$exec").text).toContain("2 版");
+    expect(history(dir, HUMAN, "job-1/worker/$exec").text).toContain("2 版");
   }, 120_000);
 });
 
@@ -174,7 +175,7 @@ describe("★ 因果反查有出口了", () => {
 describe("★ 沙箱保留：多开 agent 时现场留得住", () => {
   it("跑完沙箱还在，位置写进执行观测 —— 哪次执行对应哪个沙箱有据可查", async () => {
     await drain(dir, HUMAN, backend());
-    const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
+    const v = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec").text);
     expect(v.body.diagnostics.sandbox.retained).toBe(true);
     expect(existsSync(v.body.diagnostics.sandbox.path)).toBe(true);
     // 工作树还在，产出取得回来
@@ -183,7 +184,7 @@ describe("★ 沙箱保留：多开 agent 时现场留得住", () => {
 
   it("★ 沙箱记录完整执行身份，新 runner 能核对并定位", async () => {
     await drain(dir, HUMAN, backend());
-    const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
+    const v = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec").text);
     const path = v.body.diagnostics.sandbox.path;
     const id = "job-1/worker/exec-1";
     expect(JSON.parse(readFileSync(join(path, "hertaloy.identity.json"), "utf8"))).toEqual({ id });
@@ -200,8 +201,8 @@ describe("★ 沙箱保留：多开 agent 时现场留得住", () => {
     }
     await drain(dir, HUMAN, backend());
 
-    const versions = JSON.parse(show(dir, HUMAN, "job-1/$exec@1").text);
-    const second = JSON.parse(show(dir, HUMAN, "job-1/$exec@2").text);
+    const versions = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec@1").text);
+    const second = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec@2").text);
     expect(versions.body.diagnostics.sandbox.path).not.toBe(second.body.diagnostics.sandbox.path);
     expect(existsSync(versions.body.diagnostics.sandbox.path)).toBe(true);
     expect(existsSync(second.body.diagnostics.sandbox.path)).toBe(true);
@@ -215,7 +216,7 @@ describe("★ 沙箱保留：多开 agent 时现场留得住", () => {
   it("retain: never 才删 —— 默认是留着", async () => {
     const s = new SandboxBackend({ runner: new LocalRunner(), retain: "never" });
     await drain(dir, HUMAN, s);
-    const v = JSON.parse(show(dir, HUMAN, "job-1/$exec").text);
+    const v = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec").text);
     expect(v.body.diagnostics.sandbox.retained).toBe(false);
     expect(existsSync(v.body.diagnostics.sandbox.path)).toBe(false);
   }, 120_000);
@@ -237,7 +238,7 @@ describe("★ 沙箱回收（GC 第三条）", () => {
 
   it("保留最近 N 个，其余删掉，并报出释放了多少", async () => {
     await threeRuns();
-    const before = JSON.parse(show(dir, HUMAN, "job-1/$exec@1").text).body.diagnostics.sandbox.path;
+    const before = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec@1").text).body.diagnostics.sandbox.path;
     expect(existsSync(before)).toBe(true);
 
     const r = reclaim(dir, HUMAN, 1);
@@ -249,9 +250,9 @@ describe("★ 沙箱回收（GC 第三条）", () => {
   it("最新的那个留着 —— 现场还在", async () => {
     await threeRuns();
     reclaim(dir, HUMAN, 1);
-    const versions = history(dir, HUMAN, "job-1/$exec").text.match(/@\d+/g) ?? [];
+    const versions = history(dir, HUMAN, "job-1/worker/$exec").text.match(/@\d+/g) ?? [];
     const newest = JSON.parse(
-      show(dir, HUMAN, `job-1/$exec${versions[versions.length - 1] as string}`).text,
+      show(dir, HUMAN, `job-1/worker/$exec${versions[versions.length - 1] as string}`).text,
     );
     expect(existsSync(newest.body.diagnostics.sandbox.path)).toBe(true);
   }, 120_000);
@@ -263,9 +264,9 @@ describe("★ 沙箱回收（GC 第三条）", () => {
 
   it("$exec 里记的路径不改写 —— 那是历史事实", async () => {
     await threeRuns();
-    const before = JSON.parse(show(dir, HUMAN, "job-1/$exec@1").text).body.diagnostics.sandbox.path;
+    const before = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec@1").text).body.diagnostics.sandbox.path;
     reclaim(dir, HUMAN, 1);
-    const after = JSON.parse(show(dir, HUMAN, "job-1/$exec@1").text).body.diagnostics.sandbox.path;
+    const after = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec@1").text).body.diagnostics.sandbox.path;
     expect(after).toBe(before);
     expect(existsSync(after)).toBe(false);
   }, 120_000);

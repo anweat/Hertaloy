@@ -50,7 +50,7 @@ import {
 } from "@nodeflow/state";
 import type { ExecutionBackend } from "@nodeflow/contracts";
 import { isOverlay, type Json, type Principal } from "@nodeflow/contracts";
-import { AuthorizationError } from "@nodeflow/kernel";
+import { AuthorizationError, execLog } from "@nodeflow/kernel";
 import { BUILTIN_HANDLERS, BUILTIN_NAMES } from "./builtins.js";
 import { Scenario } from "./scenario.js";
 
@@ -187,10 +187,17 @@ export function status(dir: string, actor: Principal): CommandResult {
         `  ${m.state === "CLAIMED" ? "⟳" : "→"} ${m.target.traceid}/${m.target.node}.${m.target.port}`,
       );
     }
-    const execs = subtree.flatMap((i) => s.store.history(`${i.traceid}/$exec`));
+    // `$exec` 按节点索引（V6：节点有自己的对象命名空间），所以按 (实例, 节点) 枚举
+    const execs = subtree.flatMap((i) =>
+      Object.keys(s.registry.template(i.traceid).nodes).flatMap((n) =>
+        s.store.history(execLog(i.traceid, n)),
+      ),
+    );
     let retained = 0;
     if (execs.length > 0) {
-      lines.push("", `执行观测 ${execs.length} 条（\`show <traceid>/$exec\` 看详情）：`);
+      // 「执行」而不是「观测」：V6 阶段 5 之后每次执行都留一版，
+      // 而 `diagnostics`（观测）是可选的 —— 同步执行就没有。
+      lines.push("", `执行 ${execs.length} 次（\`show <traceid>/<节点>/$exec\` 看详情）：`);
       for (const v of execs) {
         const d = ((v.body as Record<string, unknown>).diagnostics ?? {}) as {
           sandbox?: { retained?: boolean };
@@ -375,7 +382,7 @@ export function execution(
 
     // 观测：`<traceid>/$exec` 的历史里找本次那一版
     const observation = s.control
-      .history(actor, `${record.traceid}/$exec`)
+      .history(actor, execLog(record.traceid, record.nodeId))
       .find((v) => (v.body as { execution_id?: string }).execution_id === executionId);
 
     /**
@@ -386,7 +393,7 @@ export function execution(
      * 而这正是 `Cell.result.commit` 曾经要解决的事 —— 现在它落在
      * 执行上，同步与 agent 走同一条路。
      */
-    const internal = new Set([`${record.traceid}/$exec`, `${record.traceid}/$run`]);
+    const internal = new Set([execLog(record.traceid, record.nodeId), `${record.traceid}/$run`]);
     const byExecution = s.store.appended(0).filter((v) => v.provenance.execution_id === executionId);
     const commit = byExecution.find((v) => v.object_id === `${record.traceid}/$run`);
     // 产物：provenance 记着是哪次执行写的 —— 不靠名字猜
@@ -410,7 +417,7 @@ export function execution(
       `  消费的消息：${record.claimed.join("、") || "（无）"}`,
       observation === undefined
         ? "  观测：未采集（这次执行没有留下 $exec —— backend 没给 diagnostics）"
-        : `  观测：${record.traceid}/$exec@${String(observation.version)}（\`show\` 看详情）`,
+        : `  观测：${execLog(record.traceid, record.nodeId)}@${String(observation.version)}（\`show\` 看详情）`,
       commit === undefined
         ? "  提交：未记录（这次执行没有留下 $run）"
         : `  提交：${record.traceid}/$run@${String(commit.version)}（\`show\` 看 consumed / produced）`,
@@ -440,7 +447,7 @@ export function execution(
       observation:
         observation === undefined
           ? { available: false, why: "未采集：这次执行没有留下 $exec" }
-          : { available: true, ref: `${record.traceid}/$exec@${String(observation.version)}` },
+          : { available: true, ref: `${execLog(record.traceid, record.nodeId)}@${String(observation.version)}` },
       ...(commit === undefined
         ? {}
         : { commit: `${record.traceid}/$run@${String(commit.version)}` }),
@@ -964,7 +971,8 @@ export function reclaim(dir: string, actor: Principal, keep: number): CommandRes
 
     const boxes: { path: string; exec: string }[] = [];
     for (const inst of s.control.subtree(actor, root)) {
-      for (const v of s.store.history(`${inst.traceid}/$exec`)) {
+      for (const n of Object.keys(s.registry.template(inst.traceid).nodes))
+      for (const v of s.store.history(execLog(inst.traceid, n))) {
         const d = ((v.body as Record<string, unknown>).diagnostics ?? {}) as {
           sandbox?: { path?: string; retained?: boolean };
         };

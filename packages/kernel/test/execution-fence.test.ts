@@ -30,12 +30,15 @@ describe("迟到结果不能覆盖已关闭的 attempt", () => {
     expect(runtime.claimAgent().kind).toBe("claimed");
     const before = runtime.snapshot();
     const old = runtime.record("exec-1");
+    // 第一次 attempt 结算时已经写了一版 $exec（V6 阶段 5：终态归对象库），
+    // 所以这里钉的是"迟到结果**什么都不加**"，而不是"一版都没有"
+    const history = store.history("job/$exec");
     expect(deliver(runtime, "exec-1", mode)).toHaveProperty("reason");
     expect(runtime.snapshot()).toEqual(before);
     expect(runtime.record("exec-1")).toEqual(old);
     expect(runtime.message(message).state).toBe("CLAIMED");
     expect(runtime.orphanedExecutions()).toEqual([]); // 旧结果不能清掉新 attempt 的 driving
-    expect(store.history("job/$exec")).toHaveLength(0);
+    expect(store.history("job/$exec")).toEqual(history);
     runtime.checkInvariants();
     runtime.applyAgentResult("exec-2", { executionId: "exec-2", termination: "DONE", emissions: {} });
     expect(runtime.message(message).state).toBe("CONSUMED");

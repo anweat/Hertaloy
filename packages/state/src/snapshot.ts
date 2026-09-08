@@ -13,6 +13,7 @@
  */
 
 import type { Principal } from "@nodeflow/contracts";
+import { execLog } from "@nodeflow/kernel";
 import type { RunState } from "./run-state.js";
 
 export interface RunSnapshot {
@@ -158,7 +159,9 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
   const progressOf = new Map<string, ProgressReport>();
   const progressBroken = new Map<string, string>();
   for (const instance of roots) {
-    for (const version of state.store.history(`${instance.traceid}/$exec`)) {
+    // `$exec` 按节点索引（V6：节点有自己的对象命名空间）
+    for (const nodeId of Object.keys(state.registry.template(instance.traceid).nodes))
+    for (const version of state.store.history(execLog(instance.traceid, nodeId))) {
       const body = version.body as {
         execution_id?: string;
         diagnostics?: { progress?: unknown };
