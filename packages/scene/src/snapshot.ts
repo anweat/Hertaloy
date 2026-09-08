@@ -139,22 +139,6 @@ export const SnapshotObligation = z.object({
   originNode: z.string().optional(),
 });
 
-/**
- * 一个节点**最后一次成功提交**消费了哪条消息。
- *
- * 存在的理由：`records` 只有 agent 节点有（见 `phaseOfNode`）。没有这一份，
- * 同步节点的相位只能默认成 idle —— 而那是一句正面断言，说的却是一件
- * 从来没被观测过的事。
- */
-export const SnapshotCommit = z.object({
-  traceid: z.string(),
-  node: z.string(),
-  /** 精确提交正文；旧快照可能只有 consumed。 */
-  ref: z.string().optional(),
-  /** 通常恰好一条（一次提交消费一条消息）。留数组是照抄 `$run` 的形状。 */
-  consumed: z.array(z.string()).default([]),
-});
-
 /** 后端送来的一整份。 */
 export const Snapshot = z.object({
   root: z.string().nullable(),
@@ -165,7 +149,6 @@ export const Snapshot = z.object({
   records: z.array(SnapshotRecord).default([]),
   objects: z.array(SnapshotObject).default([]),
   obligations: z.array(SnapshotObligation).default([]),
-  commits: z.array(SnapshotCommit).default([]),
 });
 
 export type Snapshot = z.infer<typeof Snapshot>;

@@ -114,11 +114,6 @@ export interface Cell {
    * 不铺在图上（审核 F02）。
    */
   readonly execution?: string;
-  /** 同步节点当前结果的证据。消息可能已回收，提交正文仍可按精确 ref 读取。 */
-  readonly result?: {
-    readonly message: { readonly id: string; readonly available: boolean };
-    readonly commit?: string;
-  };
   /** 0..1，最近窗口里的流量 → 亮度 */
   readonly activity: number;
   /** 内部规模 → 泡泡半径 / 子树宽度 */

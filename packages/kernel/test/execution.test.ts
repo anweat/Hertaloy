@@ -531,7 +531,24 @@ describe("★ 入站校验：两条路径同一处实现", () => {
     expect(a.reason).toMatch(/上下文编译失败/);
   });
 
-  it("两条路径都不留残骸", async () => {
+  /**
+   * ★ 两条路径都不留**残骸** —— 但"残骸"指的是 `RUNNING` 记录，不是"任何记录"。
+   *
+   * 残骸的定义是**它挡住终止**：一条永久 RUNNING 的记录让实例再也 settle 不了，
+   * 而且 `checkInvariants` 会当场判它违规（RUNNING 记录引用了一条 FAILED 消息）。
+   * 一条 `SETTLED` 记录不挡任何东西，它是事实不是残骸。
+   *
+   * 两条路径在这里**本来就不对称，而且那个不对称是对的**：
+   *
+   *   agent 路径  `#prepare` 排在**派发之前**（`markDriving` / `ledger.put` 之后才是派发）。
+   *               入站被拒 ⇒ 这次执行**从未开始** ⇒ 一条记录都不该有。
+   *   同步路径    没有"派发"这一步 —— `#pickWork` 挑中就是在跑。
+   *               入站被拒 ⇒ 它**跑了并且失败了** ⇒ 留一条 SETTLED/FAILED。
+   *
+   * 不给同步路径留这条记录，一个首次就失败的节点在画布上看起来像从没跑过，
+   * 而那正是本轮要消灭的"idle 是正面断言"。
+   */
+  it("两条路径都不留残骸 —— 残骸指 RUNNING，不指任何记录", async () => {
     const async_ = build({ agent: { argv: ["x"] } });
     const sync = build({ handler: "noop" });
 
@@ -539,12 +556,18 @@ describe("★ 入站校验：两条路径同一处实现", () => {
     sync.step();
 
     for (const rt of [async_, sync]) {
-      // 拒绝路径根本不产生要回滚的东西 —— 由 #prepare 是纯的、且排在
-      // 所有 mutation 之前来保证，不靠"记得回滚"
-      expect(rt.records()).toHaveLength(0);
+      // 真正要挡的：没有在途执行，因此不挡终止，也不违反不变量
+      expect(rt.records().filter((r) => r.status === "RUNNING")).toHaveLength(0);
       expect(rt.terminationBlockers("job-1")).not.toContain("1 个在途 execution");
       rt.checkInvariants();
     }
+
+    // agent：入站被拒发生在派发之前，这次执行从未开始
+    expect(async_.records()).toHaveLength(0);
+    // 同步：没有派发这一步，被拒就是跑过并失败
+    const [only] = sync.records();
+    expect(only?.status).toBe("SETTLED");
+    expect(only?.termination).not.toBe("DONE");
   });
 
   it("★ bind 段对两条路径都到得了 —— 同步路径不是「只拿端口变量」", () => {

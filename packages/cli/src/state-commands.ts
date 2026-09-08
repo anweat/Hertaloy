@@ -378,10 +378,20 @@ export function execution(
       .history(actor, `${record.traceid}/$exec`)
       .find((v) => (v.body as { execution_id?: string }).execution_id === executionId);
 
+    /**
+     * 本次提交的 `$run` —— 单列，不混进用户产物。
+     *
+     * 与 `$exec` 同理：它们是内核为这次执行写的记录，不是节点的产出。
+     * 单列出来，页面点开就能读到 consumed / produced 的正文，
+     * 而这正是 `Cell.result.commit` 曾经要解决的事 —— 现在它落在
+     * 执行上，同步与 agent 走同一条路。
+     */
+    const internal = new Set([`${record.traceid}/$exec`, `${record.traceid}/$run`]);
+    const byExecution = s.store.appended(0).filter((v) => v.provenance.execution_id === executionId);
+    const commit = byExecution.find((v) => v.object_id === `${record.traceid}/$run`);
     // 产物：provenance 记着是哪次执行写的 —— 不靠名字猜
-    const artifacts = s.store
-      .appended(0)
-      .filter((v) => v.provenance.execution_id === executionId && v.object_id !== `${record.traceid}/$exec`)
+    const artifacts = byExecution
+      .filter((v) => !internal.has(v.object_id))
       .map((v) => ({ ref: `${v.object_id}@${String(v.version)}`, kind: v.kind }));
 
     /**
@@ -401,6 +411,9 @@ export function execution(
       observation === undefined
         ? "  观测：未采集（这次执行没有留下 $exec —— backend 没给 diagnostics）"
         : `  观测：${record.traceid}/$exec@${String(observation.version)}（\`show\` 看详情）`,
+      commit === undefined
+        ? "  提交：未记录（这次执行没有留下 $run）"
+        : `  提交：${record.traceid}/$run@${String(commit.version)}（\`show\` 看 consumed / produced）`,
       `  产物 ${String(artifacts.length)} 个${artifacts.length === 0 ? "" : `：${artifacts.map((a) => a.ref).join("、")}`}`,
       ...(live === null
         ? []
@@ -428,6 +441,9 @@ export function execution(
         observation === undefined
           ? { available: false, why: "未采集：这次执行没有留下 $exec" }
           : { available: true, ref: `${record.traceid}/$exec@${String(observation.version)}` },
+      ...(commit === undefined
+        ? {}
+        : { commit: `${record.traceid}/$run@${String(commit.version)}` }),
       artifacts,
       ...(live === null ? {} : { live }),
     } as never);

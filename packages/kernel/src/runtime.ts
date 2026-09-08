@@ -833,7 +833,7 @@ export class Runtime implements Snapshotable {
       termination: result.termination,
       artifacts: (result.artifacts ?? []).map((a) => a.object_id),
       ...(result.usage === undefined ? {} : { usage: result.usage as never }),
-    });
+    }, record.executionId);
 
     return {
       consumed: input.id,
@@ -1222,8 +1222,44 @@ export class Runtime implements Snapshotable {
     const port = node.ports[input.target.port];
     invariant(port !== undefined, `节点 ${nodeId} 无端口 ${input.target.port}`);
 
+    /**
+     * **一次同步处理也是一次执行。**
+     *
+     * 记录此前只覆盖 agent 节点，理由写成"三段式的账是给'外面有进程在跑、
+     * 崩了要接管'用的，同步 handler 没有这个需要" —— 那句话解释的是
+     * **为什么需要 `RUNNING` 这个状态**，不是**为什么不该有记录**。
+     *
+     * 后果是渲染层拿不到"这个节点跑过没有、怎么结束的"，只能从 `$run` 与
+     * 消息状态里拼，而那条重建路径已经被证伪过两次（首次失败显示 idle、
+     * 回收后旧失败盖掉新成功）。
+     *
+     * 同步记录**直接是 `SETTLED`**：它没有可观测的 RUNNING 窗口（那一条是真的），
+     * 所以不产生 `execution` 义务、不进孤儿判定、不影响终止 —— 只是把
+     * "跑过，这么结束的"这个事实记在它该在的地方。
+     *
+     * 整段在 `step()` 的事务里，抛异常一起回滚。
+     */
+    const executionId = this.#ledger.nextId();
+    const settle = (termination: Termination): void => {
+      this.#ledger.put({
+        executionId,
+        traceid,
+        nodeId,
+        status: "SETTLED" as const,
+        termination,
+        claimed: [input.id],
+        generation: instance.generation,
+      });
+    };
+    /** 失败也要留记录 —— 首次就失败的节点不能看起来像没跑过。 */
+    const failed = (reason: string, termination: Termination): StepFailure => {
+      settle(termination);
+      return this.#fail(input, reason);
+    };
+
     const prepared = this.#prepare(input, node, port);
-    if (!prepared.ok) return this.#fail(input, prepared.reason);
+    // 入站校验不过：真故障，与 agent 路径的同类原因同名
+    if (!prepared.ok) return failed(prepared.reason, "FAILED");
 
     invariant(node.handler !== undefined, `节点 ${nodeId} 声明了 agent 段，走三段式而非同步路径`);
     const fn = this.#handlers.get(node.handler);
@@ -1234,7 +1270,7 @@ export class Runtime implements Snapshotable {
     for (const [portName, value] of Object.entries(outputs)) {
       const issue = this.#checkContract(node.ports[portName] as Port, value);
       if (issue !== null) {
-        return this.#fail(input, `端口 \`${portName}\` 出站契约不符：${issue}`);
+        return failed(`端口 \`${portName}\` 出站契约不符：${issue}`, "INVALID_OUTPUT");
       }
     }
 
@@ -1242,11 +1278,12 @@ export class Runtime implements Snapshotable {
       this.#stageContext(template, node, traceid, nodeId, input),
       outputs,
     );
-    if (!outcome.ok) return this.#fail(input, outcome.reason);
+    if (!outcome.ok) return failed(outcome.reason, "INVALID_OUTPUT");
 
     const delivered = this.#commitPlan(outcome.plan);
     this.#queue.setState(input.id, "CONSUMED");
-    this.#recordSnapshot(traceid, nodeId, [input.id], delivered, {});
+    settle("DONE");
+    this.#recordSnapshot(traceid, nodeId, [input.id], delivered, {}, executionId);
     return {
       consumed: input.id,
       traceid,
@@ -1345,6 +1382,7 @@ export class Runtime implements Snapshotable {
     consumed: readonly string[],
     produced: readonly string[],
     extra: Readonly<Record<string, Json>>,
+    executionId?: string,
   ): void {
     const seq = this.#registry.bumpSeq(trace);
     // id 前缀跟着 traceid 走，不是 `run/<traceid>`。
@@ -1355,7 +1393,13 @@ export class Runtime implements Snapshotable {
       `${trace}/$run`,
       "run",
       { seq, node: nodeId, consumed: [...consumed], produced: [...produced], ...extra },
-      { traceid: trace, node_id: nodeId, derived_from: [] },
+      {
+        traceid: trace,
+        node_id: nodeId,
+        derived_from: [],
+        // 带上执行身份，`/execution?id=` 才追得到这次提交的正文
+        ...(executionId === undefined ? {} : { execution_id: executionId }),
+      },
     );
   }
 

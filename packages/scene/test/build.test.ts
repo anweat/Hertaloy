@@ -196,10 +196,16 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
     expect(phase("job-1/a3#scan")).toBe("done");
   });
 
-  it("handler 最后一条消息 FAILED → failed，不是 done", () => {
+  /**
+   * 这条原来推一条合成的 FAILED 消息到 `plan` 上，断言它盖过成功。
+   * V6 阶段 1a 之后那个状态**构造不出来**了：同步节点失败必留记录
+   * （`#commitSync` 每条终局路径都收口）。所以改成钉可构造的那种。
+   */
+  it("同步节点失败 → 记录带非 DONE 的终止原因，相位是 failed", () => {
     const snapshot = parseSnapshot(FIXTURE);
-    snapshot.messages.push({
-      id: "msg-99", target: { traceid: "job-1", node: "plan", port: "in" }, state: "FAILED",
+    snapshot.records.push({
+      executionId: "exec-sync-fail", traceid: "job-1", nodeId: "plan",
+      status: "SETTLED", termination: "FAILED",
     });
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("failed");
   });
@@ -210,17 +216,26 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#idle")?.phase).toBe(phase);
   });
 
-  it("旧失败仍保留、后一次成功消息已回收时，旧失败不覆盖新成功", () => {
+  /**
+   * 这两条原来钉的是"从 `$run` 与消息重建相位"那条路上的两个坑：旧失败盖掉
+   * 已回收的新成功、提交被回收后退回 idle。V6 阶段 1a 之后**重建整段退场** ——
+   * 记录是权威，而记录不随消息回收。
+   *
+   * 保留的是性质本身：**消息回收不影响"它跑过、这么结束的"**。
+   */
+  it("★ 消息被回收也不改变相位 —— 记录不随队列回收", () => {
     const snapshot = parseSnapshot(FIXTURE);
-    snapshot.messages = snapshot.messages.filter((m) => m.target.traceid !== "job-1" || m.target.node !== "plan");
-    snapshot.messages.push({ id: "msg-90", target: { traceid: "job-1", node: "plan", port: "in" }, state: "FAILED" });
-    snapshot.commits.find((c) => c.traceid === "job-1" && c.node === "plan")!.consumed = ["msg-99"];
+    snapshot.messages = snapshot.messages.filter(
+      (m) => m.target.traceid !== "job-1" || m.target.node !== "plan",
+    );
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("done");
   });
 
-  it("提交被回收掉也不退回 idle —— 队列只丢 CONSUMED，那次成功比现存的都老", () => {
+  it("★ 有记录时不看消息 —— 一条无关的旧 FAILED 盖不掉记录", () => {
     const snapshot = parseSnapshot(FIXTURE);
-    snapshot.messages = snapshot.messages.filter((m) => m.id !== "msg-1");
+    snapshot.messages.push({
+      id: "msg-90", target: { traceid: "job-1", node: "plan", port: "in" }, state: "FAILED",
+    });
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("done");
   });
 });

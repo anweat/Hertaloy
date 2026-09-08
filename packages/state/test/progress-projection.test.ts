@@ -220,15 +220,15 @@ it("★ 多级资产名的归属是写它的实例，不是它的父路径", asy
 });
 
 /**
- * ★ 同步提交的事实要出得去（否则同步节点的相位只能默认成 idle）。
+ * ★ 同步节点跑过这件事要出得去。
  *
- * `records` 只覆盖 agent 节点 —— 三段式的账是给"外面有进程在跑、崩了要接管"
- * 用的，同步 handler 没有这个需要。而渲染层把"没有记录"读成 idle，
- * 于是**跑完的同步图和从没跑过的图长得一模一样**。
+ * 这两条原来验的是 `RunSnapshot.commits` —— 一份从 `$run` 拼出来的投影，
+ * 存在的理由是"同步 handler 没有执行记录"。V6 阶段 1a 之后**它有了**，
+ * 所以投影退场，性质由 `records` 直接承担。
  *
- * 事实一直在 `<traceid>/$run` 里，缺的只是这一行导出。
+ * 保留的是性质本身：跑过的出得去、没跑过的不出现、跟着授权子树走。
  */
-it("★ 每个节点最后一次提交出得去，且只出最后一次", () => {
+it("★ 同步节点的每次执行都出得去，各带自己的终止原因", () => {
   const state = RunState.open(dir, { backend: new ReportsProgress() });
   try {
     const ref = registerContainerTemplate(state.store, "root", SYNC_TEMPLATE, "root_config");
@@ -240,21 +240,20 @@ it("★ 每个节点最后一次提交出得去，且只出最后一次", () => 
     state.runtime.drain();
     state.persist();
 
-    const commits = exportSnapshot(state, HUMAN).commits as
-      { traceid: string; node: string; consumed: string[] }[];
+    const records = exportSnapshot(state, HUMAN).records as
+      { traceid: string; nodeId: string; status: string; termination?: string }[];
 
-    // a 跑了两次，只留最后一次；b 跑了一次
-    expect(commits.map((c) => c.node).sort()).toEqual(["a", "b"]);
-    expect(commits.find((c) => c.node === "a")?.consumed).toEqual(["msg-2"]);
-    expect(commits.find((c) => c.node === "b")?.consumed).toEqual(["msg-3"]);
-    // 同步节点确实一条执行记录都没有 —— 这正是需要 commits 的原因
-    expect(state.runtime.records()).toHaveLength(0);
+    // a 跑了两次、b 一次 —— 每次都留一条，不再是"每个节点最后一次"
+    expect(records.map((r) => r.nodeId).sort()).toEqual(["a", "a", "b"]);
+    expect(records.every((r) => r.status === "SETTLED" && r.termination === "DONE")).toBe(true);
+    // 从没跑过的节点一条都没有 —— 记录是"跑过"的证据，不是"存在"的证据
+    expect(records.some((r) => r.nodeId === "c")).toBe(false);
   } finally {
     state.close();
   }
 });
 
-it("commits 跟着授权子树走，看不见的实例不出现", () => {
+it("执行记录跟着授权子树走，看不见的实例不出现", () => {
   const state = RunState.open(dir, { backend: new ReportsProgress() });
   try {
     const leaf = registerContainerTemplate(state.store, "leaf", SYNC_TEMPLATE);
@@ -268,10 +267,10 @@ it("commits 跟着授权子树走，看不见的实例不出现", () => {
     state.runtime.drain();
     state.persist();
 
-    const all = exportSnapshot(state, HUMAN).commits as { traceid: string }[];
-    expect(new Set(all.map((c) => c.traceid))).toEqual(new Set(["job-1", "job-1/k1"]));
-    const sub = exportSnapshot(state, HUMAN, "job-1/k1").commits as { traceid: string }[];
-    expect(new Set(sub.map((c) => c.traceid))).toEqual(new Set(["job-1/k1"]));
+    const all = exportSnapshot(state, HUMAN).records as { traceid: string }[];
+    expect(new Set(all.map((r) => r.traceid))).toEqual(new Set(["job-1", "job-1/k1"]));
+    const sub = exportSnapshot(state, HUMAN, "job-1/k1").records as { traceid: string }[];
+    expect(new Set(sub.map((r) => r.traceid))).toEqual(new Set(["job-1/k1"]));
   } finally {
     state.close();
   }

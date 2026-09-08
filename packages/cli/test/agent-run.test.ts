@@ -105,7 +105,8 @@ describe("★ 落盘的 run 真跑 agent（E1）", () => {
     await drain(dir, HUMAN, backend());
     const s = RunState.open(dir, { readOnly: true });
     try {
-      const records = s.runtime.records();
+      // 同步节点现在也留记录（V6 阶段 1a），所以按 agent 那个节点挑出来看
+      const records = s.runtime.records().filter((r) => r.nodeId === "worker");
       expect(records).toHaveLength(1);
       expect(records[0]?.status).toBe("SETTLED");
       expect(records[0]?.termination).toBe("DONE");

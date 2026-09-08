@@ -114,38 +114,44 @@ it("终态到达时旧现场请求仍在途，返回后会主动补查结算详�
   expect(JSON.stringify(elements.get("live-body"))).toContain("DONE");
 });
 
-it("同步节点可读失败消息；成功消息已回收时解释缺席并读精确提交", async () => {
+/**
+ * ★ 同步节点走和 agent 完全相同的那条路。
+ *
+ * 原来这两条测的是 `Cell.result` 那条分支（相位旁边挂一份证据）。V6 阶段 1a
+ * 之后同步节点有了 `Cell.execution`，于是页面只有一条路径：`/execution?id=`。
+ * 认领的消息、观测、提交、产物都成为可点开的引用 —— 失败原因在**消息**上，
+ * 点进去看，不 denormalize 到执行详情里（一条重试过的消息带的是上一次的失败）。
+ */
+it("同步节点从执行详情点进去，能读到失败消息与精确提交", async () => {
   const { ctx, elements } = page();
   await runInContext(`
-    api = async path => path.startsWith('/message') ? {lastFailure:'缺少 value'} : {};
-    scene.cells = [{id:'job#work',kind:'node',parent:'job',phase:'failed',result:{message:{id:'msg-1',available:true}}}];
+    api = async path => {
+      if (path.startsWith('/message')) return {lastFailure:'缺少 value'};
+      if (path.startsWith('/object')) return {body:{consumed:['msg-2']}};
+      return {execution:{claimed:['msg-1']}, observation:{available:false}, commit:'job/$run@1', artifacts:[]};
+    };
+    scene.cells = [{id:'job#work',kind:'node',parent:'job',phase:'failed',execution:'exec-1'}];
     show(scene.cells[0]);
   `, ctx);
-  expect(JSON.stringify(elements.get("live-body"))).toContain("缺少 value");
-  await runInContext(`
-    api = async path => { if (path.startsWith('/message')) throw new Error('不该查询回收消息'); return {body:{consumed:['msg-2']}}; };
-    scene.cells[0] = {id:'job#work',kind:'node',parent:'job',phase:'done',result:{message:{id:'msg-2',available:false},commit:'job/$run@1'}};
-    renderDetail();
-  `, ctx);
-  expect(JSON.stringify(elements.get("live-body"))).toContain("已回收");
-  expect(JSON.stringify(elements.get("live-body"))).toContain("msg-2");
-  expect(JSON.stringify(elements.get("live-body"))).not.toContain("不该查询");
-  const children = elements.get("live-body")!.children as { textContent: string; listeners: Record<string, () => Promise<void>> }[];
+  const children = elements.get("live-body")!.children as
+    { textContent: string; listeners: Record<string, () => Promise<void>> }[];
+  // 认领的消息与提交都在，点开各读各的正文
+  await children.find((c) => c.textContent === "msg-1")!.listeners.click!();
+  expect(children.at(-1)!.textContent).toContain("缺少 value");
   await children.find((c) => c.textContent === "job/$run@1")!.listeners.click!();
   expect(children.at(-1)!.textContent).toContain('"consumed"');
 });
 
-it("同步失败消息仍在读取时同节点出现新提交，旧响应不能覆盖成功结果", async () => {
+it("同步节点的执行详情仍在读取时换了选中项，旧响应不能覆盖", async () => {
   const { ctx, elements } = page();
   await runInContext(`
-    let finishMessage;
-    api = path => path.startsWith('/message') ? new Promise(resolve => { finishMessage = resolve; }) : Promise.resolve({});
-    scene.cells = [{id:'job#work',kind:'node',parent:'job',phase:'failed',result:{message:{id:'msg-1',available:true}}}];
-    show(scene.cells[0]);
-    scene.cells[0] = {id:'job#work',kind:'node',parent:'job',phase:'done',result:{message:{id:'msg-2',available:false},commit:'job/$run@1'}};
-    renderDetail();
-    finishMessage({lastFailure:'OLD FAILURE'});
+    let finish;
+    api = () => new Promise(resolve => { finish = resolve; });
+    liveFor = 'exec-1';
+    const pending = renderLive();
+    liveFor = 'exec-2';
+    finish({execution:{claimed:['OLD-MSG']}, observation:{available:false}, artifacts:[]});
+    pending;
   `, ctx);
-  expect(JSON.stringify(elements.get("live-body"))).toContain("job/$run@1");
-  expect(JSON.stringify(elements.get("live-body"))).not.toContain("OLD FAILURE");
+  expect(JSON.stringify(elements.get("live-body"))).not.toContain("OLD-MSG");
 });

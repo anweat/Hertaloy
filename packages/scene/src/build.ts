@@ -123,49 +123,42 @@ function phaseOf(record: Snapshot["records"][number] | undefined): Phase {
 /**
  * 一个节点的相位。
  *
- * `ExecutionRecord` **只覆盖 agent 节点** —— 三段式的账是给"外面有进程在跑、
- * 崩了要接管"用的，同步 handler 没有这个需要，所以它天然没有记录。
- * 那是内核对的地方；错的是把"没有记录"读成 idle：**idle 是一句正面断言**，
- * 而这里说的其实是"这类节点不报"。夹具里 `plan`（消费了 msg-1、写了一版
- * `$run`）与 `idle`（一次都没跑）因此长得一模一样。
+ * **执行记录是权威。**V6 阶段 1a 之后同步节点也留记录（`#commitSync` 每条
+ * 终局路径都收口），所以"跑过没有、怎么结束的"不再需要从 `$run` 与消息状态
+ * 里拼 —— 那条重建路径被证伪过两次（首次失败显示 idle、回收后旧失败盖掉新成功），
+ * 现在它整段退场，连同 `RunSnapshot.commits` 与 `Cell.result`。
  *
- * 同步那半的事实一直都在，分在两处，而且两处都耐久：
+ * 只剩一格兜底：**一条记录都没有，但这个位置上发生过终局的事**。两种来路，
+ * 都不是"执行"：
  *
- *   成功 → `$run` 一版（对象库只增不删）→ `snapshot.commits`
- *   失败 → 消息进 FAILED / DISCARDED（队列只回收 CONSUMED，
- *          FAILED 留着当排查现场）→ `snapshot.messages`
+ *   · agent 节点入站校验在**派发之前**被拒（`#claim` 的 `#prepare` 排在
+ *     `markDriving` 之前，那次执行从未开始，所以内核不给它记录 —— 那是对的）
+ *   · 排队消息被截断丢弃（根本没被派发过）
  *
- * 按投递序号比较最后一次成功与失败/截断，沿用本投影的 `seqOf` 刻度。
- * FAILED / DISCARDED 不回收，所以现存消息可能比已回收的成功更老；
- * 不能拿“仍在窗口里”当作“更新”。没有成功提交也不等于没有失败。
+ * 两种都不能显示成 idle —— idle 是一句正面断言。
+ * **同步路径没有这一格**：它没有"派发"这一步，被拒就是跑过并失败，有记录。
+ *
+ * 有记录时不再看消息 —— 那是本函数一直以来的行为，不是本轮新加的取舍。
  */
-function stateOfNode(
+function phaseOfNode(
   traceid: string,
   nodeId: string,
   snapshot: Snapshot,
   record: Snapshot["records"][number] | undefined,
-): Pick<Cell, "phase" | "result"> {
-  if (record !== undefined) return { phase: phaseOf(record) };
+): Phase {
+  if (record !== undefined) return phaseOf(record);
 
-  const commit = snapshot.commits.find((c) => c.traceid === traceid && c.node === nodeId);
-  let latest = Math.max(0, ...(commit?.consumed.map(seqOf) ?? []));
-  let phase: Phase = commit === undefined ? "idle" : "done";
-  let messageId = commit?.consumed.find((id) => seqOf(id) === latest);
-  let commitRef = commit?.ref;
+  let phase: Phase = "idle";
+  let latest = 0;
   for (const m of snapshot.messages) {
-    if (m.target.traceid !== traceid || m.target.node !== nodeId || seqOf(m.id) < latest) continue;
-    if (m.state === "CONSUMED") phase = "done";
-    else if (m.state === "FAILED") phase = "failed";
-    else if (m.state === "DISCARDED") phase = "voided";
-    else continue;
+    if (m.target.traceid !== traceid || m.target.node !== nodeId) continue;
+    const ended: Phase | undefined =
+      m.state === "FAILED" ? "failed" : m.state === "DISCARDED" ? "voided" : undefined;
+    if (ended === undefined || seqOf(m.id) < latest) continue;
     latest = seqOf(m.id);
-    messageId = m.id;
-    if (m.state !== "CONSUMED") commitRef = undefined;
+    phase = ended;
   }
-  return { phase, ...(messageId === undefined ? {} : { result: {
-    message: { id: messageId, available: snapshot.messages.some((m) => m.id === messageId) },
-    ...(commitRef === undefined ? {} : { commit: commitRef }),
-  } }) };
+  return phase;
 }
 
 /** 身份只在这一处拼。消费方读 `id`，不重新推导。 */
@@ -309,7 +302,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
                 ...(current.progress.note === undefined ? {} : { note: current.progress.note }),
               },
             }),
-        ...stateOfNode(instance.traceid, nodeId, snapshot, current),
+        phase: phaseOfNode(instance.traceid, nodeId, snapshot, current),
         ...(current?.progressUnavailable === undefined ? {} : { progressUnavailable: current.progressUnavailable }),
         ...(current?.executionId === undefined ? {} : { execution: current.executionId }),
         activity: activityOf(id),
