@@ -10,12 +10,32 @@
 
 import { z } from "zod";
 import { Json } from "./json.js";
-import { TraceId, AliasName } from "./identity.js";
+import { TraceId, AliasName, TRACE_SEGMENT_PATTERN } from "./identity.js";
 import { PortName } from "./port.js";
 
-export const NODE_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-
-export const NodeId = z.string().regex(NODE_ID_PATTERN, "节点 id 必须是标识符");
+/**
+ * 节点 id **就是实例路径的一段** —— 不是另一种"标识符"。
+ *
+ * 它原来有自己的字符集 `/^[A-Za-z_][A-Za-z0-9_-]*$/`，比 traceid 段宽：
+ * 允许大写和下划线。今天不打架，是因为 spawn 的路径段**由调用方给**
+ * （`slot` 命名声明、`segment` 命名实例，两者解耦），节点 id 从不进 traceid。
+ *
+ * 而节点是**默认实例化**的：没有调用方来给段，段只能是节点 id 自己。
+ * 于是这两套字符集必须并成一套 —— 并且宽的那套不能留：
+ *
+ * 实例身份必须**存得下**。Windows / macOS 默认不区分大小写，`Coder` 与
+ * `coder` 落到同一个目录，`objects.ts` 的碰撞检测会当场拒写 —— 一棵完全
+ * 合法的容器树变成写不进去的树。那个检测是给对象 id 兜的**诊断**，
+ * 不该升格成实例身份的**准入**。
+ *
+ * 收紧的实际代价是零：全仓 80 个用例文件没有一个节点 id 用到放宽的那部分。
+ */
+export const NodeId = z
+  .string()
+  .regex(
+    TRACE_SEGMENT_PATTERN,
+    "节点 id 必须是合法的实例路径段：小写字母数字起止，中间可含连字符（它会成为 traceid 的一段）",
+  );
 
 /** 端点地址 = (实例路径, 节点, 端口)。 */
 export const Endpoint = z
