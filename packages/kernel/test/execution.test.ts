@@ -306,8 +306,17 @@ describe("★ 产物地址由内核决定，不是 agent 报什么就写什么�
   });
 });
 
-describe("★ 可变头封顶：已消费消息不无限累积（GC 第一条）", () => {
-  function rigPlain(keep: number) {
+describe("★ 头只装在途，历史一条不少（V6 阶段 5 · 消息那半）", () => {
+  /**
+   * 这里原来叫"可变头封顶"，钉的是 `keepConsumedMessages`：保留最近 N 条已消费
+   * 消息，更老的丢掉。那套机制在丢一件**只有队列里有**的东西，所以它只能在
+   * "头无界增长"和"历史消失"之间选一个 —— 而两边都不对，用例也只能钉住
+   * "早期消息已被清掉"这种把损失当成规格的断言。
+   *
+   * 现在终态消息先落进 `<traceid>/<node>/$msg` 再离队，选择不存在了。
+   * 验收因此换成两条**同时**成立的性质。
+   */
+  function rigPlain() {
     const s = new ObjectStore();
     const ref = registerContainerTemplate(
       s,
@@ -327,56 +336,99 @@ describe("★ 可变头封顶：已消费消息不无限累积（GC 第一条）
     );
     const r = new InstanceRegistry(s);
     r.createRoot(ref, "job-1");
-    const rt = new Runtime(s, r, { keepConsumedMessages: keep });
+    const rt = new Runtime(s, r, {});
     rt.registerHandler("noop", () => ({}));
-    return rt;
+    return { rt, store: s, registry: r };
   }
 
-  it("投 500 条 → 头里留的远少于 500，且封在上限附近", () => {
-    const rt = rigPlain(50);
-    for (let i = 0; i < 500; i += 1) {
-      rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
-      rt.drain();
-    }
-    expect(rt.messages().length).toBeLessThan(200);
-    rt.checkInvariants();
-  });
-
-  it("★ 只丢 CONSUMED —— 在途的一条都不动", () => {
-    const rt = rigPlain(5);
-    for (let i = 0; i < 100; i += 1) {
-      rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
-      rt.drain();
-    }
-    // 再投几条不 drain，它们必须留着
-    for (let i = 0; i < 3; i += 1) rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
-    expect(rt.pending()).toHaveLength(3);
-    expect(rt.messages().filter((m) => m.state === "QUEUED")).toHaveLength(3);
-  });
-
-  it("负数 = 不清理 —— 需要完整历史时可关掉", () => {
-    const rt = rigPlain(-1);
-    for (let i = 0; i < 100; i += 1) {
-      rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
-      rt.drain();
-    }
-    expect(rt.messages()).toHaveLength(100);
-  });
-
-  it("因果查询不受影响 —— RunSnapshot 存的是 id 字符串，不是消息本身", () => {
-    const rt = rigPlain(5);
+  function run(rt: Runtime, n: number): string[] {
     const ids: string[] = [];
-    for (let i = 0; i < 60; i += 1) {
+    for (let i = 0; i < n; i += 1) {
       ids.push(rt.send({ traceid: "job-1", node: "n", port: "in" }, { i }));
       rt.drain();
     }
-    // 早期消息已被清掉
-    expect(rt.messages().some((m) => m.id === ids[0])).toBe(false);
-    // 但快照仍记着它被消费过
+    return ids;
+  }
+
+  it("★ 跑完 500 条：队列空了，而 500 条一条不少", () => {
+    const { rt } = rigPlain();
+    const ids = run(rt, 500);
+    expect(rt.liveMessages()).toHaveLength(0);
+    expect(rt.messages()).toHaveLength(500);
+    // 最早那条 —— 原来这里断言的是"已被清掉"
+    expect(rt.message(ids[0] as string).state).toBe("CONSUMED");
+    rt.checkInvariants();
+  });
+
+  it("在途的一条都不动 —— 收口只对终态开", () => {
+    const { rt } = rigPlain();
+    run(rt, 100);
+    for (let i = 0; i < 3; i += 1) rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
+    expect(rt.pending()).toHaveLength(3);
+    expect(rt.liveMessages()).toHaveLength(3);
+    expect(rt.messages().filter((m) => m.state === "QUEUED")).toHaveLength(3);
+  });
+
+  it("★ 换一个 Runtime 仍查得到 —— 历史在对象库里，不在头里", () => {
+    const { rt, store, registry } = rigPlain();
+    const ids = run(rt, 20);
+    // 新 Runtime 不 restore 任何头，只共享对象库与实例树
+    const fresh = new Runtime(store, registry, {});
+    expect(fresh.liveMessages()).toHaveLength(0);
+    expect(fresh.messages()).toHaveLength(20);
+    expect(fresh.message(ids[0] as string).payload).toEqual({ i: 0 });
+  });
+
+  it("★ 截断丢弃的现场也在，原因跟着落库", () => {
+    const { rt } = rigPlain();
+    run(rt, 3);
+    // 不 drain，让它停在 QUEUED，然后截断
+    const doomed = rt.send({ traceid: "job-1", node: "n", port: "in" }, { i: 99 });
+    rt.truncate("job-1", "人工中止");
+
+    const m = rt.message(doomed);
+    expect(m.state).toBe("DISCARDED");
+    expect(m.failure).toContain("人工中止");
+    // 队列空了，但三条已消费 + 这条被丢的都还在
+    expect(rt.liveMessages()).toHaveLength(0);
+    expect(rt.messages()).toHaveLength(4);
+  });
+
+  it("★ 多节点交替投递时仍是投递序 —— 落库那半是按节点分组的", () => {
+    const st = new ObjectStore();
+    const node = {
+      kind: "handler" as const,
+      handler: "noop",
+      ports: { in: { direction: "receive" as const, servo: { vars: {} } } },
+    };
+    const ref = registerContainerTemplate(
+      st,
+      "flow",
+      { nodes: { a: node, b: node }, edges: {}, children: {} },
+      "root_config",
+    );
+    const reg = new InstanceRegistry(st);
+    reg.createRoot(ref, "job-1");
+    const rt = new Runtime(st, reg, {});
+    rt.registerHandler("noop", () => ({}));
+
+    // a b a b …：按节点分组会把它排成 aaa…bbb…
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      ids.push(rt.send({ traceid: "job-1", node: i % 2 === 0 ? "a" : "b", port: "in" }, { i }));
+      rt.drain();
+    }
+    expect(rt.messages().map((m) => m.id)).toEqual(ids);
+  });
+
+  it("因果查询仍成立 —— 而现在消息本身也查得到了", () => {
+    const { rt } = rigPlain();
+    const ids = run(rt, 60);
     const consumed = rt
       .snapshots("job-1")
       .flatMap((v) => (v.body.consumed as string[] | undefined) ?? []);
     expect(consumed).toContain(ids[0]);
+    expect(rt.messages().some((m) => m.id === ids[0])).toBe(true);
   });
 });
 

@@ -16,8 +16,13 @@ const HUMAN = { kind: "human", id: "local" } as const;
  * 有了真正的 `ExecutionRecord`，于是走**和 agent 完全相同的那条路**：
  * `Cell.execution` → `/execution?id=` → `claimed` 是哪条消息、`commit` 是
  * 哪一版 `$run`。性质没变，少了一套并存的证据字段。
+ *
+ * **V6 阶段 5 · 消息那半之后又少一样**：这条原来后半段要投 405 条填充消息，
+ * 把成功消息挤出保留窗口，再断言"消息已被回收，但执行记录还在" ——
+ * 那是把 `keepConsumedMessages` 的损失当成规格来钉。终态消息落库之后
+ * 那个损失不存在了，填充与断言一起删掉，换成更强的一条：**消息本身也读得到**。
  */
-it("同步节点的当前结果跨落盘可追到消息/提交；回收成功消息后仍可读提交", () => {
+it("同步节点的当前结果跨落盘可追到消息与提交，消息本身也还在", () => {
   const dir = mkdtempSync(join(tmpdir(), "hertaloy-handler-feedback-"));
   const state = RunState.open(dir);
   try {
@@ -45,10 +50,6 @@ it("同步节点的当前结果跨落盘可追到消息/提交；回收成功消
 
     const success = state.runtime.send({ traceid: "job", node: "work", port: "in" }, { value: 1 });
     state.runtime.drain();
-    // 默认保留窗口 200：让其它节点的后续提交真正回收 work 的成功消息。
-    for (let i = 0; i < 405; i++) state.runtime.send({ traceid: "job", node: "other", port: "in" }, { value: i });
-    state.runtime.drain();
-    expect(state.runtime.messages().some((m) => m.id === success)).toBe(false);
     expect(state.runtime.message(failed).state).toBe("FAILED");
     state.persist();
 
@@ -57,12 +58,14 @@ it("同步节点的当前结果跨落盘可追到消息/提交；回收成功消
     const detail = execution(dir, HUMAN, work.execution!).data as {
       execution: { termination?: string; claimed: string[] }; commit?: string;
     };
-    // ★ 消息已被回收，但执行记录与它认领的 id 都还在
     expect(detail.execution.termination).toBe("DONE");
     expect(detail.execution.claimed).toEqual([success]);
-    // ★ 提交正文仍按精确 ref 读得到
+    // ★ 提交正文按精确 ref 读得到
     expect(detail.commit).toBe("job/$run@1");
     expect(show(dir, HUMAN, detail.commit!).data).toHaveProperty("body.consumed", [success]);
+    // ★ 而被认领的那条消息**跨落盘仍然读得到** —— 原来这里断言的是它已被回收
+    expect(message(dir, HUMAN, success).data).toHaveProperty("message.state", "CONSUMED");
+    expect(message(dir, HUMAN, failed).data).toHaveProperty("message.state", "FAILED");
   } finally {
     state.close();
     rmSync(dir, { recursive: true, force: true });

@@ -1,4 +1,4 @@
-/** 头随历史增长多少 —— 阶段 1a 之后每条消息都留一条执行记录。 */
+/** 头随历史增长多少 —— 阶段 5 之后终态的执行与消息都归对象库，头只装在途。 */
 import { mkdtempSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,7 @@ const TPL = {
   edges: {}, children: {},
 };
 
-for (const m of [200, 800, 2000]) {
+for (const m of [200, 800, 2000, 5000]) {
   const dir = mkdtempSync(join(tmpdir(), "head-"));
   const s = RunState.open(dir);
   s.registry.createRoot(registerContainerTemplate(s.store, "root", TPL, "root_config"), "job");
@@ -24,11 +24,13 @@ for (const m of [200, 800, 2000]) {
   const ms = performance.now() - t0;
   const bytes = statSync(join(dir, "head.json")).size;
   const records = s.runtime.records().length;
-  const live = s.runtime.messages().length;
+  const history = s.runtime.messages().length;
+  const live = s.runtime.liveMessages().length;
   s.close();
   console.log(
     `M=${String(m).padStart(4)}  head.json ${(bytes / 1024).toFixed(1)} KiB  ` +
-    `记录 ${String(records)} 条  队列里 ${String(live)} 条  落盘总耗时 ${ms.toFixed(0)}ms`,
+    `记录 ${String(records)} 条  消息历史 ${String(history)} 条  ` +
+    `队列里 ${String(live)} 条  落盘总耗时 ${ms.toFixed(0)}ms`,
   );
   rmSync(dir, { recursive: true, force: true });
 }

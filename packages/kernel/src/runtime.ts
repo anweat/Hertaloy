@@ -63,7 +63,14 @@ import { InvariantError, invariant } from "./errors.js";
 import { compileContext, formatContextFailures } from "./context.js";
 import { type VarBag, extractPortVars, formatExtractionFailures } from "./extract.js";
 import { type ContainerInstance, InstanceRegistry, namespacedId } from "./instances.js";
-import { type Message, type MessageState, MessageQueue, isLive } from "./queue.js";
+import {
+  type Message,
+  type MessageState,
+  MessageQueue,
+  isLive,
+  msgLog,
+  deliveryOrderOf,
+} from "./queue.js";
 import { formatProblems, stateProblems } from "./invariants.js";
 import { type Candidate, type Scheduler, acceptedPick, fifo } from "./scheduling.js";
 import { type ExecutionRecord, ExecutionLedger, execLog } from "./executions.js";
@@ -216,14 +223,6 @@ export interface RuntimeOptions {
   readonly maxAttempts?: number;
   readonly onCommit?: CommitHook;
   /**
-   * 可变头里保留多少条**已消费**消息。默认 200，负数表示不清理。
-   *
-   * 这是头唯一无界增长的来源，而头**每次提交全量重写** —— 于是累计写入是
-   * 消息数的平方级。实测：2000 条已消费消息 → head.json 1.1 MB，
-   * 而其中在队列里的是 0 条。文档里"账很小，不随历史增长"那句话是错的。
-   */
-  readonly keepConsumedMessages?: number;
-  /**
    * 先跑哪条。默认 `fifo`（先到先跑，天然无饥饿）。
    *
    * **内核唯一真正的策略缝** —— 换掉它一条不变量都不破（见 `scheduling.ts`）。
@@ -276,29 +275,15 @@ export class Runtime implements Snapshotable {
     this.#backend = options.backend;
     this.#maxAttempts = options.maxAttempts ?? 3;
     this.#onCommit = options.onCommit;
-    this.#queue = new MessageQueue(options.keepConsumedMessages ?? 200);
+    this.#queue = new MessageQueue();
     this.#scheduler = options.scheduler ?? fifo;
   }
 
   /** 事务内通知。钩子抛出 → `transact` 回滚 → 这次提交没发生过。 */
   #commit(event: CommitEvent): void {
-    this.#queue.prune();
     this.#onCommit?.(event);
   }
 
-  /**
-   * 丢掉过老的**已消费**消息 —— 头的唯一无界增长源。
-   *
-   * 只丢 `CONSUMED`：它已经完整 apply 过，不会再被任何路径读。
-   * **不丢 `DISCARDED`**，那是截断留下的，迟到的结果还要靠它走冲突域复核（L3）；
-   * 也不丢 `QUEUED` / `CLAIMED`，那些是活的。
-   *
-   * 因果查询不受影响：`causesOf` 读的是 RunSnapshot 对象里的 message **id 字符串**，
-   * 不需要 Message 本身。`checkInvariants` 也只交叉引用 RUNNING 记录的消息。
-   *
-   * 在 `#commit` 里调 ⇒ 天然在事务内，回滚一起回滚。
-   * 只在明显超量时才扫，免得把平方级的磁盘写入换成平方级的内存扫描。
-   */
   /**
    * 落盘形状**逐键写明，不用展开**。
    *
@@ -415,6 +400,70 @@ export class Runtime implements Snapshotable {
       },
     );
     this.#ledger.drop(terminal.executionId);
+  }
+
+  /**
+   * 一条消息**进终态**的唯一收口点（V6 阶段 5 · 消息那半）。
+   *
+   * 终态消息写进 `<traceid>/<node>/$msg` 一版，然后离队。与
+   * `#settleExecution` 同形，理由也同形：队列原来兼任"在途表"和"历史表"，
+   * 于是 `prune` 必须在**头无界增长**和**历史消失**之间选一个 —— 而两边都不对。
+   * 先落库再离队，那个选择就不存在了。
+   *
+   * **四个出口都从这里走**：CONSUMED（异步 apply / 同步 commit）、
+   * FAILED、DISCARDED（含截断）。收成一处的理由与执行那半一样：
+   * 靠"每条路径都记得写"迟早漏一条，靠"每条路径都经过收口"才是结构保证。
+   */
+  #settleMessage(id: string, patch: Partial<Message>): Message {
+    const terminal = Object.freeze({ ...this.#queue.get(id), ...patch }) as Message;
+    this.#store.put(
+      msgLog(terminal.target.traceid, terminal.target.node),
+      "message",
+      {
+        message_id: terminal.id,
+        port: terminal.target.port,
+        state: terminal.state,
+        payload: terminal.payload,
+        attempts: terminal.attempts,
+        ...(terminal.failure === undefined ? {} : { failure: terminal.failure }),
+        ...(terminal.alias === undefined ? {} : { alias: terminal.alias }),
+        ...(terminal.source === undefined ? {} : { source: terminal.source as unknown as Json }),
+        ...(terminal.requestId === undefined ? {} : { request_id: terminal.requestId }),
+      },
+      { traceid: terminal.target.traceid, node_id: terminal.target.node, derived_from: [] },
+    );
+    this.#queue.drop(id);
+    return terminal;
+  }
+
+  /** 从一版 `$msg` 还原一条消息。`message_id` 缺失 ⇒ 不是这个形状，跳过。 */
+  static #messageOf(body: Json, traceid: TraceId, nodeId: string): Message | undefined {
+    if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+    const b = body as Record<string, Json | undefined>;
+    if (typeof b.message_id !== "string") return undefined;
+    return Object.freeze({
+      id: b.message_id,
+      target: { traceid, node: nodeId, port: String(b.port ?? "") },
+      payload: b.payload ?? null,
+      state: b.state as MessageState,
+      attempts: typeof b.attempts === "number" ? b.attempts : 0,
+      ...(b.failure === undefined ? {} : { failure: String(b.failure) }),
+      ...(b.alias === undefined ? {} : { alias: b.alias as never }),
+      ...(b.source === undefined ? {} : { source: b.source as never }),
+      ...(b.request_id === undefined ? {} : { requestId: String(b.request_id) }),
+    }) as Message;
+  }
+
+  /** 某实例各节点的终态消息，按节点声明序 × 写入序。 */
+  #settledMessagesOf(trace: TraceId): readonly Message[] {
+    const out: Message[] = [];
+    for (const nodeId of Object.keys(this.#registry.template(trace).nodes)) {
+      for (const v of this.#store.history(msgLog(trace, nodeId))) {
+        const m = Runtime.#messageOf(v.body, trace, nodeId);
+        if (m !== undefined) out.push(m);
+      }
+    }
+    return out;
   }
 
   /** 一版 `$exec` 还原成记录；不是记录（老观测）就给 undefined。 */
@@ -540,11 +589,37 @@ export class Runtime implements Snapshotable {
     return this.#queue.enqueue({ target, payload });
   }
 
+  /** 按 id 取。先在途（热路径命中这儿），再翻历史。与 `record()` 同形。 */
   message(id: string): Message {
-    return this.#queue.get(id);
+    if (this.#queue.has(id)) return this.#queue.get(id);
+    const found = this.messages().find((m) => m.id === id);
+    if (found === undefined) throw new InvariantError(`未知消息：${id}`);
+    return found;
   }
 
+  /**
+   * 全部消息 —— 终态（对象库）+ 在途（头），按 id 去重，在途优先。
+   *
+   * **按投递序返回**。落库的那半是按「实例 × 节点 × 版本」取回来的 ——
+   * 那是按节点分组，不是投递序。下游的染色窗口取"最后 N 条"，不排就会取成
+   * "最后一个节点的 N 条"（用例抓不到：夹具只有一两个节点）。
+   *
+   * **控制路径别用它** —— 冲突域、不变量、调度只看队列本身。
+   */
   messages(): readonly Message[] {
+    const root = this.#registry.rootTrace;
+    const byId = new Map<string, Message>();
+    if (root !== null) {
+      for (const inst of this.#registry.subtree(root)) {
+        for (const m of this.#settledMessagesOf(inst.traceid)) byId.set(m.id, m);
+      }
+    }
+    for (const m of this.#queue.all()) byId.set(m.id, m);
+    return [...byId.values()].sort((a, b) => deliveryOrderOf(a.id) - deliveryOrderOf(b.id));
+  }
+
+  /** 还在队列里的（QUEUED / CLAIMED）。 */
+  liveMessages(): readonly Message[] {
     return this.#queue.all();
   }
 
@@ -941,7 +1016,7 @@ export class Runtime implements Snapshotable {
     }
 
     const delivered = this.#commitPlan(outcome.plan);
-    this.#queue.setState(input.id, "CONSUMED");
+    this.#settleMessage(input.id, { state: "CONSUMED" });
     this.#settleExecution({
       ...record,
       status: "SETTLED" as const,
@@ -1190,7 +1265,7 @@ export class Runtime implements Snapshotable {
     for (const msg of this.messages()) {
       if (msg.target.traceid !== trace) continue;
       if (msg.state !== "QUEUED" && msg.state !== "CLAIMED") continue;
-      this.#queue.setState(msg.id, "DISCARDED", `实例被截断：${reason}`);
+      this.#settleMessage(msg.id, { state: "DISCARDED", failure: `实例被截断：${reason}` });
       truncatedMessages += 1;
     }
 
@@ -1399,7 +1474,7 @@ export class Runtime implements Snapshotable {
     if (!outcome.ok) return failed(outcome.reason, "INVALID_OUTPUT");
 
     const delivered = this.#commitPlan(outcome.plan);
-    this.#queue.setState(input.id, "CONSUMED");
+    this.#settleMessage(input.id, { state: "CONSUMED" });
     settle("DONE");
     this.#recordSnapshot(traceid, nodeId, [input.id], delivered, {}, executionId);
     return {
@@ -1687,8 +1762,10 @@ export class Runtime implements Snapshotable {
     reason: string,
     attempts?: number,
   ): void {
-    if (attempts === undefined) this.#queue.setState(input.id, state, reason);
-    else this.#queue.replace(input.id, { state, attempts, failure: reason });
+    this.#settleMessage(
+      input.id,
+      attempts === undefined ? { state, failure: reason } : { state, attempts, failure: reason },
+    );
     if (input.requestId !== undefined) {
       this.#settleRequest(input.requestId, input.target.traceid, reason);
     }

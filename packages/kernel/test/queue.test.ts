@@ -10,8 +10,8 @@ import { describe, expect, it } from "vitest";
 import { MessageQueue, isLive, type Message } from "../src/queue.js";
 import { InvariantError } from "../src/errors.js";
 
-function q(keep = -1): MessageQueue {
-  return new MessageQueue(keep);
+function q(): MessageQueue {
+  return new MessageQueue();
 }
 
 const to = (traceid: string, node = "n", port = "in") => ({ traceid, node, port });
@@ -90,59 +90,36 @@ describe("★ 消息是冻结对象，改状态换新对象", () => {
   });
 });
 
-describe("★ 回收：只丢 CONSUMED", () => {
+describe("★ 离队：谁该走由 Runtime 定，队列只管走干净", () => {
   /**
-   * 头**每次提交全量重写**，所以已消费消息无界增长会让累计写入变成平方级
-   * （实测 2000 条 → head.json 1.1 MB，而其中在队列里的是 0 条）。
+   * 这里原来是 `prune()`：队列自己按 `keepConsumedMessages` 决定丢谁，
+   * 于是它必须在"头无界增长"与"历史消失"之间选一个 —— 两边都不对。
    *
-   * 但不能见旧就丢：`DISCARDED` 是截断留下的，迟到的结果还要靠它走冲突域
-   * 复核（L3）；`FAILED` 是排查现场。
+   * 现在终态消息由 Runtime 先落进 `$msg` 再离队（`#settleMessage`），
+   * 队列不再有策略。剩下要钉的只有两条**机械**性质，而两条都咬过人。
    */
-  it("留最近 N 条已消费，更老的丢掉", () => {
-    const queue = q(2);
-    const ids = Array.from({ length: 6 }, () =>
-      queue.enqueue({ target: to("job-1"), payload: {} }),
-    );
-    for (const id of ids) queue.setState(id, "CONSUMED");
-    queue.prune();
-    // `#order` 是投递顺序，所以留下的是最后两条
-    expect(queue.all().map((m) => m.id)).toEqual(ids.slice(-2));
+  it("离队要两处都清 —— `#messages` 和 `#order`", () => {
+    const queue = q();
+    const [a, b, c] = [1, 2, 3].map(() => queue.enqueue({ target: to("job-1"), payload: {} }));
+    queue.drop(b as string);
+    expect(queue.has(b as string)).toBe(false);
+    // `all()` 是按 `#order` 物化的：漏清 order 会在这里抛"未知消息"
+    expect(queue.all().map((m) => m.id)).toEqual([a, c]);
   });
 
-  it("★ DISCARDED 与 FAILED 一条都不丢", () => {
-    const queue = q(0);
-    const discarded = queue.enqueue({ target: to("job-1"), payload: {} });
-    const failed = queue.enqueue({ target: to("job-1"), payload: {} });
-    const consumed = queue.enqueue({ target: to("job-1"), payload: {} });
-    queue.setState(discarded, "DISCARDED", "被截断");
-    queue.setState(failed, "FAILED", "炸了");
-    queue.setState(consumed, "CONSUMED");
-    // 撑过阈值，逼 prune 真的动手
-    for (let i = 0; i < 4; i += 1) {
-      queue.setState(queue.enqueue({ target: to("job-1"), payload: {} }), "CONSUMED");
-    }
-    queue.prune();
-
-    const left = new Set(queue.all().map((m) => m.id));
-    expect(left.has(discarded)).toBe(true);
-    expect(left.has(failed)).toBe(true);
-    expect(left.has(consumed)).toBe(false);
+  it("★ 离队不释放号段 —— id 全局单调", () => {
+    const queue = q();
+    const first = queue.enqueue({ target: to("job-1"), payload: {} });
+    queue.drop(first);
+    const next = queue.enqueue({ target: to("job-1"), payload: {} });
+    // 回退 seq 会让新消息复用已落库的 id，两条不同的消息在历史里撞成一条
+    expect(next).not.toBe(first);
+    expect([first, next]).toEqual(["msg-1", "msg-2"]);
   });
 
-  it("负数 = 不清理", () => {
-    const queue = q(-1);
-    for (let i = 0; i < 50; i += 1) {
-      queue.setState(queue.enqueue({ target: to("job-1"), payload: {} }), "CONSUMED");
-    }
-    queue.prune();
-    expect(queue.all()).toHaveLength(50);
-  });
-
-  it("QUEUED 的永远不丢 —— 它们还没跑", () => {
-    const queue = q(0);
-    for (let i = 0; i < 10; i += 1) queue.enqueue({ target: to("job-1"), payload: {} });
-    queue.prune();
-    expect(queue.all()).toHaveLength(10);
+  it("丢不存在的 id 不炸 —— 幂等，重复收口不该是错误", () => {
+    const queue = q();
+    expect(() => queue.drop("msg-99")).not.toThrow();
   });
 });
 
@@ -153,13 +130,13 @@ describe("★ 快照往返", () => {
    * 已经用过的 id，覆盖掉旧消息且不留痕迹。
    */
   it("恢复之后顺序、状态、seq 都对得上", () => {
-    const queue = q(-1);
+    const queue = q();
     const a = queue.enqueue({ target: to("job-1"), payload: { v: 1 } });
     const b = queue.enqueue({ target: to("job-2"), payload: { v: 2 }, alias: "x" });
     queue.setState(a, "CONSUMED");
     const snap = queue.snapshot();
 
-    const restored = q(-1);
+    const restored = q();
     restored.restore(snap);
     expect(restored.all().map((m) => m.id)).toEqual([a, b]);
     expect(restored.get(a).state).toBe("CONSUMED");
@@ -171,7 +148,7 @@ describe("★ 快照往返", () => {
   });
 
   it("回滚语义：拿旧快照恢复，中间的改动整体消失", () => {
-    const queue = q(-1);
+    const queue = q();
     const a = queue.enqueue({ target: to("job-1"), payload: {} });
     const before = queue.snapshot();
 
@@ -185,7 +162,7 @@ describe("★ 快照往返", () => {
   });
 
   it("快照是拷贝，不是引用 —— 之后的改动不会渗回去", () => {
-    const queue = q(-1);
+    const queue = q();
     const a = queue.enqueue({ target: to("job-1"), payload: {} });
     const snap = queue.snapshot() as { messages: Map<string, Message> };
     queue.setState(a, "CONSUMED");

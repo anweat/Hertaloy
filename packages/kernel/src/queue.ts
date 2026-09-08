@@ -9,16 +9,46 @@
  *
  * 1. **消息是冻结对象**，改状态一律换一个新对象（`replace`）。共享可变消息
  *    会让"提交是事务"这条在回滚时失真 —— 快照拷的是引用。
- * 2. **`order` 是投递顺序，不是优先级**。`prune` 依赖它判断谁更老；
+ * 2. **`order` 是投递顺序，不是优先级**。落库时它就是 `$msg` 的写入序；
  *    调度策略读的是它的一个过滤视图，两者别混。
  * 3. **落盘形状由 Runtime 合成**，本类不认识 head。抽出来不改持久化格式，
  *    是为了让这一步能单独回滚。
+ *
+ * ## 队列里只有活的（V6 阶段 5）
+ *
+ * 消息一进终态就落进对象库、离开队列（Runtime 的 `#settleMessage`）。所以
+ * `all()` / `get()` 答的是**在途**，不是全部 —— 完整的那份问 `Runtime.messages()`。
+ * 队列因此不再是"历史 + 在途"两用的容器，`prune` 那套取舍随之消失。
  */
 
 import { InvariantError } from "./errors.js";
 import type { Endpoint, Json, MessageSource, TraceId } from "@nodeflow/contracts";
 import type { Snapshotable } from "./tx.js";
 import { type MessageFact, type MessageState, isLive } from "./facts.js";
+
+/**
+ * 终态消息落在哪 —— 与 `execLog` 同形：**按节点分对象，一条一版**。
+ *
+ * 不用"一个 trace 一个大对象"：对象库每版存整份正文，那样每落一条消息就重写
+ * 一次全量，正是刚从头里赶走的那个平方级。
+ */
+export function msgLog(traceid: TraceId, nodeId: string): string {
+  return `${traceid}/${nodeId}/$msg`;
+}
+
+/**
+ * `msg-N` → N —— **投递序**。
+ *
+ * 号是本文件的 `enqueue` 发的，所以在这儿解析它不是"猜格式"，是**发号方读自己的号**。
+ * （渲染层另有一份同样的解析，那边是消费方，理由不同：它没有别的时间刻度可用。）
+ *
+ * 要它是因为终态消息落库之后按「实例 × 节点 × 版本」取回来，那是**按节点分组**，
+ * 不是投递序 —— 而下游的染色窗口取的是"最后 N 条"。不排序就会取成"最后一个节点的 N 条"。
+ */
+export function deliveryOrderOf(messageId: string): number {
+  const m = /(\d+)$/.exec(messageId);
+  return m === null ? 0 : Number(m[1]);
+}
 
 /**
  * 完整的消息。`MessageFact`（`facts.ts`）是它里面纯函数用得上的那部分。
@@ -57,21 +87,10 @@ export { isLive, LIVE_MESSAGE_STATES } from "./facts.js";
 
 export class MessageQueue implements Snapshotable {
   readonly #messages = new Map<string, Message>();
-  /** 投递顺序。`prune` 与调度都读它，但读法不同（见文件头纪律 2）。 */
+  /** 投递顺序。落库写入序与调度都读它，但读法不同（见文件头纪律 2）。 */
   readonly #order: string[] = [];
   #seq = 0;
-  /**
-   * 保留多少条**已消费**消息。负数表示不清理。
-   *
-   * 这是头唯一无界增长的来源，而头**每次提交全量重写** —— 于是累计写入是
-   * 消息数的平方级。实测：2000 条已消费消息 → head.json 1.1 MB，
-   * 而其中在队列里的是 0 条。
-   */
-  #keepConsumed: number;
 
-  constructor(keepConsumed: number) {
-    this.#keepConsumed = keepConsumed;
-  }
 
   snapshot(): unknown {
     return { messages: new Map(this.#messages), order: [...this.#order], seq: this.#seq };
@@ -145,24 +164,21 @@ export class MessageQueue implements Snapshotable {
   }
 
   /**
-   * 回收已消费消息。
+   * 移出队列 —— **只由 Runtime 的终态收口点调用**（`#settleMessage`）。
    *
-   * **不丢 `DISCARDED`**，那是截断留下的，迟到的结果还要靠它走冲突域复核（L3）；
-   * 也不丢 `FAILED`，那是排查现场。只丢 `CONSUMED` —— 它已经产生过下游了。
+   * 这里原来是 `prune()`：按 `keepConsumedMessages` 保留最近 N 条已消费消息，
+   * 其余丢弃。那套机制在丢一件**只有队列里有**的东西，所以它必须在
+   * "头会无界涨"与"历史会消失"之间选一个，两边都不对。
+   *
+   * 现在终态消息先落进对象库（`<traceid>/<node>/$msg` 一版）再离队 ——
+   * 于是丢的只是内存里的第二份，历史一条不少。选择因此不存在了，
+   * `keepConsumedMessages` 也跟着消失。
+   *
+   * `#seq` **不回退**：消息 id 全局单调，离队不释放号段。
    */
-  prune(): void {
-    if (this.#keepConsumed < 0 || this.#messages.size <= this.#keepConsumed * 2) return;
-    const consumed: string[] = [];
-    for (const id of this.#order) {
-      if (this.#messages.get(id)?.state === "CONSUMED") consumed.push(id);
-    }
-    const excess = consumed.length - this.#keepConsumed;
-    if (excess <= 0) return;
-    // `#order` 是投递顺序，所以前面的就是更老的
-    const doomed = new Set(consumed.slice(0, excess));
-    for (const id of doomed) this.#messages.delete(id);
-    const kept = this.#order.filter((id) => !doomed.has(id));
-    this.#order.length = 0;
-    this.#order.push(...kept);
+  drop(id: string): void {
+    if (!this.#messages.delete(id)) return;
+    const at = this.#order.indexOf(id);
+    if (at >= 0) this.#order.splice(at, 1);
   }
 }
