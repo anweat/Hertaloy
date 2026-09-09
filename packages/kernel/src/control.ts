@@ -14,6 +14,7 @@
 
 import {
   ContainerTemplate,
+  containerOf,
   formatPrincipal,
   type Endpoint,
   type Json,
@@ -164,9 +165,15 @@ export class ControlPlane {
     return prepareContainerTemplate(this.#store, id, spec, kind, this.#deps.validateExecutionSpec);
   }
 
-  /** scope 按 **traceid 前缀**判定（行级安全）。 */
+  /**
+   * scope 按 **traceid 前缀**判定（行级安全）。
+   *
+   * 授权目标就是**地址本身**。V6 阶段 1b 之前地址是两段，这里只能拿容器那段去问；
+   * 收成一段之后问的是投递点自己 —— 对容器级的 principal 判定完全相同
+   * （前缀匹配覆盖子路径），而给节点级 principal 留出了正确的读数。
+   */
   send(actor: Principal, target: Endpoint, payload: Json): string {
-    this.#authorize(actor, "send", target.traceid);
+    this.#authorize(actor, "send", target.instance);
     return this.#runtime.send(target, payload);
   }
 
@@ -313,14 +320,14 @@ export class ControlPlane {
   /** 按 id 查一条消息。授权规则与 `execution` 同（见那条的说明）。 */
   message(actor: Principal, messageId: string): Message | undefined {
     const found = this.#runtime.messages().find((m) => m.id === messageId);
-    const target = found?.target.traceid ?? this.#registry.rootTrace ?? messageId;
+    const target = found?.target.instance ?? this.#registry.rootTrace ?? messageId;
     this.#authorize(actor, "query", target);
     return found;
   }
 
   messages(actor: Principal, trace: TraceId): readonly Message[] {
     this.#authorize(actor, "query", trace);
-    return this.#runtime.messages().filter((m) => m.target.traceid === trace);
+    return this.#runtime.messages().filter((m) => containerOf(m.target) === trace);
   }
 
   records(actor: Principal, trace: TraceId): readonly ExecutionRecord[] {

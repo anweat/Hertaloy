@@ -17,7 +17,7 @@ pnpm -r test                    # 当前测试数量与环境边界见 ITERATION
 
 ```bash
 hertaloy init   ./run flow.json
-hertaloy send   ./run job-1 gate in '{"score":92}'
+hertaloy send   ./run job-1/gate in '{"score":92}'
 hertaloy drain  ./run
 hertaloy status ./run
 ```

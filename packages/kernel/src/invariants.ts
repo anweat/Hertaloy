@@ -22,6 +22,7 @@
  *     运行期的 0 个是合法的"这个槽里现在没有活实例"。
  */
 
+import { containerOf } from "@nodeflow/contracts";
 import type { Obligation } from "./obligations.js";
 import { type ExecutionFact, type InstanceFact, type MessageFact, isLive } from "./facts.js";
 
@@ -89,7 +90,9 @@ export function stateProblems(facts: InvariantFacts): readonly string[] {
   for (const inst of facts.instances) {
     if (inst.status !== "TERMINAL") continue;
 
-    const live = facts.messages.filter((m) => m.target.traceid === inst.traceid && isLive(m));
+    const live = facts.messages.filter(
+      (m) => containerOf(m.target) === inst.traceid && isLive(m),
+    );
     if (live.length > 0) {
       problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍有 ${live.length} 条在途消息`);
     }

@@ -20,6 +20,9 @@ import {
   type Port,
   type TraceId,
   allowedEmitPorts,
+  containerOf,
+  endpointAt,
+  lastSegment,
 } from "@nodeflow/contracts";
 import { InvariantError } from "./errors.js";
 
@@ -43,11 +46,11 @@ export interface StagedRequest {
    * 校验它过得了自己 callback 端口的契约与 servo。
    */
   readonly unavailable: Json;
+  /** 请求方**节点自己的**实例路径（见 `facts.ts` 的 `RequestFact`）。 */
   readonly requester: TraceId;
-  readonly node: string;
   readonly callbackPort: string;
   /**
-   * 服务方 traceid。
+   * 服务方**容器** traceid —— 与 `Obligation.holder` 同域（见排期处的说明）。
    *
    * 此前这件事只存在**锁**里（`Lock.waitingOn`），而它是排期时就知道的
    * （`targets[0].traceid`）—— 于是同一个事实有两份拷贝，且只有一份会随
@@ -68,8 +71,13 @@ export interface StagePlan {
 export interface StageContext {
   readonly template: ContainerTemplate;
   readonly node: NodeDefinition;
-  readonly traceid: TraceId;
-  readonly nodeId: string;
+  /**
+   * 本次执行位点 —— **节点自己的**实例路径。
+   *
+   * 原来是 `{ traceid, nodeId }` 两段。容器由 `parentTrace` 派生，
+   * 节点在模板里的声明名由 `lastSegment` 派生（内网边要拿它匹配 `edge.from.node`）。
+   */
+  readonly instance: TraceId;
   /** 本次消费的消息若是 REQUEST，其 id；否则 undefined。 */
   readonly inboundRequestId?: string;
   readonly inboundMessageId: string;
@@ -142,6 +150,10 @@ export function stageOutputs(
   const dangling: string[] = [];
   const resolved: string[] = [];
 
+  // 地址收成一段之后，容器与声明名都是从执行位点派生的 —— 算一次，别在循环里重算
+  const container = containerOf({ instance: ctx.instance });
+  const selfNode = lastSegment(ctx.instance);
+
   for (const [portName, value] of Object.entries(outputs)) {
     const port = ctx.node.ports[portName] as Port;
     if (port === undefined || port.direction !== "emit") {
@@ -154,7 +166,7 @@ export function stageOutputs(
      * 每条 push 都显式带上而不是在 #enqueue 里统一补：排期是纯函数，
      * 把"谁发的"留到提交期再猜，就又造出一处"两端各自都绿、中间没人走"。
      */
-    const source: MessageSource = { traceid: ctx.traceid, node: ctx.nodeId, port: portName };
+    const source: MessageSource = { instance: ctx.instance, port: portName };
 
     // 网关回复
     if (port.reply === true) {
@@ -185,7 +197,7 @@ export function stageOutputs(
       }
       resolved.push(ctx.inboundRequestId);
       messages.push({
-        target: { traceid: req.requester, node: req.node, port: req.callbackPort },
+        target: { instance: req.requester, port: req.callbackPort },
         payload: structuredClone(value) as Json,
         source,
       });
@@ -219,10 +231,16 @@ export function stageOutputs(
       const requestId = ctx.nextRequestId();
       requests.push({
         requestId,
-        requester: ctx.traceid,
-        node: ctx.nodeId,
+        requester: ctx.instance,
         callbackPort: port.callback,
-        waitingOn: (targets[0] as Endpoint).traceid,
+        /**
+         * **容器**，不是服务方节点。
+         *
+         * `waitingOn` 与 `holder` 必须同域：`deadlocks()` 建的是
+         * `holder → waitingOn` 的图，而 holder 是容器（L2）。写成节点路径的话
+         * 两边对不上，环**永远找不到，而且不报错** —— 死锁检测静默失效。
+         */
+        waitingOn: containerOf(targets[0] as Endpoint),
         // 「等不到回复时当作收到什么」—— 排期时就钉死，与 C4 的 pin 同一条理由：
         // 了结发生在很久以后，那时再去读模板可能已经不是同一份定义了
         unavailable: structuredClone(port.unavailable) as Json,
@@ -239,7 +257,7 @@ export function stageOutputs(
 
     // 内网边
     const edges = Object.values(ctx.template.edges).filter(
-      (e) => e.from.node === ctx.nodeId && e.from.port === portName,
+      (e) => e.from.node === selfNode && e.from.port === portName,
     );
     if (edges.length === 0) {
       dangling.push(portName);
@@ -248,7 +266,7 @@ export function stageOutputs(
     for (const edge of edges) {
       // 每条边独立一份副本：兄弟分支互不污染
       messages.push({
-        target: { traceid: ctx.traceid, node: edge.to.node, port: edge.to.port },
+        target: endpointAt(container, edge.to.node, edge.to.port),
         payload: structuredClone(value) as Json,
         source,
       });

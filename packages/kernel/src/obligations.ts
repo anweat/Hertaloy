@@ -25,7 +25,7 @@
  *      按事实取参数，这条纪律就由签名强制，而不是靠记性。
  */
 
-import { type TraceId, parentTrace } from "@nodeflow/contracts";
+import { type TraceId, containerOf, lastSegment, parentTrace } from "@nodeflow/contracts";
 import type { ExecutionFact, InstanceFact, MessageFact, RequestFact } from "./facts.js";
 import { isLive } from "./facts.js";
 
@@ -69,7 +69,19 @@ export function outstanding(facts: ObligationFacts): readonly Obligation[] {
 
   for (const m of facts.messages) {
     if (!isLive(m)) continue;
-    out.push({ kind: "message", holder: m.target.traceid, key: m.id, originNode: m.target.node });
+    /**
+     * holder 仍是**容器**（不变量 L2：唯一 owner 是容器）。
+     *
+     * V6 阶段 1b 之前这就是 `m.target.traceid`。地址收成一段之后容器是派生的，
+     * 但**规则一字未改** —— 见 V6_MODEL.md §10.5：统一之后 L2 的读数不变。
+     * 把义务挪到节点自己名下是"节点成为实例"那一半的事，不是地址这一半的。
+     */
+    out.push({
+      kind: "message",
+      holder: containerOf(m.target),
+      key: m.id,
+      originNode: lastSegment(m.target.instance),
+    });
   }
 
   for (const e of facts.executions) {
@@ -78,11 +90,12 @@ export function outstanding(facts: ObligationFacts): readonly Obligation[] {
   }
 
   for (const r of facts.requests) {
+    // holder 同样仍是容器（L2）—— `requester` 现在是请求方节点自己的路径
     out.push({
       kind: "request",
-      holder: r.requester,
+      holder: containerOf({ instance: r.requester }),
       key: r.requestId,
-      originNode: r.node,
+      originNode: lastSegment(r.requester),
       ...(r.waitingOn === undefined ? {} : { waitingOn: r.waitingOn }),
     });
   }

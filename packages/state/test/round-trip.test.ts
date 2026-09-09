@@ -58,7 +58,7 @@ describe("★ 跨进程恢复", () => {
         ctx.put("memo", "note", { text: String(vars.text) });
         return {};
       });
-      s.runtime.send({ traceid: "job-1", node: "work", port: "in" }, { text: "hello" });
+      s.runtime.send({ instance: "job-1/work", port: "in" }, { text: "hello" });
       s.runtime.drain();
     });
 
@@ -98,7 +98,7 @@ describe("★ 跨进程恢复", () => {
       const ref = registerContainerTemplate(s.store, "root", TEMPLATE, "root_config");
       s.registry.createRoot(ref, "job-1");
       // 不 drain：消息就留在队列里
-      s.runtime.send({ traceid: "job-1", node: "work", port: "in" }, { text: "pending" });
+      s.runtime.send({ instance: "job-1/work", port: "in" }, { text: "pending" });
     });
 
     const s2 = RunState.open(dir);
@@ -271,7 +271,7 @@ describe("★ 调度缝真的通到 RunState", () => {
         return {};
       });
       for (const text of ["甲", "乙", "丙"]) {
-        state.runtime.send({ traceid: "job-1", node: "work", port: "in" }, { text });
+        state.runtime.send({ instance: "job-1/work", port: "in" }, { text });
       }
       state.runtime.drain();
     } finally {
@@ -292,7 +292,7 @@ describe("★ 调度缝真的通到 RunState", () => {
         return {};
       });
       for (const text of ["甲", "乙", "丙"]) {
-        state.runtime.send({ traceid: "job-1", node: "work", port: "in" }, { text });
+        state.runtime.send({ instance: "job-1/work", port: "in" }, { text });
       }
       state.runtime.drain();
     } finally {

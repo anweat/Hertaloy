@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime } from "../src/runtime.js";
+import { lastSegment } from "@nodeflow/contracts";
 
 /** 子容器：干活 → 写产物 → 什么都不发（干完就完） */
 const coderSpec = {
@@ -114,7 +115,7 @@ describe("★ 帧 8 → 12：扇出后自动汇聚", () => {
   beforeEach(() => build(true));
 
   it("三个 coder 干完 → 各自 settle → 父被通知三次 → 第三次才汇聚", () => {
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: ["a", "b", "c"] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: ["a", "b", "c"] });
     runToQuiescence();
 
     // 三个子各投一条回程通知 —— 一个子一条，不多不少
@@ -126,11 +127,11 @@ describe("★ 帧 8 → 12：扇出后自动汇聚", () => {
   });
 
   it("通知只带谁完了，不带产出 —— 内容在资产里（C5）", () => {
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: ["x"] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: ["x"] });
     rt.drain();
     rt.settleAll();
 
-    const notice = rt.messages().find((m) => m.target.node === "merge");
+    const notice = rt.messages().find((m) => lastSegment(m.target.instance) === "merge");
     expect(notice?.payload).toEqual({
       slot: "coders",
       traceid: "job-1/coder-1",
@@ -139,7 +140,7 @@ describe("★ 帧 8 → 12：扇出后自动汇聚", () => {
   });
 
   it("父容器在子完成前不会自然终止（child 锁挡着）", () => {
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: ["a"] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: ["a"] });
     rt.drain();
     expect(rt.canTerminate("job-1")).toBe(false);
     expect(rt.terminationBlockers("job-1")[0]).toMatch(/锁 child/);
@@ -150,7 +151,7 @@ describe("★ 没声明 exit 就是断链 —— 这正是修之前的状态", (
   beforeEach(() => build(false));
 
   it("子干完了，父的 merge 节点永远等不到触发", () => {
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: ["a", "b", "c"] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: ["a", "b", "c"] });
     runToQuiescence();
 
     expect(store.collect("job-1", "result")).toHaveLength(3); // 活干完了

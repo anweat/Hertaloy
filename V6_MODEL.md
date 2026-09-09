@@ -674,6 +674,47 @@ Windows / macOS 默认不区分大小写，`Coder` 与 `coder` 落到同一个�
 > 用"能删掉三块补丁"作验收，是因为那三块正是这一格空着的补偿。
 > 补偿删得掉，说明空格填上了。
 
+#### 分两半做：地址那半（已完成）· 实例那半
+
+**为什么能分。**"地址收成一段"与"节点成为注册实例"是两件事：前者只要
+`parentTrace` / `lastSegment` 就能派生出容器与声明名，不需要节点真的进注册表。
+分开做的好处是第一半**完全由编译器驱动**，而第二半才碰生命周期。
+
+**地址那半改了什么：**
+
+```
+Endpoint      {traceid, node, port}   →  {instance, port}
+MessageSource {traceid, node?, port?} →  {instance, port?}     三情形判别方式不变
+StagedRequest {requester, node, …}    →  {requester, …}
+RequestFact   {requester, node, …}    →  {requester, …}
+StageContext  {traceid, nodeId, …}    →  {instance, …}
+scene 线上 Endpoint / Source          →  同上
+CLI `hertaloy send <dir> <instance> <port>`、场景文件 `send:`、MCP `send_message`
+```
+
+`PortRef`（模板内部的节点引用）**不动** —— 它与 `Endpoint` 从来就不是一回事，
+只是 scene 那份线上 schema 曾用 `Endpoint.partial({traceid:true})` 把两者并了，
+这次正好分开。
+
+**阶段 0 那条纪律兑现了**：改名让 40 处读点全部编译报错。若沿用 `traceid`，
+它们会继续编译通过、静默地把"容器"读成"节点"。
+
+**但改名只覆盖「读字段」，不覆盖「把字段传给别的函数」** —— 那半仍然要人看，
+本轮踩了三脚，全都类型合法：
+
+1. `#settleRequest` 的 `registry.has(req.requester)` —— 节点路径不是注册实例，
+   永远 false，请求方永远等不到了结通知
+2. `#truncate` 的 `req.requester === trace` —— 一条 pending 都删不掉
+3. **`waitingOn: targets[0].instance`** —— `deadlocks()` 建的是
+   `holder → waitingOn` 的图而 holder 是容器，两边不同域则**环永远找不到，
+   而且不报错**。这一脚是靠别处一条断言的字面值对不上才暴露的，那是运气；
+   已补一条钉**域**而不是钉字面值的用例
+
+**实例那半（未做）**：节点进注册表、义务与执行记录挪到节点名下、
+L5 改成递归（§10.5）、scene 的 cell id 分隔符并进路径。
+最后一条现在不能做：节点还不是实例，`spawn(job-1, slot, "work")` 与
+`nodes.work` 仍在两个空间里，改成路径会让两个不同的东西撞成同一个 cell id。
+
 ### 阶段 2 —— 容器有端口
 
 `ContainerTemplate.ports`；`entry` / `exit` 由容器端口表达；`AliasBinding.node` 去掉。

@@ -300,8 +300,7 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-1",
    "target": {
-    "traceid": "job-1",
-    "node": "plan",
+    "instance": "job-1/plan",
     "port": "start"
    },
    "state": "CONSUMED"
@@ -309,8 +308,7 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-2",
    "target": {
-    "traceid": "job-1/a1",
-    "node": "scan",
+    "instance": "job-1/a1/scan",
     "port": "in"
    },
    "state": "CONSUMED"
@@ -318,42 +316,36 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-3",
    "target": {
-    "traceid": "job-1",
-    "node": "merge",
+    "instance": "job-1/merge",
     "port": "got"
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1",
-    "node": "plan",
+    "instance": "job-1/plan",
     "port": "out"
    }
   },
   {
    "id": "msg-4",
    "target": {
-    "traceid": "job-1/a1",
-    "node": "wrap",
+    "instance": "job-1/a1/wrap",
     "port": "got"
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1/a1",
-    "node": "scan",
+    "instance": "job-1/a1/scan",
     "port": "out"
    }
   },
   {
    "id": "msg-5",
    "target": {
-    "traceid": "job-1",
-    "node": "watch",
+    "instance": "job-1/watch",
     "port": "heard"
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1/a1",
-    "node": "scan",
+    "instance": "job-1/a1/scan",
     "port": "found"
    },
    "alias": "findings"
@@ -361,8 +353,7 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-6",
    "target": {
-    "traceid": "job-1/a2",
-    "node": "scan",
+    "instance": "job-1/a2/scan",
     "port": "in"
    },
    "state": "CONSUMED"
@@ -370,28 +361,24 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-7",
    "target": {
-    "traceid": "job-1/a2",
-    "node": "wrap",
+    "instance": "job-1/a2/wrap",
     "port": "got"
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1/a2",
-    "node": "scan",
+    "instance": "job-1/a2/scan",
     "port": "out"
    }
   },
   {
    "id": "msg-8",
    "target": {
-    "traceid": "job-1",
-    "node": "watch",
+    "instance": "job-1/watch",
     "port": "heard"
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1/a2",
-    "node": "scan",
+    "instance": "job-1/a2/scan",
     "port": "found"
    },
    "alias": "findings"
@@ -399,8 +386,7 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-9",
    "target": {
-    "traceid": "job-1/a3",
-    "node": "scan",
+    "instance": "job-1/a3/scan",
     "port": "in"
    },
    "state": "CONSUMED"
@@ -408,28 +394,24 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-10",
    "target": {
-    "traceid": "job-1/a3",
-    "node": "wrap",
+    "instance": "job-1/a3/wrap",
     "port": "got"
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1/a3",
-    "node": "scan",
+    "instance": "job-1/a3/scan",
     "port": "out"
    }
   },
   {
    "id": "msg-11",
    "target": {
-    "traceid": "job-1",
-    "node": "watch",
+    "instance": "job-1/watch",
     "port": "heard"
    },
    "state": "CONSUMED",
    "source": {
-    "traceid": "job-1/a3",
-    "node": "scan",
+    "instance": "job-1/a3/scan",
     "port": "found"
    },
    "alias": "findings"
@@ -437,8 +419,7 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-12",
    "target": {
-    "traceid": "job-1",
-    "node": "review",
+    "instance": "job-1/review",
     "port": "task"
    },
    "state": "CLAIMED"
@@ -446,8 +427,7 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-13",
    "target": {
-    "traceid": "job-1",
-    "node": "audit",
+    "instance": "job-1/audit",
     "port": "task"
    },
    "state": "QUEUED"
@@ -455,8 +435,7 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-14",
    "target": {
-    "traceid": "job-1/a3",
-    "node": "scan",
+    "instance": "job-1/a3/scan",
     "port": "in"
    },
    "state": "QUEUED"
@@ -464,25 +443,23 @@ export const FIXTURE: unknown = {
   {
    "id": "msg-15",
    "target": {
-    "traceid": "job-1",
-    "node": "merge",
+    "instance": "job-1/merge",
     "port": "exit"
    },
    "state": "QUEUED",
    "source": {
-    "traceid": "job-1/a1"
+    "instance": "job-1/a1"
    }
   },
   {
    "id": "msg-16",
    "target": {
-    "traceid": "job-1",
-    "node": "merge",
+    "instance": "job-1/merge",
     "port": "exit"
    },
    "state": "QUEUED",
    "source": {
-    "traceid": "job-1/a2"
+    "instance": "job-1/a2"
    }
   }
  ],
@@ -495,13 +472,6 @@ export const FIXTURE: unknown = {
    "termination": "DONE"
   },
   {
-   "executionId": "exec-2",
-   "traceid": "job-1/a1",
-   "nodeId": "scan",
-   "status": "SETTLED",
-   "termination": "DONE"
-  },
-  {
    "executionId": "exec-3",
    "traceid": "job-1",
    "nodeId": "merge",
@@ -509,16 +479,44 @@ export const FIXTURE: unknown = {
    "termination": "DONE"
   },
   {
-   "executionId": "exec-4",
-   "traceid": "job-1/a1",
-   "nodeId": "wrap",
+   "executionId": "exec-5",
+   "traceid": "job-1",
+   "nodeId": "watch",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
-   "executionId": "exec-5",
+   "executionId": "exec-8",
    "traceid": "job-1",
    "nodeId": "watch",
+   "status": "SETTLED",
+   "termination": "DONE"
+  },
+  {
+   "executionId": "exec-11",
+   "traceid": "job-1",
+   "nodeId": "watch",
+   "status": "SETTLED",
+   "termination": "DONE"
+  },
+  {
+   "executionId": "exec-13",
+   "traceid": "job-1",
+   "nodeId": "audit",
+   "status": "SETTLED",
+   "termination": "FAILED"
+  },
+  {
+   "executionId": "exec-2",
+   "traceid": "job-1/a1",
+   "nodeId": "scan",
+   "status": "SETTLED",
+   "termination": "DONE"
+  },
+  {
+   "executionId": "exec-4",
+   "traceid": "job-1/a1",
+   "nodeId": "wrap",
    "status": "SETTLED",
    "termination": "DONE"
   },
@@ -537,13 +535,6 @@ export const FIXTURE: unknown = {
    "termination": "DONE"
   },
   {
-   "executionId": "exec-8",
-   "traceid": "job-1",
-   "nodeId": "watch",
-   "status": "SETTLED",
-   "termination": "DONE"
-  },
-  {
    "executionId": "exec-9",
    "traceid": "job-1/a3",
    "nodeId": "scan",
@@ -558,30 +549,28 @@ export const FIXTURE: unknown = {
    "termination": "DONE"
   },
   {
-   "executionId": "exec-11",
-   "traceid": "job-1",
-   "nodeId": "watch",
-   "status": "SETTLED",
-   "termination": "DONE"
-  },
-  {
    "executionId": "exec-12",
    "traceid": "job-1",
    "nodeId": "review",
    "status": "RUNNING"
-  },
-  {
-   "executionId": "exec-13",
-   "traceid": "job-1",
-   "nodeId": "audit",
-   "status": "SETTLED",
-   "termination": "FAILED"
   }
  ],
  "objects": [
   {
    "object_id": "job-1/note-plan",
    "kind": "artifact",
+   "version": 1,
+   "owner": "job-1"
+  },
+  {
+   "object_id": "job-1/plan/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1"
+  },
+  {
+   "object_id": "job-1/plan/$exec",
+   "kind": "execution",
    "version": 1,
    "owner": "job-1"
   },
@@ -598,10 +587,34 @@ export const FIXTURE: unknown = {
    "owner": "job-1/a1"
   },
   {
+   "object_id": "job-1/a1/scan/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1/a1"
+  },
+  {
+   "object_id": "job-1/a1/scan/$exec",
+   "kind": "execution",
+   "version": 1,
+   "owner": "job-1/a1"
+  },
+  {
    "object_id": "job-1/a1/$run",
    "kind": "run",
    "version": 1,
    "owner": "job-1/a1"
+  },
+  {
+   "object_id": "job-1/merge/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1"
+  },
+  {
+   "object_id": "job-1/merge/$exec",
+   "kind": "execution",
+   "version": 1,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/$run",
@@ -610,10 +623,34 @@ export const FIXTURE: unknown = {
    "owner": "job-1"
   },
   {
+   "object_id": "job-1/a1/wrap/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1/a1"
+  },
+  {
+   "object_id": "job-1/a1/wrap/$exec",
+   "kind": "execution",
+   "version": 1,
+   "owner": "job-1/a1"
+  },
+  {
    "object_id": "job-1/a1/$run",
    "kind": "run",
    "version": 2,
    "owner": "job-1/a1"
+  },
+  {
+   "object_id": "job-1/watch/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1"
+  },
+  {
+   "object_id": "job-1/watch/$exec",
+   "kind": "execution",
+   "version": 1,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/$run",
@@ -628,8 +665,32 @@ export const FIXTURE: unknown = {
    "owner": "job-1/a2"
   },
   {
+   "object_id": "job-1/a2/scan/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1/a2"
+  },
+  {
+   "object_id": "job-1/a2/scan/$exec",
+   "kind": "execution",
+   "version": 1,
+   "owner": "job-1/a2"
+  },
+  {
    "object_id": "job-1/a2/$run",
    "kind": "run",
+   "version": 1,
+   "owner": "job-1/a2"
+  },
+  {
+   "object_id": "job-1/a2/wrap/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1/a2"
+  },
+  {
+   "object_id": "job-1/a2/wrap/$exec",
+   "kind": "execution",
    "version": 1,
    "owner": "job-1/a2"
   },
@@ -638,6 +699,18 @@ export const FIXTURE: unknown = {
    "kind": "run",
    "version": 2,
    "owner": "job-1/a2"
+  },
+  {
+   "object_id": "job-1/watch/$msg",
+   "kind": "message",
+   "version": 2,
+   "owner": "job-1"
+  },
+  {
+   "object_id": "job-1/watch/$exec",
+   "kind": "execution",
+   "version": 2,
+   "owner": "job-1"
   },
   {
    "object_id": "job-1/$run",
@@ -652,8 +725,32 @@ export const FIXTURE: unknown = {
    "owner": "job-1/a3"
   },
   {
+   "object_id": "job-1/a3/scan/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1/a3"
+  },
+  {
+   "object_id": "job-1/a3/scan/$exec",
+   "kind": "execution",
+   "version": 1,
+   "owner": "job-1/a3"
+  },
+  {
    "object_id": "job-1/a3/$run",
    "kind": "run",
+   "version": 1,
+   "owner": "job-1/a3"
+  },
+  {
+   "object_id": "job-1/a3/wrap/$msg",
+   "kind": "message",
+   "version": 1,
+   "owner": "job-1/a3"
+  },
+  {
+   "object_id": "job-1/a3/wrap/$exec",
+   "kind": "execution",
    "version": 1,
    "owner": "job-1/a3"
   },
@@ -664,13 +761,25 @@ export const FIXTURE: unknown = {
    "owner": "job-1/a3"
   },
   {
+   "object_id": "job-1/watch/$msg",
+   "kind": "message",
+   "version": 3,
+   "owner": "job-1"
+  },
+  {
+   "object_id": "job-1/watch/$exec",
+   "kind": "execution",
+   "version": 3,
+   "owner": "job-1"
+  },
+  {
    "object_id": "job-1/$run",
    "kind": "run",
    "version": 5,
    "owner": "job-1"
   },
   {
-   "object_id": "job-1/$exec",
+   "object_id": "job-1/audit/$exec",
    "kind": "execution",
    "version": 1,
    "owner": "job-1"

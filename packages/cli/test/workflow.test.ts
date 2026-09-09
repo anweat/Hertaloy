@@ -153,7 +153,7 @@ describe("★ hertaloy init：从命令行建持久化 run", () => {
 describe("★ 条件分发：条件在节点里，不在边上", () => {
   it("cond 为真 → 走 then 边 → pass", async () => {
     init(dir, HUMAN, reviewFlow(false));
-    send(dir, HUMAN, "job-1", "gate", "in", { ok: true, score: 90, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { ok: true, score: 90, expect: 1 });
     const d = await drain(dir, HUMAN);
     expect(d.code).toBe(0);
     expect(show(dir, HUMAN, "job-1/parts").text).toContain("90");
@@ -161,15 +161,15 @@ describe("★ 条件分发：条件在节点里，不在边上", () => {
 
   it("cond 为假 → 走 else 边 → fix", async () => {
     init(dir, HUMAN, reviewFlow(false));
-    send(dir, HUMAN, "job-1", "gate", "in", { ok: false, score: 30, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { ok: false, score: 30, expect: 1 });
     await drain(dir, HUMAN);
     expect(show(dir, HUMAN, "job-1/parts").text).toContain("30");
   });
 
   it("★ 两条分支各走各的，汇聚点两份都收到", async () => {
     init(dir, HUMAN, reviewFlow(false));
-    send(dir, HUMAN, "job-1", "gate", "in", { ok: true, score: 90, expect: 2 });
-    send(dir, HUMAN, "job-1", "gate", "in", { ok: false, score: 30, expect: 2 });
+    send(dir, HUMAN, "job-1/gate", "in", { ok: true, score: 90, expect: 2 });
+    send(dir, HUMAN, "job-1/gate", "in", { ok: false, score: 30, expect: 2 });
     await drain(dir, HUMAN);
 
     const h = history(dir, HUMAN, "job-1/parts");
@@ -180,7 +180,7 @@ describe("★ 条件分发：条件在节点里，不在边上", () => {
 
   it("链路走完之后实例自然终止", async () => {
     init(dir, HUMAN, reviewFlow(false));
-    send(dir, HUMAN, "job-1", "gate", "in", { ok: true, score: 90, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { ok: true, score: 90, expect: 1 });
     await drain(dir, HUMAN);
     expect(status(dir, HUMAN).text).toContain("TERMINAL");
   });
@@ -189,7 +189,7 @@ describe("★ 条件分发：条件在节点里，不在边上", () => {
 describe("★ 输入契约：不合规的载荷进不了端口", () => {
   it("缺必填字段 → 提交失败并说清缺什么", async () => {
     init(dir, HUMAN, reviewFlow(true));
-    send(dir, HUMAN, "job-1", "gate", "in", { ok: true, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { ok: true, expect: 1 });
     const d = await drain(dir, HUMAN);
     expect(d.code).toBe(1);
     expect(d.text).toContain("契约");
@@ -197,13 +197,13 @@ describe("★ 输入契约：不合规的载荷进不了端口", () => {
 
   it("类型不符 → 同样被拦", async () => {
     init(dir, HUMAN, reviewFlow(true));
-    send(dir, HUMAN, "job-1", "gate", "in", { ok: true, score: "高分", expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { ok: true, score: "高分", expect: 1 });
     expect((await drain(dir, HUMAN)).code).toBe(1);
   });
 
   it("合规载荷正常通过", async () => {
     init(dir, HUMAN, reviewFlow(true));
-    send(dir, HUMAN, "job-1", "gate", "in", { ok: true, score: 90, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { ok: true, score: 90, expect: 1 });
     expect((await drain(dir, HUMAN)).code).toBe(0);
   });
 });
@@ -241,7 +241,7 @@ describe("★ 端口白名单：编不出没声明的分支", () => {
 
   it("选了未声明的端口 → 失败，不是悄悄丢", async () => {
     init(dir, HUMAN, routeFlow());
-    send(dir, HUMAN, "job-1", "r", "in", { key: "ghost" });
+    send(dir, HUMAN, "job-1/r", "in", { key: "ghost" });
     const d = await drain(dir, HUMAN);
     expect(d.code).toBe(1);
     expect(d.text).toMatch(/未声明|端口/);
@@ -249,7 +249,7 @@ describe("★ 端口白名单：编不出没声明的分支", () => {
 
   it("选了声明过的端口就正常", async () => {
     init(dir, HUMAN, routeFlow());
-    send(dir, HUMAN, "job-1", "r", "in", { key: "default" });
+    send(dir, HUMAN, "job-1/r", "in", { key: "default" });
     expect((await drain(dir, HUMAN)).code).toBe(0);
   });
 });

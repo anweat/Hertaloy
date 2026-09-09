@@ -130,16 +130,16 @@ describe("★ 测试流：从空目录到回收，每条命令的 JSON 都是契
     });
 
     // ④ 投两条
-    const sent = send(state(), HUMAN, "job-1", "gate", "in", {
+    const sent = send(state(), HUMAN, "job-1/gate", "in", {
       pass: true,
       score: 92,
       expect: 2,
     });
     expect(sent.data).toMatchObject({
-      target: { traceid: "job-1", node: "gate", port: "in" },
+      target: { instance: "job-1/gate", port: "in" },
     });
     expect((sent.data as { messageId: string }).messageId).toMatch(/^msg-/);
-    send(state(), HUMAN, "job-1", "gate", "in", { pass: false, score: 41, expect: 2 });
+    send(state(), HUMAN, "job-1/gate", "in", { pass: false, score: 41, expect: 2 });
 
     const queued = status(state(), HUMAN).data as { queued: unknown[] };
     expect(queued.queued).toHaveLength(2);
@@ -182,7 +182,7 @@ describe("★ 失败路径的 JSON 也是契约", () => {
 
   it("截断的结果是结构化的，不用 parse 文本", () => {
     init(state(), HUMAN, reviewFlowFixed());
-    send(state(), HUMAN, "job-1", "gate", "in", { pass: true, score: 1, expect: 9 });
+    send(state(), HUMAN, "job-1/gate", "in", { pass: true, score: 1, expect: 9 });
     const t = truncate(state(), HUMAN, "job-1", "测试");
     expect(t.data).toMatchObject({
       traceid: "job-1",
@@ -245,7 +245,7 @@ describe("★ 构造器：只减样板，不加权威", () => {
 
   it("★ 构造出来的图真能跑 —— 构造器不是纸上谈兵", async () => {
     expect(init(state(), HUMAN, reviewFlowFixed()).code).toBe(0);
-    send(state(), HUMAN, "job-1", "gate", "in", { pass: true, score: 7, expect: 1 });
+    send(state(), HUMAN, "job-1/gate", "in", { pass: true, score: 7, expect: 1 });
     const r = await drain(state(), HUMAN);
     expect((r.data as { failed: number }).failed).toBe(0);
     expect(show(state(), HUMAN, "job-1/parts").text).toContain("7");

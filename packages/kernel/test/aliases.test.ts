@@ -20,6 +20,7 @@ import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js
 import { ObjectStore } from "../src/store.js";
 import { Runtime, type StepResult } from "../src/runtime.js";
 import { InvariantError } from "../src/errors.js";
+import { formatEndpoint } from "@nodeflow/contracts";
 
 let store: ObjectStore;
 
@@ -69,7 +70,7 @@ function runtimeOf(reg: InstanceRegistry): Runtime {
 function deliveredTo(rt: Runtime, step: StepResult): readonly string[] {
   return step.delivered
     .map((id) => rt.message(id).target)
-    .map((t) => `${t.traceid}/${t.node}.${t.port}`)
+    .map(formatEndpoint)
     .sort();
 }
 
@@ -93,7 +94,7 @@ describe("S1 · 绑定指向子槽，够得着兄弟位置上的服务（帧 9�
     const rt = runtimeOf(reg);
     rt.spawn("job-1", "askers", "coder-1");
     rt.spawn("job-1", "services", "discovery");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
 
     expect(deliveredTo(rt, rt.step() as StepResult)).toEqual(["job-1/discovery/metrics.in"]);
     // REQUEST 记了义务，等的是服务方
@@ -137,7 +138,7 @@ describe("S2 · 绑定挂在子槽上，只有那一支看得见", () => {
 
     // 两支各自看得见自己那条 —— 互不借用
     expect(reg.get("job-1/team-a").bindings.map((b) => b.container)).toEqual(["job-1"]);
-    rt.send({ traceid: "job-1/team-a", node: "worker", port: "start" }, { q: "a" });
+    rt.send({ instance: "job-1/team-a/worker", port: "start" }, { q: "a" });
     expect(deliveredTo(rt, rt.step() as StepResult)).toEqual(["job-1/w1/metrics.in"]);
   });
 
@@ -190,10 +191,10 @@ describe("S3 · 帧 11 —— 不需要表达", () => {
     rt.spawn("job-9/w-a", "teams", "t1");
     rt.spawn("job-9/w-b", "teams", "t2");
 
-    rt.send({ traceid: "job-9/w-a/t1", node: "worker", port: "start" }, { q: "a" });
+    rt.send({ instance: "job-9/w-a/t1/worker", port: "start" }, { q: "a" });
     expect(deliveredTo(rt, rt.step() as StepResult)).toEqual(["job-9/w-a/metrics.in"]);
 
-    rt.send({ traceid: "job-9/w-b/t2", node: "worker", port: "start" }, { q: "b" });
+    rt.send({ instance: "job-9/w-b/t2/worker", port: "start" }, { q: "b" });
     const second = rt
       .drain()
       .filter((r): r is StepResult => !("reason" in r) && r.traceid === "job-9/w-b/t2");
@@ -232,7 +233,7 @@ describe("S4 · 0..N 扇出", () => {
 
   it("槽下每个 OPEN 实例各收一份", () => {
     const { rt } = fanoutTree();
-    rt.send({ traceid: "job-1/t1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/t1/worker", port: "start" }, { q: "x" });
     expect(deliveredTo(rt, rt.step() as StepResult)).toEqual([
       "job-1/w1/metrics.in",
       "job-1/w2/metrics.in",
@@ -242,7 +243,7 @@ describe("S4 · 0..N 扇出", () => {
   it("进终态的不再收 —— 绑定是静态的，实例数量是动态的", () => {
     const { rt } = fanoutTree();
     rt.truncate("job-1/w2", "下线");
-    rt.send({ traceid: "job-1/t1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/t1/worker", port: "start" }, { q: "x" });
     expect(deliveredTo(rt, rt.step() as StepResult)).toEqual(["job-1/w1/metrics.in"]);
   });
 });
@@ -297,7 +298,7 @@ describe("S5 · selfBindings —— 只有自己看得见", () => {
     rt.spawn("job-1", "w", "a");
     rt.spawn("job-1", "w", "b");
 
-    rt.send({ traceid: "job-1/a", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/a/worker", port: "start" }, { q: "x" });
     // a 发的只落回 a 自己
     expect(deliveredTo(rt, rt.step() as StepResult)).toEqual(["job-1/a/metrics.in"]);
   });
@@ -325,7 +326,7 @@ describe("跨租户：不透明地址，不枚举对面", () => {
     rt.spawn("job-1", "askers", "coder-1");
     // 故意**不**创建 gw-1 —— 跨租户地址不依赖本地实例存在
     rt.spawn("job-1", "gw", "gw-1");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
 
     expect(deliveredTo(rt, rt.step() as StepResult)).toEqual(["job-1/gw-1/metrics.in"]);
   });

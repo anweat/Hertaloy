@@ -128,7 +128,7 @@ it("advance 返回失败也保存失败消息，重开目录后不再把它当�
       } } } },
     } } }],
     root: { id: "job", template: "root" },
-    send: [{ traceid: "job", node: "a", port: "in", payload: {} }],
+    send: [{ instance: "job/a", port: "in", payload: {} }],
   } }).isError).toBe(false);
   expect(call("advance", {}).isError).toBe(true);
   const state = RunState.open(dir, { readOnly: true });
@@ -170,7 +170,7 @@ describe("★ 纪律二：每个工具都过 ControlPlane", () => {
     for (const name of ["get_status", "send_message", "truncate_instance"]) {
       const args =
         name === "send_message"
-          ? { traceid: "job-1", node: "gate", port: "in", payload: {} }
+          ? { instance: "job-1/gate", port: "in", payload: {} }
           : name === "truncate_instance"
             ? { traceid: "job-1" }
             : {};
@@ -239,9 +239,7 @@ describe("★ 全链：建 run → 投消息 → 推进 → 读产物", () => {
 
     expect(
       call("send_message", {
-        traceid: "job-1",
-        node: "gate",
-        port: "in",
+        instance: "job-1/gate", port: "in",
         payload: { ok: true, score: 90, expect: 1 },
       }).isError,
     ).toBe(false);
@@ -264,7 +262,7 @@ describe("★ 全链：建 run → 投消息 → 推进 → 读产物", () => {
 
   it("投给不存在的实例 → 报错并指路", () => {
     call("create_run", { scenario: FLOW });
-    const r = call("send_message", { traceid: "job-9", node: "gate", port: "in" });
+    const r = call("send_message", { instance: "job-9/gate", port: "in" });
     expect(r.isError).toBe(true);
     expect(r.text).toContain("get_status");
   });

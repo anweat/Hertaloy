@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodeflow/contracts";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "../src/run-state.js";
+import { lastSegment } from "@nodeflow/contracts";
 
 let dir: string;
 beforeEach(() => {
@@ -54,7 +55,7 @@ class NeverReturns implements ExecutionBackend {
 function seed(state: RunState): void {
   const ref = registerContainerTemplate(state.store, "root", TEMPLATE, "root_config");
   state.registry.createRoot(ref, "job-1");
-  state.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { task: "t1" });
+  state.runtime.send({ instance: "job-1/worker", port: "in" }, { task: "t1" });
 }
 
 describe("★ claim 熬过崩溃", () => {
@@ -295,16 +296,16 @@ describe("★ source 活得过落盘", () => {
     first.registry.createRoot(ref, "job-1");
     first.runtime.registerHandler("emit", () => ({ out: { v: 1 } }));
     first.runtime.registerHandler("noop", () => ({}));
-    first.runtime.send({ traceid: "job-1", node: "a", port: "in" }, {});
+    first.runtime.send({ instance: "job-1/a", port: "in" }, {});
     first.runtime.drain();
     first.persist();
     first.close();
 
     const second = RunState.open(dir, { readOnly: true });
     try {
-      const downstream = second.runtime.messages().find((m) => m.target.node === "b");
+      const downstream = second.runtime.messages().find((m) => lastSegment(m.target.instance) === "b");
       expect(downstream).toBeDefined();
-      expect(downstream?.source).toEqual({ traceid: "job-1", node: "a", port: "out" });
+      expect(downstream?.source).toEqual({ instance: "job-1/a", port: "out" });
     } finally {
       second.close();
     }

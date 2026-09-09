@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 it("★ 同步节点跑完留一条执行记录：SETTLED / DONE，认领的是那条消息", () => {
-  rt.send({ traceid: "job", node: "ok", port: "in" }, { v: 1 });
+  rt.send({ instance: "job/ok", port: "in" }, { v: 1 });
   rt.drain();
 
   const records = rt.records();
@@ -62,7 +62,7 @@ it("★ 同步节点跑完留一条执行记录：SETTLED / DONE，认领的是�
 
 it("★ 入站校验失败也留记录 —— 首次就失败的节点不能看起来像没跑过", () => {
   // servo 取不到 $.v
-  rt.send({ traceid: "job", node: "ok", port: "in" }, { 别的: 1 });
+  rt.send({ instance: "job/ok", port: "in" }, { 别的: 1 });
   rt.drain();
 
   const ok = rt.records().find((r) => r.nodeId === "ok");
@@ -73,7 +73,7 @@ it("★ 入站校验失败也留记录 —— 首次就失败的节点不能看�
 });
 
 it("同步记录不产生义务，也不挡住终止 —— 它已经是 SETTLED", () => {
-  rt.send({ traceid: "job", node: "ok", port: "in" }, { v: 1 });
+  rt.send({ instance: "job/ok", port: "in" }, { v: 1 });
   rt.drain();
   expect(rt.obligations("job").filter((o) => o.kind === "execution")).toEqual([]);
   expect(rt.canTerminate("job")).toBe(true);
@@ -96,7 +96,7 @@ it("记录随事务回滚 —— handler 抛异常不留半条", () => {
   reg2.createRoot(r2, "job2");
   const rt2 = new Runtime(s2, reg2);
   rt2.registerHandler("boom", () => { throw new Error("炸"); });
-  rt2.send({ traceid: "job2", node: "n", port: "in" }, {});
+  rt2.send({ instance: "job2/n", port: "in" }, {});
   expect(() => rt2.drain()).toThrow("炸");
   expect(rt2.records()).toEqual([]);
 });

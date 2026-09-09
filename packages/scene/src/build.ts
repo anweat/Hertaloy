@@ -24,14 +24,38 @@
 import type { Cell, Card, Flow, Phase, Scene, Tether, Anchor } from "./scene.js";
 import type { Snapshot, SnapshotMessage } from "./snapshot.js";
 
+/**
+ * 地址拆分 —— `scene` 只依赖 zod（RENDERING.md §8 第 1 条），拿不到 contracts 的
+ * `containerOf` / `lastSegment`，所以这两行是那道边界的代价，与
+ * `snapshot.ts` 里那份 schema 同一笔账。
+ */
+const containerOf = (instance: string): string => instance.slice(0, instance.lastIndexOf("/"));
+const nodeOf = (instance: string): string => instance.slice(instance.lastIndexOf("/") + 1);
+
 /** 子槽在场景里的 id：实例路径 + `~` + 槽名。 */
 export function slotCellId(traceid: string, slot: string): string {
   return `${traceid}~${slot}`;
 }
 
 /** 节点在场景里的 id：实例路径 + `#` + 节点名。 */
+/**
+ * 节点在场景里的 id。
+ *
+ * **V6 阶段 1b 之后仍然是 `容器#节点`，不是实例路径本身** —— 这一半只收地址，
+ * 节点还没成为注册实例，所以 spawn 的路径段与节点 id 仍在两个空间里：
+ * `spawn(job-1, slot, "work")` 与 `nodes.work` 今天可以并存。改成路径就会让
+ * 两个不同的东西撞成同一个 cell id，而渲染层按 id 索引 —— 后写的静默盖掉先写的。
+ *
+ * 分隔符与实例路径合并，是"节点成为实例"那一半的事：那时 spawn 抢不到同名段，
+ * 撞车在结构上不可能。
+ */
 export function nodeCellId(traceid: string, nodeId: string): string {
   return `${traceid}#${nodeId}`;
+}
+
+/** 由一段地址直接给出 cell id。 */
+function cellIdOf(instance: string): string {
+  return nodeCellId(containerOf(instance), nodeOf(instance));
 }
 
 function depthOf(traceid: string): number {
@@ -85,13 +109,16 @@ function touchIndex(messages: readonly SnapshotMessage[]): Map<string, number[]>
   };
   for (const msg of messages) {
     const seq = seqOf(msg.id);
-    add(msg.target.traceid, seq);
-    add(nodeCellId(msg.target.traceid, msg.target.node), seq);
+    add(containerOf(msg.target.instance), seq);
+    add(cellIdOf(msg.target.instance), seq);
     if (msg.source === undefined) continue;
-    add(msg.source.traceid, seq);
-    if (msg.source.node !== undefined) {
-      add(nodeCellId(msg.source.traceid, msg.source.node), seq);
+    // `port` 有 = 某节点的 emit 口发的；没有 = 实例自身的生命周期通知
+    if (msg.source.port === undefined) {
+      add(msg.source.instance, seq);
+      continue;
     }
+    add(containerOf(msg.source.instance), seq);
+    add(cellIdOf(msg.source.instance), seq);
   }
   return index;
 }
@@ -159,7 +186,7 @@ function phaseOfNode(
   let phase: Phase = "idle";
   let latest = 0;
   for (const m of snapshot.messages) {
-    if (m.target.traceid !== traceid || m.target.node !== nodeId) continue;
+    if (m.target.instance !== `${traceid}/${nodeId}`) continue;
     const ended: Phase | undefined =
       m.state === "FAILED" ? "failed" : m.state === "DISCARDED" ? "voided" : undefined;
     if (ended === undefined || seqOf(m.id) < latest) continue;
@@ -204,9 +231,9 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
   const inbound = new Map<string, number>();
   const bump = (m: Map<string, number>, key: string) => m.set(key, (m.get(key) ?? 0) + 1);
   for (const msg of recent) {
-    bump(inbound, nodeCellId(msg.target.traceid, msg.target.node));
-    if (msg.source !== undefined && msg.source.node !== undefined) {
-      bump(inbound, nodeCellId(msg.source.traceid, msg.source.node));
+    bump(inbound, cellIdOf(msg.target.instance));
+    if (msg.source !== undefined && msg.source.port !== undefined) {
+      bump(inbound, cellIdOf(msg.source.instance));
     }
   }
   const busiest = Math.max(1, ...inbound.values());
@@ -376,11 +403,10 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
       const at = recent
         .filter(
           (m) =>
-            m.target.traceid === instance.traceid &&
-            m.target.node === edge.to.node &&
+            m.target.instance === `${instance.traceid}/${edge.to.node}` &&
             m.target.port === edge.to.port &&
-            m.source?.node === edge.from.node &&
-            m.source.traceid === instance.traceid,
+            m.source?.instance === `${instance.traceid}/${edge.from.node}` &&
+            m.source.port !== undefined,
         )
         .map((m) => seqOf(m.id));
       flows.push({
@@ -429,10 +455,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
 
       for (const targetTrace of targets) {
         const hits = recent.filter(
-          (m) =>
-            m.alias === b.alias &&
-            m.target.traceid === targetTrace &&
-            m.target.node === b.node,
+          (m) => m.alias === b.alias && m.target.instance === `${targetTrace}/${b.node}`,
         );
         const to = { cell: nodeCellId(targetTrace, b.node), port: b.port };
         const flowBase = `${instance.traceid}:alias:${b.alias}:${targetTrace}`;
@@ -450,8 +473,8 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         }
         const bySource = new Map<string, number[]>();
         for (const m of hits) {
-          if (m.source === undefined || m.source.node === undefined) continue;
-          const key = `${nodeCellId(m.source.traceid, m.source.node)}|${m.source.port ?? ""}`;
+          if (m.source?.port === undefined) continue;
+          const key = `${cellIdOf(m.source.instance)}|${m.source.port}`;
           const list = bySource.get(key);
           if (list === undefined) bySource.set(key, [seqOf(m.id)]);
           else list.push(seqOf(m.id));
@@ -494,12 +517,12 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
    * `at` 就是"在哪些序号上发生过"，空即从未发生。
    */
   for (const msg of recent) {
-    if (msg.source !== undefined && msg.source.node !== undefined) continue; // 数据流，上面画过
-    const to = { cell: nodeCellId(msg.target.traceid, msg.target.node), port: msg.target.port };
-    if (!inScope(msg.target.traceid)) continue;
+    if (msg.source?.port !== undefined) continue; // 数据流，上面画过
+    const to = { cell: cellIdOf(msg.target.instance), port: msg.target.port };
+    if (!inScope(containerOf(msg.target.instance))) continue;
     flows.push({
       id: `signal:${msg.id}`,
-      from: msg.source === undefined ? null : { cell: msg.source.traceid },
+      from: msg.source === undefined ? null : { cell: msg.source.instance },
       to,
       // 已经发生的事：确定性拉满，不像别名那样要靠命中数猜
       certainty: 1,

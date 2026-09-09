@@ -19,7 +19,7 @@ function build(kids: number, msgs: number, keep = -1) {
   const rt = new Runtime(store, reg, { keepConsumedMessages: keep });
   rt.registerHandler("noop", () => ({}));
   for (let i = 0; i < kids; i += 1) rt.spawn("job", "k", `c${String(i)}`);
-  for (let i = 0; i < msgs; i += 1) rt.send({ traceid: "job", node: "n", port: "in" }, {});
+  for (let i = 0; i < msgs; i += 1) rt.send({ instance: "job/n", port: "in" }, {});
   return rt;
 }
 const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] as number;

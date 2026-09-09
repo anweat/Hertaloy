@@ -75,7 +75,7 @@ describe("写法一：汇聚 —— 版本历史当累加器", () => {
     });
 
     for (const v of [1, 2, 3]) {
-      rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v });
+      rt.send({ instance: "job-1/collect", port: "in" }, { v });
     }
     const results = rt.drain() as StepResult[];
 
@@ -98,7 +98,7 @@ describe("写法二：循环计数 —— 版本号就是 epoch", () => {
       return epoch < 3 ? { again: { v: epoch } } : { out: { v: epoch } };
     });
 
-    rt.send({ traceid: "job-1", node: "loop", port: "in" }, { v: 0 });
+    rt.send({ instance: "job-1/loop", port: "in" }, { v: 0 });
     rt.drain();
 
     expect(seen).toEqual([1, 2, 3]);
@@ -122,7 +122,7 @@ describe("写法三：择优 —— 读 history 挑最高", () => {
     });
 
     for (const v of [5, 9, 2]) {
-      rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v });
+      rt.send({ instance: "job-1/collect", port: "in" }, { v });
     }
     const results = rt.drain() as StepResult[];
     expect(results[2]?.dangling).toEqual(["done"]);
@@ -136,7 +136,7 @@ describe("ctx 的边界", () => {
       ctx.put("evil", "run", {});
       return {};
     });
-    rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v: 1 });
+    rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
     expect(() => rt.drain()).toThrow(/不得写入内核保留 kind `run`/);
   });
 
@@ -149,7 +149,7 @@ describe("ctx 的边界", () => {
       expect(() => ctx.read("job-1/a")).toThrow();
       return {};
     });
-    rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v: 1 });
+    rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
     rt.drain();
   });
 });
@@ -160,7 +160,7 @@ describe("批 0：提交是事务（§10.1）", () => {
       ctx.put("half", "thing", { written: true });
       throw new Error("提交到一半炸了");
     });
-    const id = rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v: 1 });
+    const id = rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
 
     const before = {
       seq: reg.get("job-1").seq,
@@ -200,7 +200,7 @@ describe("批 0：提交是事务（§10.1）", () => {
 describe("批 0：状态不变量断言", () => {
   it("正常运行后不变量成立", () => {
     rt.registerHandler("collect", () => ({}));
-    rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v: 1 });
+    rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
     rt.drain();
     rt.checkInvariants();
     rt.settleAll();
@@ -255,7 +255,7 @@ describe("批 0：状态不变量断言", () => {
 
   it("半状态检查没退化：TERMINAL 却仍有在途消息照旧咬人", () => {
     rt.registerHandler("collect", () => ({}));
-    rt.send({ traceid: "job-1", node: "collect", port: "in" }, { v: 1 });
+    rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
     // 消息还在队列里就把实例按成终态
     reg.setStatus("job-1", "TERMINAL");
     expect(() => rt.checkInvariants()).toThrow(InvariantError);
@@ -309,8 +309,8 @@ describe("批 F：对象命名空间（§7.7 的 bug 修复）", () => {
     rt.spawn("job-1", "k", "a");
     rt.spawn("job-1", "k", "b");
 
-    rt.send({ traceid: "job-1/a", node: "w", port: "in" }, { v: "A" });
-    rt.send({ traceid: "job-1/b", node: "w", port: "in" }, { v: "B" });
+    rt.send({ instance: "job-1/a/w", port: "in" }, { v: "A" });
+    rt.send({ instance: "job-1/b/w", port: "in" }, { v: "B" });
     rt.drain();
 
     // 修复前：两个实例都写 `results`，得到 results@1 / results@2 —— 互相污染
@@ -338,12 +338,12 @@ describe("批 F：对象命名空间（§7.7 的 bug 修复）", () => {
     rt.spawn("job-1", "k", "b");
 
     // 两个子容器交货
-    rt.send({ traceid: "job-1/a", node: "w", port: "in" }, { v: "A" });
-    rt.send({ traceid: "job-1/b", node: "w", port: "in" }, { v: "B" });
+    rt.send({ instance: "job-1/a/w", port: "in" }, { v: "A" });
+    rt.send({ instance: "job-1/b/w", port: "in" }, { v: "B" });
     rt.drain();
 
     // 父容器被通知两次：第一次不足两份，第二次才汇聚
-    rt.send({ traceid: "job-1", node: "merge", port: "in" }, {});
+    rt.send({ instance: "job-1/merge", port: "in" }, {});
     rt.drain();
     expect(merged).toEqual([["A", "B"]]);
     rt.checkInvariants();
@@ -368,7 +368,7 @@ describe("批 F：对象命名空间（§7.7 的 bug 修复）", () => {
     });
     rt.registerHandler("merge", () => ({}));
     rt.spawn("job-1", "k", "a");
-    rt.send({ traceid: "job-1/a", node: "w", port: "in" }, { v: 1 });
+    rt.send({ instance: "job-1/a/w", port: "in" }, { v: 1 });
     expect(() => rt.drain()).toThrow(/资产名 .* 非法/);
   });
 });

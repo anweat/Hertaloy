@@ -18,7 +18,7 @@ for (const m of [200, 800, 2000, 5000]) {
   // 生产里同步提交**不落盘**（`onCommit` 只在 claim 时 persist），
   // 所以一趟 drain 只写一次头。逐条 persist 是不真实的负载。
   const t0 = performance.now();
-  for (let i = 0; i < m; i += 1) s.runtime.send({ traceid: "job", node: "n", port: "in" }, {});
+  for (let i = 0; i < m; i += 1) s.runtime.send({ instance: "job/n", port: "in" }, {});
   s.runtime.drain();
   s.persist();
   const ms = performance.now() - t0;

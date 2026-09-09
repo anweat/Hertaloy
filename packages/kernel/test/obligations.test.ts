@@ -161,7 +161,7 @@ describe("request 义务 = 还没回复的请求", () => {
   it("请求发出 → 回复销账；waitingOn 记的是服务方", () => {
     rt.spawn("job-1", "askers", "coder-1");
     rt.spawn("job-1", "services", "discovery");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "skill-x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "skill-x" });
 
     rt.step() as StepResult; // 发出 REQUEST
     expect(rt.obligations("job-1/coder-1").filter((o) => o.kind === "request")).toEqual([
@@ -181,7 +181,7 @@ describe("request 义务 = 还没回复的请求", () => {
   it("截断请求方：请求连同它一起了结", () => {
     rt.spawn("job-1", "askers", "coder-1");
     rt.spawn("job-1", "services", "discovery");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
     rt.step();
 
     rt.truncate("job-1/coder-1", "试验");
@@ -202,7 +202,7 @@ describe("服务方死亡：了结走正常回复路径", () => {
   it("请求方的 callback 端口收到了结通知", () => {
     rt.spawn("job-1", "askers", "coder-1");
     rt.spawn("job-1", "services", "discovery");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
     rt.step(); // 发出 REQUEST
 
     rt.truncate("job-1/discovery", "服务方挂了");
@@ -211,12 +211,12 @@ describe("服务方死亡：了结走正常回复路径", () => {
     expect((rt.snapshot() as { pending: Map<string, unknown> }).pending.size).toBe(0);
 
     const notice = rt.messages().find((m) => m.state === "QUEUED");
-    expect(notice?.target).toEqual({ traceid: "job-1/coder-1", node: "worker", port: "got" });
+    expect(notice?.target).toEqual({ instance: "job-1/coder-1/worker", port: "got" });
     // 载荷是**请求方自己声明的**那份，不是内核自造的形状 —— 内核造的过不了
     // 请求方 callback 端口的 servo，会在提取那一步被拒（handler 根本不会被叫醒）
     expect(notice?.payload).toEqual({ a: "（服务不可用）" });
     // 来源是服务方实例本身，不是它某个节点的 emit
-    expect(notice?.source).toEqual({ traceid: "job-1/discovery" });
+    expect(notice?.source).toEqual({ instance: "job-1/discovery" });
 
     // ★ 而且吃得下：消费它，handler 跑起来，消息进 CONSUMED 而不是 FAILED
     expect(rt.step()).not.toBeNull();
@@ -226,7 +226,7 @@ describe("服务方死亡：了结走正常回复路径", () => {
   it("请求方已经不在了就不投递 —— 不给死实例塞消息", () => {
     rt.spawn("job-1", "askers", "coder-1");
     rt.spawn("job-1", "services", "discovery");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
     rt.step();
 
     rt.truncate("job-1/coder-1", "请求方先挂");
@@ -243,15 +243,13 @@ describe("服务方死亡：了结走正常回复路径", () => {
     for (let i = 1; i <= ROUNDS; i += 1) {
       rt.spawn("job-1", "askers", `coder-${i}`);
       rt.spawn("job-1", "services", `svc-${i}`);
-      rt.send({ traceid: `job-1/coder-${i}`, node: "worker", port: "start" }, { q: "x" });
+      rt.send({ instance: `${`job-1/coder-${i}`}/worker`, port: "start" }, { q: "x" });
       rt.step(); // 发出 REQUEST
       rt.truncate(`job-1/svc-${i}`, "服务方挂了");
 
       const notice = rt.messages().find((m) => m.state === "QUEUED");
       expect(notice?.target).toEqual({
-        traceid: `job-1/coder-${i}`,
-        node: "worker",
-        port: "got",
+        instance: `${`job-1/coder-${i}`}/worker`, port: "got",
       });
       notices += 1;
       // 消费掉它，否则下一轮的 step() 会先拿到这条而不是新任务
@@ -265,10 +263,46 @@ describe("服务方死亡：了结走正常回复路径", () => {
   });
 });
 
+describe("★ holder 与 waitingOn 必须同域 —— 否则死锁检测静默失效", () => {
+  /**
+   * `deadlocks()` 建的是 `holder → waitingOn` 的有向图，而 `holder` 是**容器**
+   * （不变量 L2）。`waitingOn` 若落到别的空间（比如节点路径），两边永远接不上 ——
+   * **环找不到，而且不报错**。
+   *
+   * V6 阶段 1b 地址收成一段时真的踩了这一脚：排期处顺手写成
+   * `targets[0].instance`，类型完全合法（两个都是 TraceId），编译器没话说。
+   * 是别处一条断言的字面值对不上才暴露的 —— 那是运气，不是设计。
+   *
+   * 所以这里钉的不是某个字面值，是**域**：每个 `waitingOn` 都必须是一个
+   * 注册在案的实例，也就是能当 holder 的那种东西。
+   */
+  it("waitingOn 指向的必须是注册实例，不是它下面的节点", () => {
+    rt.spawn("job-1", "askers", "coder-1");
+    rt.spawn("job-1", "services", "discovery");
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
+    rt.step();
+
+    /**
+     * 作用域必须取到**请求方**（`job-1/coder-1`）。
+     *
+     * 第一版写的是 `rt.obligations("job-1")` —— 那里带 `waitingOn` 的只有
+     * `child` 义务，而 child 的 `waitingOn` 本来就是注册实例，于是
+     * `waits.length > 0` 被它满足、循环里一次都没碰到 request。
+     * **断言全绿而没走到要测的东西**，正是这条用例要防的那个形状。
+     */
+    const waits = rt.obligations("job-1/coder-1").filter((o) => o.waitingOn !== undefined);
+    expect(waits.map((o) => o.kind)).toContain("request");
+    for (const o of waits) {
+      expect(reg.has(o.waitingOn as string)).toBe(true);
+      expect(reg.has(o.holder)).toBe(true);
+    }
+  });
+});
+
 describe("四种义务是一条枚举", () => {
   it("在途消息", () => {
     rt.spawn("job-1", "askers", "coder-1");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
 
     expect(rt.obligations("job-1/coder-1").map((o) => o.kind)).toEqual(["message"]);
     expect(rt.terminationBlockers("job-1/coder-1")).toEqual(["1 条待处理消息"]);
@@ -277,7 +311,7 @@ describe("四种义务是一条枚举", () => {
 
   it("在途执行 —— claim 之后消息与记录各是一份义务", () => {
     rt.spawn("job-1", "agents", "a1");
-    rt.send({ traceid: "job-1/a1", node: "a", port: "in" }, { v: 1 });
+    rt.send({ instance: "job-1/a1/a", port: "in" }, { v: 1 });
     expect(rt.claimAgent().kind).toBe("claimed");
 
     expect(
@@ -296,9 +330,9 @@ describe("四种义务是一条枚举", () => {
     rt.spawn("job-1", "askers", "coder-1");
     rt.spawn("job-1", "services", "discovery");
     rt.spawn("job-1", "agents", "a1");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
     rt.step(); // request 义务
-    rt.send({ traceid: "job-1/a1", node: "a", port: "in" }, { v: 1 });
+    rt.send({ instance: "job-1/a1/a", port: "in" }, { v: 1 });
     rt.claimAgent(); // execution 义务
 
     expect(new Set(rt.obligations().map((o) => o.kind))).toEqual(

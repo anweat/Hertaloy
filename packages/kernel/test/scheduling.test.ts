@@ -65,7 +65,7 @@ beforeEach(() => {
 function sendThree(rt: Runtime): void {
   rt.spawn("job-1", "kids", "k1");
   for (const v of [1, 2, 3]) {
-    rt.send({ traceid: "job-1/k1", node: "a", port: "in" }, { v });
+    rt.send({ instance: "job-1/k1/a", port: "in" }, { v });
   }
 }
 
@@ -79,7 +79,7 @@ describe("默认 FIFO", () => {
 
   it("`fifo` 就是取候选集的第一个；空集给 null", () => {
     const c = (id: string, position: number): Candidate => ({
-      message: { id, target: { traceid: "job-1", node: "a" }, state: "QUEUED" },
+      message: { id, target: { instance: "job-1/a" }, state: "QUEUED" },
       traceid: "job-1",
       nodeId: "a",
       position,
@@ -131,11 +131,11 @@ describe("★ 换不坏不变量", () => {
     const rt = build(spy);
     rt.spawn("job-1", "kids", "k1");
     rt.spawn("job-1", "kids", "k2");
-    rt.send({ traceid: "job-1/k1", node: "a", port: "in" }, { v: 1 });
+    rt.send({ instance: "job-1/k1/a", port: "in" }, { v: 1 });
     // 这条投给 agent 节点 —— 同步路径不该看见它
-    rt.send({ traceid: "job-1/k1", node: "b", port: "in" }, { v: 9 });
+    rt.send({ instance: "job-1/k1/b", port: "in" }, { v: 9 });
     // 这条投给一个随即被截断的实例 —— 也不该看见
-    rt.send({ traceid: "job-1/k2", node: "a", port: "in" }, { v: 8 });
+    rt.send({ instance: "job-1/k2/a", port: "in" }, { v: 8 });
     rt.truncate("job-1/k2", "下线");
 
     rt.step();
@@ -144,7 +144,7 @@ describe("★ 换不坏不变量", () => {
 
   it("★ 返回候选集外的东西 → 当场抛，不静默变成「本轮空闲」", () => {
     const forged: Scheduler = () => ({
-      message: { id: "msg-999", target: { traceid: "job-1/k1", node: "a" }, state: "QUEUED" },
+      message: { id: "msg-999", target: { instance: "job-1/k1/a" }, state: "QUEUED" },
       traceid: "job-1/k1",
       nodeId: "a",
       position: 0,
@@ -157,7 +157,7 @@ describe("★ 换不坏不变量", () => {
 
   it("按引用比对，内容一样的伪造对象也不算", () => {
     const c: Candidate = {
-      message: { id: "msg-1", target: { traceid: "job-1", node: "a" }, state: "QUEUED" },
+      message: { id: "msg-1", target: { instance: "job-1/a" }, state: "QUEUED" },
       traceid: "job-1",
       nodeId: "a",
       position: 0,
@@ -170,7 +170,7 @@ describe("★ 换不坏不变量", () => {
 
   it("不挑（null）是合法的，不抛", () => {
     const c: Candidate = {
-      message: { id: "msg-1", target: { traceid: "job-1", node: "a" }, state: "QUEUED" },
+      message: { id: "msg-1", target: { instance: "job-1/a" }, state: "QUEUED" },
       traceid: "job-1",
       nodeId: "a",
       position: 0,

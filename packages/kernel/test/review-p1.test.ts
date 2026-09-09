@@ -60,7 +60,7 @@ describe("P1-1 非法 agent 输出必须让状态收口，不能悬挂", () => {
       emissions: { ghost: {} },
       termination: "DONE",
     }));
-    const id = rt.send({ traceid: "job-1", node: "coder", port: "in" }, { t: 1 });
+    const id = rt.send({ instance: "job-1/coder", port: "in" }, { t: 1 });
 
     const result = (await rt.stepAgent()) as StepFailure;
     expect(result.termination).toBe("INVALID_OUTPUT");
@@ -105,7 +105,7 @@ describe("P1-3 backend 是不可信边界，必须运行时校验", () => {
       emissions: {},
       termination: "DONE",
     }));
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { t: 1 });
+    rt.send({ instance: "job-1/coder", port: "in" }, { t: 1 });
     const result = (await rt.stepAgent()) as StepFailure;
     expect(result.termination).toBe("INVALID_OUTPUT");
     expect(result.reason).toMatch(/executionId 不匹配/);
@@ -117,7 +117,7 @@ describe("P1-3 backend 是不可信边界，必须运行时校验", () => {
       emissions: {},
       termination: "WHATEVER",
     }));
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { t: 1 });
+    rt.send({ instance: "job-1/coder", port: "in" }, { t: 1 });
     const result = (await rt.stepAgent()) as StepFailure;
     expect(result.reason).toMatch(/形状非法/);
   });
@@ -132,7 +132,7 @@ describe("P1-3 backend 是不可信边界，必须运行时校验", () => {
       ],
       termination: "DONE",
     }));
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { t: 1 });
+    rt.send({ instance: "job-1/coder", port: "in" }, { t: 1 });
     const result = (await rt.stepAgent()) as StepFailure;
 
     expect(result.reason).toMatch(/不得提交内核保留 kind `run`/);
@@ -187,7 +187,7 @@ describe("P1-4 REQUEST 锁必须记 waitingOn，否则服务方死亡时请求�
     rt.spawn("job-1", "a", "caller");
     rt.spawn("job-1", "v", "server");
 
-    rt.send({ traceid: "job-1/caller", node: "w", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/caller/w", port: "start" }, { q: "x" });
     rt.step();
 
     const lock = rt.obligations("job-1/caller").find((o) => o.kind === "request");
@@ -222,7 +222,7 @@ describe("P1-5 自然终止必须存在，并释放父的 child 锁", () => {
     expect(rt.terminationBlockers("job-1")).toEqual(["锁 child · 等 job-1/child-1"]);
 
     // 子做完活
-    rt.send({ traceid: "job-1/child-1", node: "n", port: "in" }, {});
+    rt.send({ instance: "job-1/child-1/n", port: "in" }, {});
     rt.drain();
 
     const settled = rt.settleAll();
@@ -233,7 +233,7 @@ describe("P1-5 自然终止必须存在，并释放父的 child 锁", () => {
 
   it("还有活没干完时 settle 不生效", () => {
     const rt = new Runtime(store, reg);
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { t: 1 });
+    rt.send({ instance: "job-1/coder", port: "in" }, { t: 1 });
     expect(rt.settle("job-1")).toBe(false);
     expect(reg.get("job-1").status).toBe("OPEN");
   });
@@ -267,8 +267,7 @@ describe("P1-6 回复绝不落到不存在的接收方", () => {
       {
         template: { nodes: { n: node }, edges: {}, children: {}, bindings: [], selfBindings: [] },
         node,
-        traceid: "job-1",
-        nodeId: "n",
+        instance: "job-1/n",
         inboundMessageId: "msg-1",
         inboundRequestId: "req-1",
         resolve: () => [],
@@ -312,7 +311,7 @@ describe("P1-7 换实例仍然正确 —— 原「相对作用域」保护的性
       { traceid: "job-1/k2", slot: "kids", status: "TERMINAL" },
     ];
     expect(resolveAlias(bindings, instances, "a")).toEqual([
-      { traceid: "job-1/k1", node: "n", port: "in" },
+      { instance: "job-1/k1/n", port: "in" },
     ]);
   });
 
@@ -328,8 +327,8 @@ describe("后续清单：#claim 失败不得被当成空闲", () => {
       emissions: { out: { ok: true } },
       termination: "DONE",
     }));
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { wrong: 1 }); // 提取失败
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { t: 2 }); // 合法
+    rt.send({ instance: "job-1/coder", port: "in" }, { wrong: 1 }); // 提取失败
+    rt.send({ instance: "job-1/coder", port: "in" }, { t: 2 }); // 合法
 
     const results = await rt.drainAgents();
     expect(results).toHaveLength(2);

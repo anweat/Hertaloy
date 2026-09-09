@@ -159,7 +159,7 @@ describe("★ 帧 14：第二轮的上下文不该比第一轮大", () => {
 
     // 第一轮带着一大包上下文进来
     rt.send(
-      { traceid: "job-1", node: "fix", port: "in" },
+      { instance: "job-1/fix", port: "in" },
       { failing: "第 3 个用例挂了", bulk: "噪音".repeat(2000) },
     );
     await rt.stepAgent();
@@ -189,7 +189,7 @@ describe("★ 帧 14：第二轮的上下文不该比第一轮大", () => {
     const rt = new Runtime(store, reg, { backend, maxAttempts: 1 });
 
     rt.send(
-      { traceid: "job-1", node: "fix", port: "in" },
+      { instance: "job-1/fix", port: "in" },
       { failing: "只有这句该进去", noise: "x".repeat(50_000) },
     );
     await rt.stepAgent();
@@ -258,7 +258,7 @@ describe("★ 地址模型：消息只带地址，内容走对象库", () => {
       return {};
     });
 
-    rt.send({ traceid: "job-1", node: "writer", port: "in" }, { task: "导出功能" });
+    rt.send({ instance: "job-1/writer", port: "in" }, { task: "导出功能" });
     const results = rt.drain();
 
     expect(results).toHaveLength(2);
@@ -306,7 +306,7 @@ describe("★ 地址模型：消息只带地址，内容走对象库", () => {
     }));
     rt.registerHandler("read", () => ({}));
 
-    rt.send({ traceid: "job-1", node: "writer", port: "in" }, {});
+    rt.send({ instance: "job-1/writer", port: "in" }, {});
     rt.drain();
 
     // 队列里那条消息的载荷是个地址，几十字节；内容在对象库里

@@ -49,7 +49,13 @@ import {
   writePermissions,
 } from "@nodeflow/state";
 import type { ExecutionBackend } from "@nodeflow/contracts";
-import { isOverlay, type Json, type Principal } from "@nodeflow/contracts";
+import {
+  containerOf,
+  formatEndpoint,
+  isOverlay,
+  type Json,
+  type Principal,
+} from "@nodeflow/contracts";
 import { AuthorizationError, execLog } from "@nodeflow/kernel";
 import { BUILTIN_HANDLERS, BUILTIN_NAMES } from "./builtins.js";
 import { Scenario } from "./scenario.js";
@@ -184,7 +190,7 @@ export function status(dir: string, actor: Principal): CommandResult {
     lines.push("", `在途消息 ${pending.length} 条（另有 ${claimed.length} 条已被 claim）：`);
     for (const m of [...pending, ...claimed]) {
       lines.push(
-        `  ${m.state === "CLAIMED" ? "⟳" : "→"} ${m.target.traceid}/${m.target.node}.${m.target.port}`,
+        `  ${m.state === "CLAIMED" ? "⟳" : "→"} ${formatEndpoint(m.target)}`,
       );
     }
     // `$exec` 按节点索引（V6：节点有自己的对象命名空间），所以按 (实例, 节点) 枚举
@@ -477,13 +483,13 @@ export function message(dir: string, actor: Principal, messageId: string): Comma
     }
     const settled = m.state !== "QUEUED" && m.state !== "CLAIMED";
     const lines = [
-      `${m.id}  →  ${m.target.traceid}/${m.target.node}.${m.target.port}`,
+      `${m.id}  →  ${formatEndpoint(m.target)}`,
       `  状态 ${m.state}${m.attempts > 0 ? `  已试 ${String(m.attempts)} 次` : ""}`,
       m.source === undefined
         ? "  来源：图外（人 / CLI 投的）"
-        : m.source.node === undefined
-          ? `  来源：实例 ${m.source.traceid} 的生命周期信号`
-          : `  来源：${m.source.traceid}/${m.source.node}.${m.source.port ?? "?"}`,
+        : m.source.port === undefined
+          ? `  来源：实例 ${m.source.instance} 的生命周期信号`
+          : `  来源：${m.source.instance}.${m.source.port}`,
       ...(m.failure === undefined
         ? []
         : [`  历史失败：${m.failure}${settled ? "" : "（当前仍在途 —— 这是上一次尝试留下的）"}`]),
@@ -692,21 +698,20 @@ export function history(dir: string, actor: Principal, objectId: string): Comman
 export function send(
   dir: string,
   actor: Principal,
-  traceid: string,
-  node: string,
+  instance: string,
   port: string,
   payload: Json,
 ): CommandResult {
   return writable(dir, (s) => {
-    if (!s.registry.has(traceid)) {
-      return fail(`没有实例 ${traceid}。先跑 \`hertaloy status\` 看有哪些。`);
+    // 地址是一段（V6 阶段 1b）：`job-1/plan` 就是节点自己，容器由它派生
+    const target = { instance, port };
+    const container = containerOf(target);
+    if (!s.registry.has(container)) {
+      return fail(`没有实例 ${container}。先跑 \`hertaloy status\` 看有哪些。`);
     }
     try {
-      const id = s.control.send(actor, { traceid, node, port }, payload);
-      return ok(`已投递 ${id} → ${traceid}/${node}.${port}`, {
-        messageId: id,
-        target: { traceid, node, port },
-      } as never);
+      const id = s.control.send(actor, target, payload);
+      return ok(`已投递 ${id} → ${formatEndpoint(target)}`, { messageId: id, target } as never);
     } catch (error) {
       return fail((error as Error).message);
     }
@@ -1080,7 +1085,7 @@ export function init(dir: string, actor: Principal, raw: unknown): CommandResult
     }
     s.registry.createRoot(rootRef, scenario.root.id);
     for (const m of scenario.send) {
-      s.control.send(actor, { traceid: m.traceid, node: m.node, port: m.port }, m.payload);
+      s.control.send(actor, { instance: m.instance, port: m.port }, m.payload);
     }
     return ok(
       [

@@ -103,6 +103,12 @@ export function isDescendantOf(candidate: TraceId, ancestor: TraceId): boolean {
   return candidate === ancestor || candidate.startsWith(`${ancestor}/`);
 }
 
+/** 路径最后一段。节点实例的最后一段就是它在父模板 `nodes` 里的声明名。 */
+export function lastSegment(id: TraceId): string {
+  const cut = id.lastIndexOf("/");
+  return cut < 0 ? id : id.slice(cut + 1);
+}
+
 // ---------------------------------------------------------------------------
 // AliasName —— 别名（隧道的替代）
 // ---------------------------------------------------------------------------

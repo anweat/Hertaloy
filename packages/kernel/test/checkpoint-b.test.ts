@@ -133,7 +133,7 @@ describe("Checkpoint B 主线", () => {
     rt.spawn("job-1", "services", "discovery");
     rt.spawn("job-1", "coders", "coder-1");
 
-    rt.send({ traceid: "job-1/coder-1", node: "work", port: "start" }, { task: "导出功能" });
+    rt.send({ instance: "job-1/coder-1/work", port: "start" }, { task: "导出功能" });
 
     // 同步链：发 REQUEST → 服务方回复 → 回复落 got → done 沿边到 writer
     rt.drain();
@@ -163,7 +163,7 @@ describe("Checkpoint B 主线", () => {
     rt.spawn("job-1", "services", "discovery");
     rt.spawn("job-1", "coders", "coder-1");
     const seed = rt.send(
-      { traceid: "job-1/coder-1", node: "work", port: "start" },
+      { instance: "job-1/coder-1/work", port: "start" },
       { task: "t" },
     );
 
@@ -243,7 +243,7 @@ describe("Checkpoint B 失败路径", () => {
   it("★ 运行期填充超上界 → 直接失败，不截断不降级（B1 运行期一半）", async () => {
     rt.spawn("job-1", "coders", "coder-1");
     // writer.in 的 skill 声明上界 200 tokens，这里直接塞一大段进 agent 节点
-    rt.send({ traceid: "job-1/coder-1", node: "writer", port: "in" }, { skill: "很".repeat(500) });
+    rt.send({ instance: "job-1/coder-1/writer", port: "in" }, { skill: "很".repeat(500) });
 
     const result = (await rt.stepAgent()) as StepFailure;
     expect(result.reason).toMatch(/上下文编译失败/);
@@ -255,7 +255,7 @@ describe("Checkpoint B 失败路径", () => {
   it("强制截断：迟到结果不复活，锁被反向清账", async () => {
     rt.spawn("job-1", "services", "discovery");
     rt.spawn("job-1", "coders", "coder-1");
-    rt.send({ traceid: "job-1/coder-1", node: "work", port: "start" }, { task: "t" });
+    rt.send({ instance: "job-1/coder-1/work", port: "start" }, { task: "t" });
     rt.step(); // 发出 REQUEST，锁记在 coder-1 上，waitingOn = discovery
 
     rt.truncate("job-1/discovery", "服务方挂了");
@@ -270,7 +270,7 @@ describe("Checkpoint B 失败路径", () => {
     rt.spawn("job-1", "coders", "coder-1");
     rt.truncate("job-1/coder-1", "截断");
     expect(() =>
-      rt.send({ traceid: "job-1/coder-1", node: "work", port: "start" }, { task: "t" }),
+      rt.send({ instance: "job-1/coder-1/work", port: "start" }, { task: "t" }),
     ).toThrow(InvariantError);
   });
 });

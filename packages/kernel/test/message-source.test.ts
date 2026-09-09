@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime } from "../src/runtime.js";
+import { containerOf, lastSegment } from "@nodeflow/contracts";
 
 let store: ObjectStore;
 beforeEach(() => {
@@ -50,16 +51,16 @@ describe("★ 内网边：来源是发出它的那个 emit 端口", () => {
     const { rt } = boot(FLOW);
     rt.registerHandler("emit", () => ({ out: { v: 1 } }));
     rt.registerHandler("noop", () => ({}));
-    rt.send({ traceid: "job-1", node: "a", port: "in" }, {});
+    rt.send({ instance: "job-1/a", port: "in" }, {});
     rt.drain();
 
-    const downstream = rt.messages().find((m) => m.target.node === "b");
-    expect(downstream?.source).toEqual({ traceid: "job-1", node: "a", port: "out" });
+    const downstream = rt.messages().find((m) => lastSegment(m.target.instance) === "b");
+    expect(downstream?.source).toEqual({ instance: "job-1/a", port: "out" });
   });
 
   it("★ 外部注入的那条**没有** source —— 图外来的本来就没有图内来源", () => {
     const { rt } = boot(FLOW);
-    const id = rt.send({ traceid: "job-1", node: "a", port: "in" }, {});
+    const id = rt.send({ instance: "job-1/a", port: "in" }, {});
     expect(rt.message(id).source).toBeUndefined();
   });
 
@@ -96,14 +97,14 @@ describe("★ 内网边：来源是发出它的那个 emit 端口", () => {
     });
     rt.registerHandler("emit", () => ({ out: {} }));
     rt.registerHandler("noop", () => ({}));
-    rt.send({ traceid: "job-1", node: "left", port: "in" }, {});
-    rt.send({ traceid: "job-1", node: "right", port: "in" }, {});
+    rt.send({ instance: "job-1/left", port: "in" }, {});
+    rt.send({ instance: "job-1/right", port: "in" }, {});
     rt.drain();
 
     const sources = rt
       .messages()
-      .filter((m) => m.target.node === "sink" && m.source !== undefined)
-      .map((m) => m.source?.node)
+      .filter((m) => lastSegment(m.target.instance) === "sink" && m.source !== undefined)
+      .map((m) => (m.source === undefined ? undefined : lastSegment(m.source.instance)))
       .sort();
     // 此前两条长得一模一样，分不出是谁送的
     expect(sources).toEqual(["left", "right"]);
@@ -151,13 +152,13 @@ describe("★ 网关：命中从哪儿来，现在算得出", () => {
     rt.registerHandler("noop", () => ({}));
 
     const kid = reg.spawn("job-1", "kid", "k1");
-    rt.send({ traceid: kid.traceid, node: "pub", port: "in" }, {});
+    rt.send({ instance: `${kid.traceid}/pub`, port: "in" }, {});
     rt.drain();
 
-    const heard = rt.messages().find((m) => m.target.node === "watcher");
+    const heard = rt.messages().find((m) => lastSegment(m.target.instance) === "watcher");
     expect(heard?.alias).toBe("findings");
     // ★ 这一行是整件事的重点：染色能染出那根来路了
-    expect(heard?.source?.traceid).toBe(kid.traceid);
+    expect(heard?.source === undefined ? null : containerOf(heard.source)).toBe(kid.traceid);
     expect(heard?.source?.port).toBe("out");
   });
 });
@@ -203,12 +204,13 @@ describe("★ 子实例终止通知：只有 traceid，没有 node/port", () => 
     rt.registerHandler("noop", () => ({}));
 
     const kid = reg.spawn("job-1", "kid", "k1");
-    rt.send({ traceid: kid.traceid, node: "only", port: "in" }, {});
+    rt.send({ instance: `${kid.traceid}/only`, port: "in" }, {});
     rt.drain();
     rt.settleAll();
 
-    const notice = rt.messages().find((m) => m.target.node === "done");
-    expect(notice?.source).toEqual({ traceid: kid.traceid });
-    expect(notice?.source?.node).toBeUndefined();
+    const notice = rt.messages().find((m) => lastSegment(m.target.instance) === "done");
+    // 生命周期通知：`instance` 是容器自己，没有 port —— 三种来源仍靠字段有无区分
+    expect(notice?.source).toEqual({ instance: kid.traceid });
+    expect(notice?.source?.port).toBeUndefined();
   });
 });

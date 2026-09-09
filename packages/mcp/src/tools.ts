@@ -18,7 +18,7 @@
  */
 
 import { z } from "zod";
-import type { Json, Principal } from "@nodeflow/contracts";
+import { containerOf, formatEndpoint, type Json, type Principal } from "@nodeflow/contracts";
 import { AuthorizationError } from "@nodeflow/kernel";
 import { RunState } from "@nodeflow/state";
 import { checkAgentSpec } from "@nodeflow/sandbox";
@@ -198,7 +198,7 @@ const status: Tool = {
         .filter((m) => m.state === "QUEUED");
       lines.push("", `在途消息 ${queued.length} 条`);
       for (const m of queued) {
-        lines.push(`  → ${m.target.traceid}/${m.target.node}.${m.target.port}`);
+        lines.push(`  → ${formatEndpoint(m.target)}`);
       }
       return ok(lines.join("\n"));
     }),
@@ -211,23 +211,20 @@ const send: Tool = {
     "把载荷投到某个实例的 receive 端口。**人的放行也走这条** —— " +
     "等待就是阻塞锁，放行就是往它等的端点投消息，没有单独的审批机制。",
   schema: z.object({
-    traceid: z.string().min(1),
-    node: z.string().min(1),
+    instance: z.string().min(1),
     port: z.string().min(1),
     payload: z.unknown().optional(),
   }),
   handler: (ctx, args) =>
     writable(ctx, (s) => {
-      const a = args as { traceid: string; node: string; port: string; payload?: unknown };
-      if (!s.registry.has(a.traceid)) {
-        return err(`没有实例 ${a.traceid}。先跑 get_status 看有哪些。`);
+      const a = args as { instance: string; port: string; payload?: unknown };
+      const target = { instance: a.instance, port: a.port };
+      const container = containerOf(target);
+      if (!s.registry.has(container)) {
+        return err(`没有实例 ${container}。先跑 get_status 看有哪些。`);
       }
-      const id = s.control.send(
-        ctx.actor,
-        { traceid: a.traceid, node: a.node, port: a.port },
-        (a.payload ?? {}) as Json,
-      );
-      return ok(`已投递 ${id} → ${a.traceid}/${a.node}.${a.port}`);
+      const id = s.control.send(ctx.actor, target, (a.payload ?? {}) as Json);
+      return ok(`已投递 ${id} → ${formatEndpoint(target)}`);
     }),
 };
 

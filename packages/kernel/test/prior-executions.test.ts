@@ -27,7 +27,7 @@ beforeEach(() => {
 
 /** 跑完一次，返回它的 executionId。 */
 function runOnce(rt: Runtime, trace: string, node: string, termination = "DONE"): string {
-  rt.send({ traceid: trace, node, port: "in" }, {});
+  rt.send({ instance: `${trace}/${node}`, port: "in" }, {});
   const claimed = rt.claimAgent();
   if (claimed.kind !== "claimed") throw new Error(`没 claim 到 ${node}`);
   const id = claimed.record.executionId;
@@ -37,7 +37,7 @@ function runOnce(rt: Runtime, trace: string, node: string, termination = "DONE")
 
 /** 下一次 claim 拿到的上游表。 */
 function priorOf(rt: Runtime, trace: string, node: string): Record<string, string> {
-  rt.send({ traceid: trace, node, port: "in" }, {});
+  rt.send({ instance: `${trace}/${node}`, port: "in" }, {});
   const claimed = rt.claimAgent();
   if (claimed.kind !== "claimed") throw new Error("没 claim 到");
   return { ...claimed.request.priorExecutions };

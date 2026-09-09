@@ -89,7 +89,7 @@ beforeEach(() => {
 describe("claim / execute / apply", () => {
   it("三段跑通：变量进请求，输出经边落到 sink，留 APPLIED 记录", async () => {
     backend.push(async (req) => done(req, req.vars.task));
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "export" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "export" });
 
     const applied = (await rt.stepAgent()) as StepResult;
     expect(applied.termination).toBe("DONE");
@@ -108,7 +108,7 @@ describe("claim / execute / apply", () => {
       stateDuringExecute = rt.messages()[0]?.state;
       return done(req, 1);
     });
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
     await rt.stepAgent();
     expect(stateDuringExecute).toBe("CLAIMED");
   });
@@ -118,7 +118,7 @@ describe("claim / execute / apply", () => {
       rt.truncate("job-1", "执行途中人为截断");
       return done(req, "迟到的结果");
     });
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
 
     const result = await rt.stepAgent();
     expect(isFailure(result)).toBe(true);
@@ -147,8 +147,8 @@ describe("claim / execute / apply", () => {
       inFlight -= 1;
       return done(req, 2);
     });
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "a" });
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "b" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "a" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "b" });
 
     const [a, b] = await Promise.all([rt.stepAgent(), rt.stepAgent()]);
     expect(maxConcurrent).toBe(1);
@@ -162,7 +162,7 @@ describe("五种终止不混成一种", () => {
     for (const termination of ["CANCELLED", "BUDGET"] as const) {
       const local = new Runtime(store, reg, { backend, maxAttempts: 3 });
       backend.push(async (req) => terminated(req, termination));
-      const id = local.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+      const id = local.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
       const result = await local.stepAgent();
 
       expect(isFailure(result)).toBe(true);
@@ -181,7 +181,7 @@ describe("五种终止不混成一种", () => {
     for (let i = 0; i < 3; i += 1) {
       backend.push(async (req) => terminated(req, "FAILED"));
     }
-    const id = rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    const id = rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
 
     const first = (await rt.stepAgent()) as StepFailure;
     expect(first.retrying).toBe(true);
@@ -199,7 +199,7 @@ describe("五种终止不混成一种", () => {
     backend.push(async () => {
       throw new Error("网络断了");
     });
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
     const result = (await rt.stepAgent()) as StepFailure;
     expect(result.termination).toBe("FAILED");
     expect(result.reason).toMatch(/网络断了/);
@@ -212,7 +212,7 @@ describe("五种终止不混成一种", () => {
       emissions: { ghost: {} },
       termination: "DONE",
     }));
-    const id = rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    const id = rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
 
     const result = (await rt.stepAgent()) as StepFailure;
     expect(result.termination).toBe("INVALID_OUTPUT");
@@ -230,7 +230,7 @@ describe("产物与观测", () => {
       artifacts: [{ object_id: "plan", kind: "plan", body: { n: 1 }, derived_from: [] }],
       termination: "DONE",
     }));
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
     await rt.stepAgent();
 
     const plan = store.resolve("job-1/plan@1");
@@ -245,7 +245,7 @@ describe("产物与观测", () => {
       blockersDuringExecute = rt.terminationBlockers("job-1");
       return done(req, 1);
     });
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
     await rt.stepAgent();
     expect(blockersDuringExecute).toContain("1 个在途 execution");
   });
@@ -256,7 +256,7 @@ describe("产物与观测", () => {
       expect(t.cancelledExecutions).toBe(1);
       return done(req, 1);
     });
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
     await rt.stepAgent();
     expect(backend.cancelled).toEqual(["exec-1"]);
   });
@@ -271,7 +271,7 @@ describe("★ 产物地址由内核决定，不是 agent 报什么就写什么�
       artifacts,
       termination: "DONE" as const,
     }));
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
     return await rt.stepAgent();
   }
 
@@ -344,7 +344,7 @@ describe("★ 头只装在途，历史一条不少（V6 阶段 5 · 消息那半
   function run(rt: Runtime, n: number): string[] {
     const ids: string[] = [];
     for (let i = 0; i < n; i += 1) {
-      ids.push(rt.send({ traceid: "job-1", node: "n", port: "in" }, { i }));
+      ids.push(rt.send({ instance: "job-1/n", port: "in" }, { i }));
       rt.drain();
     }
     return ids;
@@ -363,7 +363,7 @@ describe("★ 头只装在途，历史一条不少（V6 阶段 5 · 消息那半
   it("在途的一条都不动 —— 收口只对终态开", () => {
     const { rt } = rigPlain();
     run(rt, 100);
-    for (let i = 0; i < 3; i += 1) rt.send({ traceid: "job-1", node: "n", port: "in" }, { i });
+    for (let i = 0; i < 3; i += 1) rt.send({ instance: "job-1/n", port: "in" }, { i });
     expect(rt.pending()).toHaveLength(3);
     expect(rt.liveMessages()).toHaveLength(3);
     expect(rt.messages().filter((m) => m.state === "QUEUED")).toHaveLength(3);
@@ -383,7 +383,7 @@ describe("★ 头只装在途，历史一条不少（V6 阶段 5 · 消息那半
     const { rt } = rigPlain();
     run(rt, 3);
     // 不 drain，让它停在 QUEUED，然后截断
-    const doomed = rt.send({ traceid: "job-1", node: "n", port: "in" }, { i: 99 });
+    const doomed = rt.send({ instance: "job-1/n", port: "in" }, { i: 99 });
     rt.truncate("job-1", "人工中止");
 
     const m = rt.message(doomed);
@@ -415,7 +415,7 @@ describe("★ 头只装在途，历史一条不少（V6 阶段 5 · 消息那半
     // a b a b …：按节点分组会把它排成 aaa…bbb…
     const ids: string[] = [];
     for (let i = 0; i < 6; i += 1) {
-      ids.push(rt.send({ traceid: "job-1", node: i % 2 === 0 ? "a" : "b", port: "in" }, { i }));
+      ids.push(rt.send({ instance: `job-1/${i % 2 === 0 ? "a" : "b"}`, port: "in" }, { i }));
       rt.drain();
     }
     expect(rt.messages().map((m) => m.id)).toEqual(ids);
@@ -457,7 +457,7 @@ describe("★ 被拒的 claim 不留残骸（外部审核 P0-3）", () => {
     r.createRoot(ref, "job-1");
     const rt = new Runtime(s, r, { backend, maxAttempts: 3 });
 
-    rt.send({ traceid: "job-1", node: "w", port: "in" }, {});
+    rt.send({ instance: "job-1/w", port: "in" }, {});
     const result = await rt.stepAgent();
 
     expect(isFailure(result)).toBe(true);
@@ -477,7 +477,7 @@ describe("★ 两个 RUNNING 不能抢同一条消息（外部审核 P1-4）", (
     const r = new InstanceRegistry(s);
     r.createRoot(ref, "job-1");
     const rt = new Runtime(s, r, { backend });
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "t" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "t" });
 
     const first = rt.claimAgent();
     expect(first.kind).toBe("claimed");
@@ -499,19 +499,19 @@ describe("★ 两个 RUNNING 不能抢同一条消息（外部审核 P1-4）", (
  */
 describe("★ priorExecutions：上游执行记录进请求", () => {
   it("内核填，不是调用方手写", async () => {
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "一" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "一" });
     await rt.drainAgents();
     // 第一次跑：这个实例还没有别的执行记录
     expect(backend.seen[0]?.priorExecutions).toEqual({});
 
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "二" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "二" });
     await rt.drainAgents();
     // 第二次：看得见自己上一次 —— 由内核从已落盘的记录派生，没有第二本账
     expect(backend.seen[1]?.priorExecutions).toEqual({ coder: "exec-1" });
   });
 
   it("读的是持久的那一半 —— restore 之后仍算得出来", async () => {
-    rt.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "一" });
+    rt.send({ instance: "job-1/coder", port: "in" }, { task: "一" });
     await rt.drainAgents();
 
     /**
@@ -525,7 +525,7 @@ describe("★ priorExecutions：上游执行记录进请求", () => {
     reborn.restore(rt.snapshot());
     reborn.registerHandler("collect", () => ({}));
 
-    reborn.send({ traceid: "job-1", node: "coder", port: "in" }, { task: "二" });
+    reborn.send({ instance: "job-1/coder", port: "in" }, { task: "二" });
     await reborn.drainAgents();
     expect(backend.seen.at(-1)?.priorExecutions).toEqual({ coder: "exec-1" });
   });
@@ -565,7 +565,7 @@ describe("★ 入站校验：两条路径同一处实现", () => {
     r.createRoot(ref, "job-1");
     const rt = new Runtime(s, r, { backend, maxAttempts: 3 });
     rt.registerHandler("noop", () => ({}));
-    rt.send({ traceid: "job-1", node: "w", port: "in" }, {});
+    rt.send({ instance: "job-1/w", port: "in" }, {});
     return rt;
   }
 
@@ -650,7 +650,7 @@ describe("★ 入站校验：两条路径同一处实现", () => {
       return {};
     });
 
-    rt.send({ traceid: "job-1", node: "w", port: "in" }, {});
+    rt.send({ instance: "job-1/w", port: "in" }, {});
     rt.step();
     expect(seen).toEqual({ greeting: "你好" });
   });

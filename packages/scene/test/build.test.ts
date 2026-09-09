@@ -9,6 +9,10 @@ import { describe, expect, it } from "vitest";
 import { buildScene, nodeCellId, parseSnapshot } from "../src/index.js";
 import { FIXTURE } from "./fixture.js";
 
+// scene 不依赖 contracts（RENDERING.md §8 第 1 条），用例也一样
+const containerOf = (t: { instance: string }) => t.instance.slice(0, t.instance.lastIndexOf("/"));
+const lastSegment = (i: string) => i.slice(i.lastIndexOf("/") + 1);
+
 const scene = buildScene(parseSnapshot(FIXTURE));
 const flow = (from: string | null, to: string) =>
   scene.flows.find((f) => (f.from?.cell ?? null) === from && f.to.cell === to);
@@ -212,7 +216,7 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
 
   it.each([['FAILED', 'failed'], ['DISCARDED', 'voided']])("首次处理就是 %s，没有成功提交也要显示 %s", (state, phase) => {
     const snapshot = parseSnapshot(FIXTURE);
-    snapshot.messages.push({ id: "msg-99", target: { traceid: "job-1", node: "idle", port: "in" }, state });
+    snapshot.messages.push({ id: "msg-99", target: { instance: "job-1/idle", port: "in" }, state });
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#idle")?.phase).toBe(phase);
   });
 
@@ -226,7 +230,7 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
   it("★ 消息被回收也不改变相位 —— 记录不随队列回收", () => {
     const snapshot = parseSnapshot(FIXTURE);
     snapshot.messages = snapshot.messages.filter(
-      (m) => m.target.traceid !== "job-1" || m.target.node !== "plan",
+      (m) => containerOf(m.target) !== "job-1" || lastSegment(m.target.instance) !== "plan",
     );
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("done");
   });
@@ -234,7 +238,7 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
   it("★ 有记录时不看消息 —— 一条无关的旧 FAILED 盖不掉记录", () => {
     const snapshot = parseSnapshot(FIXTURE);
     snapshot.messages.push({
-      id: "msg-90", target: { traceid: "job-1", node: "plan", port: "in" }, state: "FAILED",
+      id: "msg-90", target: { instance: "job-1/plan", port: "in" }, state: "FAILED",
     });
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("done");
   });

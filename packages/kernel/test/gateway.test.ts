@@ -3,6 +3,7 @@ import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js
 import { ObjectStore } from "../src/store.js";
 import { Runtime, type StepFailure, type StepResult } from "../src/runtime.js";
 import { deadlocks } from "../src/obligations.js";
+import { containerOf } from "@nodeflow/contracts";
 
 /** 请求方容器：ask 端口出网关（别名），回复落 got 端口。 */
 const askerSpec = {
@@ -90,7 +91,7 @@ describe("REQUEST / REPLY 与锁账本", () => {
   it("一次请求记一把锁，唯一回复销账，callback 落已声明端点（M3）", () => {
     setupPair();
     rt.registerHandler("collect", () => ({}));
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "skill-x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "skill-x" });
 
     // 第一步：发出 REQUEST，锁记在**容器**上
     const first = rt.step() as StepResult;
@@ -105,7 +106,7 @@ describe("REQUEST / REPLY 与锁账本", () => {
     expect(rt.obligations("job-1/coder-1").filter((o) => o.kind === "request")).toHaveLength(0);
 
     const reply = rt.message(second.delivered[0] as string);
-    expect(reply.target).toEqual({ traceid: "job-1/coder-1", node: "worker", port: "got" });
+    expect(reply.target).toEqual({ instance: "job-1/coder-1/worker", port: "got" });
 
     // 第三步：回复被消费
     rt.registerHandler("ask2", () => ({}));
@@ -116,7 +117,7 @@ describe("REQUEST / REPLY 与锁账本", () => {
   it("非 REQUEST 消息走 reply 端口被拒绝", () => {
     setupPair();
     // 直接投一条普通消息进服务方 inbox（没有 requestId），它仍会走 answer 端口
-    rt.send({ traceid: "job-1/discovery", node: "serve", port: "inbox" }, { q: "x" });
+    rt.send({ instance: "job-1/discovery/serve", port: "inbox" }, { q: "x" });
     const result = rt.step();
     expect(isFailure(result)).toBe(true);
     if (isFailure(result)) expect(result.reason).toMatch(/不是 REQUEST/);
@@ -124,14 +125,14 @@ describe("REQUEST / REPLY 与锁账本", () => {
 
   it("REQUEST 要求恰好一个订阅者，零个或多个都失败", () => {
     rt.spawn("job-1", "askers", "coder-1");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
     const none = rt.step();
     expect(isFailure(none)).toBe(true);
     if (isFailure(none)) expect(none.reason).toMatch(/恰好 1 个目标，实际 0 个/);
 
     rt.spawn("job-1", "services", "d1");
     rt.spawn("job-1", "services", "d2");
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
     const many = rt.step();
     expect(isFailure(many)).toBe(true);
     if (isFailure(many)) expect(many.reason).toMatch(/实际 2 个/);
@@ -154,7 +155,7 @@ describe("终止判定（L5 三谓词）", () => {
     rt.spawn("job-1", "askers", "coder-1");
     expect(rt.terminationBlockers("job-1")).toEqual(["锁 child · 等 job-1/coder-1"]);
 
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
     expect(rt.terminationBlockers("job-1/coder-1")).toEqual(["1 条待处理消息"]);
   });
 });
@@ -162,7 +163,7 @@ describe("终止判定（L5 三谓词）", () => {
 describe("强制截断（§9.6）", () => {
   it("推进 generation、丢弃消息留计数、级联子容器", () => {
     setupPair();
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
 
     const result = rt.truncate("job-1", "需求变更");
     expect(result.generation).toBe(1);
@@ -201,9 +202,9 @@ describe("强制截断（§9.6）", () => {
    */
   it("★ 请求方被截断后，服务方照常收口，迟到回复也不复活它（L3）", () => {
     setupPair();
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "x" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "x" });
     rt.step(); // 发出 REQUEST
-    const request = rt.messages().find((m) => m.target.traceid === "job-1/discovery");
+    const request = rt.messages().find((m) => containerOf(m.target) === "job-1/discovery");
     expect(request).toBeDefined();
 
     rt.truncate("job-1/coder-1", "请求方被截断");
@@ -220,7 +221,7 @@ describe("强制截断（§9.6）", () => {
     expect(rt.obligations("job-1/discovery")).toEqual([]);
     // 而被截断的请求方仍然没被复活，一条消息都没收到
     expect(reg.get("job-1/coder-1").status).toBe("TERMINAL");
-    expect(rt.messages().filter((m) => m.target.traceid === "job-1/coder-1" && m.state === "QUEUED"))
+    expect(rt.messages().filter((m) => containerOf(m.target) === "job-1/coder-1" && m.state === "QUEUED"))
       .toEqual([]);
   });
 
@@ -289,23 +290,23 @@ describe("PUBLISH 的可见范围（原不变量 M2 的作用域）", () => {
     rt2.spawn("job-1", "team-b", "team-b");
 
     // team-a 发的 progress 落到 w1
-    rt2.send({ traceid: "job-1/team-a", node: "worker", port: "start" }, { q: "a" });
+    rt2.send({ instance: "job-1/team-a/worker", port: "start" }, { q: "a" });
     const inScope = rt2.step() as StepResult;
     expect(inScope.traceid).toBe("job-1/team-a");
-    expect(rt2.message(inScope.delivered[0] as string).target.traceid).toBe("job-1/w1");
+    expect(containerOf(rt2.message(inScope.delivered[0] as string).target)).toBe("job-1/w1");
 
     // team-b 发的**到不了 w1** —— 它那一支绑的是根自己的 spill
     rt2.drain();
-    rt2.send({ traceid: "job-1/team-b", node: "worker", port: "start" }, { q: "b" });
+    rt2.send({ instance: "job-1/team-b/worker", port: "start" }, { q: "b" });
     const outside = rt2
       .drain()
       .filter((r): r is StepResult => !("reason" in r) && r.traceid === "job-1/team-b");
     expect(outside).toHaveLength(1);
     const target = rt2.message(outside[0]?.delivered[0] as string).target;
-    expect(target).toEqual({ traceid: "job-1", node: "spill", port: "in" });
+    expect(target).toEqual({ instance: "job-1/spill", port: "in" });
     // w1 一条都没多收
     expect(
-      rt2.messages().filter((m) => m.target.traceid === "job-1/w1" && m.alias === "progress"),
+      rt2.messages().filter((m) => containerOf(m.target) === "job-1/w1" && m.alias === "progress"),
     ).toHaveLength(1);
   });
 
@@ -344,11 +345,11 @@ describe("PUBLISH 的可见范围（原不变量 M2 的作用域）", () => {
     rt3.spawn("job-9/w-a", "teams", "t1");
     rt3.spawn("job-9/w-b", "teams", "t2");
 
-    rt3.send({ traceid: "job-9/w-a/t1", node: "worker", port: "start" }, { q: "a" });
+    rt3.send({ instance: "job-9/w-a/t1/worker", port: "start" }, { q: "a" });
     const step = rt3.step() as StepResult;
     // 只投给 w-a，不投给 w-b
     expect(step.delivered).toHaveLength(1);
-    expect(rt3.message(step.delivered[0] as string).target.traceid).toBe("job-9/w-a");
+    expect(containerOf(rt3.message(step.delivered[0] as string).target)).toBe("job-9/w-a");
 
     // ★ 自给自足：t1 手里就有完整寻址表，解析不需要再往上问任何人
     expect(reg3.get("job-9/w-a/t1").bindings.map((b) => `${b.alias}@${b.container}`)).toEqual([
@@ -400,7 +401,7 @@ describe("死锁检测只报警不裁决", () => {
    */
   it("★ 检测到环也不往图里投消息 —— 内核检测，主体决定", () => {
     setupPair();
-    rt.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "在吗" });
+    rt.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "在吗" });
     // 只推一步：这个 fixture 的 ask handler 不看进来的端口，回复落回 got 会再发
     // 一次请求 —— drain 在这儿不收敛（§6.4 那个坑），既有用例也都是逐步推的
     rt.step();
@@ -485,7 +486,7 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
 
     runtime.spawn("job-1", "askers", "coder-1");
     runtime.spawn("job-1", "services", "discovery");
-    runtime.send({ traceid: "job-1/coder-1", node: "worker", port: "start" }, { q: "在吗" });
+    runtime.send({ instance: "job-1/coder-1/worker", port: "start" }, { q: "在吗" });
     runtime.drain(); // 请求发出
     // 只推一步：maxAttempts > 1 时消息会回到 QUEUED，drainAgents 会一直重试到耗尽
     await runtime.stepAgent(); // 服务方失败
@@ -496,7 +497,7 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
     const runtime = await runToFailure();
     const dead = runtime
       .messages()
-      .filter((m) => m.target.traceid === "job-1/discovery" && m.state === "FAILED");
+      .filter((m) => containerOf(m.target) === "job-1/discovery" && m.state === "FAILED");
     expect(dead).toHaveLength(1);
   });
 
@@ -518,7 +519,7 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
     // 通知投出来了
     const inbox = runtime
       .messages()
-      .filter((m) => m.target.traceid === "job-1/coder-1" && m.target.port === "got");
+      .filter((m) => containerOf(m.target) === "job-1/coder-1" && m.target.port === "got");
     expect(inbox).toHaveLength(1);
     expect(inbox[0]?.payload).toEqual({ a: "（服务不可用）" });
 
@@ -548,7 +549,7 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
     const runtime = await runToFailure("BUDGET");
     const inbox = runtime
       .messages()
-      .filter((m) => m.target.traceid === "job-1/coder-1" && m.target.port === "got");
+      .filter((m) => containerOf(m.target) === "job-1/coder-1" && m.target.port === "got");
     expect(inbox).toHaveLength(1);
     expect(inbox[0]?.payload).toEqual({ a: "（服务不可用）" });
     // 同样要吃得下
@@ -569,7 +570,7 @@ describe("★ 服务方永久失败 → 请求方被告知了吗", () => {
     const runtime = await runToFailure("FAILED", 3);
     const inbox = runtime
       .messages()
-      .filter((m) => m.target.traceid === "job-1/coder-1" && m.target.port === "got");
+      .filter((m) => containerOf(m.target) === "job-1/coder-1" && m.target.port === "got");
     // maxAttempts 3、只跑了一步 → 消息回到 QUEUED，请求方不该收到任何东西
     expect(inbox).toHaveLength(0);
     expect(runtime.obligations("job-1/coder-1").map((o) => o.kind)).toContain("request");

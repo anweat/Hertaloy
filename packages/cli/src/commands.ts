@@ -137,7 +137,7 @@ export function run(rawScenario: unknown): CommandResult {
   try {
     registry.createRoot(rootRef, scenario.root.id);
     for (const s of scenario.send) {
-      runtime.send({ traceid: s.traceid, node: s.node, port: s.port }, s.payload);
+      runtime.send({ instance: s.instance, port: s.port }, s.payload);
     }
     results = runtime.drain();
     runtime.settleAll();

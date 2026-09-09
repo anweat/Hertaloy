@@ -3,6 +3,7 @@ import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js
 import { ObjectStore } from "../src/store.js";
 import { Runtime, type StepFailure, type StepResult } from "../src/runtime.js";
 import { InvariantError } from "../src/errors.js";
+import { lastSegment } from "@nodeflow/contracts";
 
 /** `producer.out --e1--> consumer.in`，consumer 的 servo 提一个变量。 */
 const chainSpec = {
@@ -56,7 +57,7 @@ beforeEach(() => {
 
 describe("单提交转发链路", () => {
   it("emit → 边 → receive，两步跑完，变量按 servo 提取", () => {
-    rt.send({ traceid: "job-1", node: "producer", port: "start" }, { seed: 7 });
+    rt.send({ instance: "job-1/producer", port: "start" }, { seed: 7 });
     const results = rt.drain();
 
     expect(results).toHaveLength(2);
@@ -80,7 +81,7 @@ describe("单提交转发链路", () => {
       unused: { ignored: true },
     }));
     alt.registerHandler("collect", () => ({}));
-    alt.send({ traceid: "job-1", node: "producer", port: "start" }, { seed: 1 });
+    alt.send({ instance: "job-1/producer", port: "start" }, { seed: 1 });
 
     const first = alt.step() as StepResult;
     expect(first.dangling).toEqual(["unused"]);
@@ -92,27 +93,27 @@ describe("消息不能自选路由（不变量 M1）", () => {
   it("handler 返回的是端口名，不是地址 —— payload 里写 target 也不影响投递", () => {
     rt.registerHandler("sneaky", () => ({}));
     rt.send(
-      { traceid: "job-1", node: "producer", port: "start" },
-      { seed: 1, target: { traceid: "job-1", node: "producer", port: "start" } },
+      { instance: "job-1/producer", port: "start" },
+      { seed: 1, target: { instance: "job-1/producer", port: "start" } },
     );
     const results = rt.drain();
     // 只走模板声明的 e1，没有因为 payload 里的 target 多投一条
     expect((results[0] as StepResult).delivered).toHaveLength(1);
-    expect(rt.messages().filter((m) => m.target.node === "consumer")).toHaveLength(1);
+    expect(rt.messages().filter((m) => lastSegment(m.target.instance) === "consumer")).toHaveLength(1);
   });
 
   it("输出到未声明的 emit 端口 → InvariantError（编程错误，不进失败通道）", () => {
     const bad = new Runtime(store, reg);
     bad.registerHandler("wrap", () => ({ ghost: {} }));
     bad.registerHandler("collect", () => ({}));
-    bad.send({ traceid: "job-1", node: "producer", port: "start" }, { seed: 1 });
+    bad.send({ instance: "job-1/producer", port: "start" }, { seed: 1 });
     expect(() => bad.drain()).toThrow(/未声明的 emit 端口 `ghost`/);
   });
 });
 
 describe("零部分提交", () => {
   it("变量提取失败 → 输入 FAILED，一条下游都不创建", () => {
-    const id = rt.send({ traceid: "job-1", node: "producer", port: "start" }, { wrong: 1 });
+    const id = rt.send({ instance: "job-1/producer", port: "start" }, { wrong: 1 });
     const result = rt.step();
 
     expect(isFailure(result)).toBe(true);
@@ -147,7 +148,7 @@ describe("零部分提交", () => {
     const rt2 = new Runtime(store, reg2);
     rt2.registerHandler("wrap", (vars) => ({ out: { wrapped: vars.seed ?? null } }));
 
-    const id = rt2.send({ traceid: "job-2", node: "producer", port: "start" }, { seed: "字符串" });
+    const id = rt2.send({ instance: "job-2/producer", port: "start" }, { seed: "字符串" });
     const result = rt2.step();
 
     expect(isFailure(result)).toBe(true);
@@ -159,13 +160,13 @@ describe("零部分提交", () => {
 
 describe("入口校验", () => {
   it("未知节点 / 端口 / emit 端口作目标 → 入口即拒，不拖到调度时", () => {
-    expect(() => rt.send({ traceid: "job-1", node: "ghost", port: "in" }, {})).toThrow(
+    expect(() => rt.send({ instance: "job-1/ghost", port: "in" }, {})).toThrow(
       /可用节点：consumer, producer/,
     );
-    expect(() => rt.send({ traceid: "job-1", node: "producer", port: "ghost" }, {})).toThrow(
+    expect(() => rt.send({ instance: "job-1/producer", port: "ghost" }, {})).toThrow(
       /未声明端口/,
     );
-    expect(() => rt.send({ traceid: "job-1", node: "producer", port: "out" }, {})).toThrow(
+    expect(() => rt.send({ instance: "job-1/producer", port: "out" }, {})).toThrow(
       /方向是 emit/,
     );
   });

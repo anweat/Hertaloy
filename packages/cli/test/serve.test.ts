@@ -132,7 +132,7 @@ describe("★ 只读", () => {
 
 describe("三个读出口", () => {
   it("/scene 给一帧场景", async () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
     drain(dir, HUMAN, undefined);
     const body = (await (await withToken("/scene")).json()) as {
       viewport: string;
@@ -152,7 +152,7 @@ describe("三个读出口", () => {
   });
 
   it("/authz 给决策流水", async () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
     const body = (await (await withToken("/authz")).json()) as { actor: string }[];
     expect(body.length).toBeGreaterThan(0);
     expect(body[0]?.actor).toBe("human:local");
@@ -203,7 +203,7 @@ describe("★ /scene/stream：差量流", () => {
     };
 
     await readSome(); // 基线那一帧
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
     drain(dir, HUMAN, undefined);
     await readSome(); // 变化那一帧
 

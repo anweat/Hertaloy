@@ -10,7 +10,7 @@ function setup() {
     nodes: { a: { kind: "handler", agent: { argv: ["unused"] }, ports: { in: { direction: "receive" } } } },
   }), "job");
   const runtime = new Runtime(store, registry, { maxAttempts: 3 });
-  const message = runtime.send({ traceid: "job", node: "a", port: "in" }, {});
+  const message = runtime.send({ instance: "job/a", port: "in" }, {});
   return { store, registry, runtime, message };
 }
 

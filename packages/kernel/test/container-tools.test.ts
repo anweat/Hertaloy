@@ -79,7 +79,7 @@ describe("剧本帧 8：按 plan 扇出子容器并派活", () => {
       return {};
     });
 
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: ["a", "b", "c"] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: ["a", "b", "c"] });
     rt.drain();
 
     expect(reg.children("job-1").map((i) => i.traceid)).toEqual([
@@ -99,7 +99,7 @@ describe("剧本帧 8：按 plan 扇出子容器并派活", () => {
       ctx.spawn("coders", "empty");
       return {};
     });
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: [] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: [] });
     rt.drain();
     expect(reg.has("job-1/empty")).toBe(true);
     expect(done).toEqual([]);
@@ -113,7 +113,7 @@ describe("第一不变量：只能选已声明的槽", () => {
       ctx.spawn("reviewers", "r1", {});
       return {};
     });
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: [] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: [] });
     expect(() => rt.drain()).toThrow(/未声明子槽 `reviewers`。可用子槽：coders/);
   });
 
@@ -123,7 +123,7 @@ describe("第一不变量：只能选已声明的槽", () => {
       ctx.spawn("coders", "c1", { task: "x" });
       return {};
     });
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: [] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: [] });
     expect(() => rt.drain()).toThrow(/未声明 entry，无法投递初始载荷/);
   });
 });
@@ -168,7 +168,7 @@ describe("spawn 随提交事务（批 0）", () => {
       ctx.spawn("coders", "doomed", { task: "x" });
       throw new Error("建完就炸");
     });
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: [] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: [] });
 
     expect(() => rt.drain()).toThrow("建完就炸");
     expect(reg.has("job-1/doomed")).toBe(false);
@@ -185,7 +185,7 @@ describe("与自然终止串起来", () => {
       ctx.spawn("coders", "c1", { task: "a" });
       return {};
     });
-    rt.send({ traceid: "job-1", node: "plan", port: "in" }, { tasks: [] });
+    rt.send({ instance: "job-1/plan", port: "in" }, { tasks: [] });
     rt.drain();
 
     expect(rt.canTerminate("job-1")).toBe(false); // child 锁挡着

@@ -92,7 +92,7 @@ describe("scope 复用段边界前缀判定（第六次复用）", () => {
     cp.spawn(alice, "job-1", "k", "c1");
 
     // 同一棵树内可以
-    cp.send(alice, { traceid: "job-1/c1", node: "w", port: "in" }, {});
+    cp.send(alice, { instance: "job-1/c1/w", port: "in" }, {});
     // 另一棵树不行
     expect(() => cp.truncate(alice, "job-2", "越界")).toThrow(/无权对 `job-2`/);
   });

@@ -622,9 +622,57 @@ Windows / macOS 上同目录，`objects.ts` 的碰撞检测会拒写，一棵合
 因为默认实例化不经过调用方，**声明名与路径段被钉成同一个东西**。递归容器那个反例仍然成立，
 只是它反的是 **ref 相等**，不是**可派生性**。差点让一个正确的反例给一个错误的结论背书。
 
+### 阶段 1b（地址那半）：`{traceid, node, port}` → `{instance, port}`
+
+两段地址是"节点没有身份"留下的：只能用 `(容器, 节点名)` 这个对儿指它。
+节点 id 成为合法路径段之后，地址就能收成一段。
+
+同形的四处一起收：`Endpoint`、`MessageSource`（三个字段 → 两个，而三种情形的
+判别方式一字未改，还是靠字段有无）、`StagedRequest`、`RequestFact`、`StageContext`。
+CLI `hertaloy send <dir> <instance> <port>`、场景文件 `send:`、MCP `send_message`
+也一起 —— 否则"地址是一段"在用户真正打字的地方就不成立。
+
+顺带分开一处**本来就不该并**的：scene 的线上 schema 用
+`Endpoint.partial({ traceid: true })` 当模板内部引用。实例地址与模板引用同型
+只是巧合，contracts 那边本来就是 `PortRef` 与 `Endpoint` 两个类型。
+
+#### 阶段 0 那条纪律兑现了一半
+
+> 「阶段 1 必须给字段改名，不许复用 `traceid`。这样每一处读都报错，编译器就是那份清单。」
+
+改名确实让 40 处读点全部报错。**但它只覆盖「读字段」，不覆盖「把字段传给别的函数」**
+—— 后者两个都是 `TraceId`，类型上完全合法。本轮踩了三脚：
+
+1. `#settleRequest` 的 `registry.has(req.requester)` —— 节点路径不是注册实例，
+   永远 false，请求方永远等不到了结通知
+2. `#truncate` 的 `req.requester === trace` —— 一条 pending 都删不掉
+3. `waitingOn: targets[0].instance` —— `deadlocks()` 建的是 `holder → waitingOn`
+   的图而 holder 是容器，两边不同域则**环永远找不到，而且不报错**
+
+前两个被现有用例抓到了。**第三个是靠别处一条断言的字面值对不上才暴露的** ——
+那是运气：如果那条断言当初写成"有就行"，这个 bug 会带着全绿的套件活下去。
+
+补了一条钉**域**而不是钉字面值的用例：每个 `waitingOn` 都必须是注册实例。
+写它的时候自己又犯了一次同样的错 —— 第一版取 `rt.obligations("job-1")`，
+那里带 `waitingOn` 的只有 `child` 义务（本来就指注册实例），于是
+`expect(waits.length).toBeGreaterThan(0)` 被它满足、循环里一次都没碰到 request。
+**断言全绿而没走到要测的东西。** 把 bug 打回去验证才发现它不红。
+
+> 纪律：新补的用例，**必须把它要防的那个 bug 打回去看它变红**。
+> 「加了断言」和「断言走到了」是两回事。
+
+#### 顺带
+
+- `MessageQueue.liveFor` 删除 —— 阶段 0 勘察时就标记"只有自己的单测在用"，
+  而这一步它正好要改语义。没有生产消费方的东西，不迁移，删掉。
+- scene 的夹具是 `fixture-gen.mts` 生成的（文件头写着"手编夹具会编成我以为的形状"），
+  所以重跑脚本而不是手改 25 处。
+- 那道 schema 缝的运行期保险如约生效：夹具没跟上时 `Snapshot.safeParse`
+  当场指着 `messages.0.target.instance：Required` 报错，不是画面少半张。
+
 ### 门检
 
-- **956 passed / 7 skipped**（contracts 71 / kernel 323 / scene 66 / state 87 / cli 198 / mcp 19 / sandbox 192+7），
-  7 个包 typecheck 通过，可达性 206 无孤儿。跳过的 7 项仍是 Docker daemon 未运行。
+- **957 passed / 7 skipped**（contracts 71 / kernel 324 / scene 66 / state 87 / cli 198 / mcp 19 / sandbox 192+7），
+  7 个包 typecheck 通过，可达性 210 无孤儿。跳过的 7 项仍是 Docker daemon 未运行。
 - 基准见 [2026-09-07-perf](./experiments/2026-09-07-perf/README.md)。
 

@@ -38,7 +38,7 @@ beforeEach(() => {
 
 function runWith(fn: () => unknown): () => void {
   rt.registerHandler("bad", fn as never);
-  rt.send({ traceid: "job-1", node: "n", port: "in" }, {});
+  rt.send({ instance: "job-1/n", port: "in" }, {});
   return () => rt.drain();
 }
 

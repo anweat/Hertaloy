@@ -55,7 +55,7 @@ beforeEach(() => {
 
 describe("★ 结构化义务有出口了", () => {
   it("给的是 {kind, holder, key}，不是中文文案", () => {
-    rt.send({ traceid: "job", node: "w", port: "in" }, {});
+    rt.send({ instance: "job/w", port: "in" }, {});
     const list = control.obligations(HUMAN, "job");
     expect(list.length).toBeGreaterThan(0);
     expect(list[0]).toHaveProperty("kind");
@@ -72,8 +72,8 @@ describe("★ 结构化义务有出口了", () => {
 
 describe("★ 按 id 查执行 / 消息", () => {
   it("查得到自己的", () => {
-    const id = rt.send({ traceid: "job", node: "w", port: "in" }, { a: 1 });
-    expect(control.message(HUMAN, id)?.target.node).toBe("w");
+    const id = rt.send({ instance: "job/w", port: "in" }, { a: 1 });
+    expect(control.message(HUMAN, id)?.target.instance).toBe("job/w");
   });
 
   it("★ 不存在的 id：有权的人得到 undefined —— 缺席是答复，不是异常", () => {
@@ -82,7 +82,7 @@ describe("★ 按 id 查执行 / 消息", () => {
   });
 
   it("★ 无权的人得到「无权」而不是「没有」—— 存在性不是泄漏面", () => {
-    const id = rt.send({ traceid: "job", node: "w", port: "in" }, {});
+    const id = rt.send({ instance: "job/w", port: "in" }, {});
     // 存在的
     expect(() => control.message(AGENT, id)).toThrow(AuthorizationError);
     // 不存在的：同样是无权，分辨不出来 —— 这正是要的

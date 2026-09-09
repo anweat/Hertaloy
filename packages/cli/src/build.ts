@@ -156,7 +156,7 @@ export function scenario(input: {
   readonly id: string;
   readonly spec: ContainerTemplate;
   readonly root?: string;
-  readonly send?: readonly { traceid: string; node: string; port: string; payload?: unknown }[];
+  readonly send?: readonly { instance: string; port: string; payload?: unknown }[];
 }): Record<string, unknown> {
   return {
     templates: [{ id: input.id, kind: "root_config", spec: input.spec }],

@@ -31,9 +31,12 @@ import { type MessageFact, type MessageState, isLive } from "./facts.js";
  *
  * 不用"一个 trace 一个大对象"：对象库每版存整份正文，那样每落一条消息就重写
  * 一次全量，正是刚从头里赶走的那个平方级。
+ *
+ * 参数是**一段**地址（V6 阶段 1b）。拼出来的字符串与之前逐字相同 ——
+ * `<容器>/<节点>/$msg` 本来就是节点的命名空间，只是那时它拼不出名字来。
  */
-export function msgLog(traceid: TraceId, nodeId: string): string {
-  return `${traceid}/${nodeId}/$msg`;
+export function msgLog(instance: TraceId): string {
+  return `${instance}/$msg`;
 }
 
 /**
@@ -138,11 +141,6 @@ export class MessageQueue implements Snapshotable {
    */
   queued(): readonly Message[] {
     return this.#select((m) => m.state === "QUEUED");
-  }
-
-  /** 某实例名下还会动的消息（`QUEUED` / `CLAIMED`）。 */
-  liveFor(trace: TraceId): readonly Message[] {
-    return this.#select((m) => m.target.traceid === trace && isLive(m));
   }
 
   /** 按投递顺序筛，只分配结果那一份。 */

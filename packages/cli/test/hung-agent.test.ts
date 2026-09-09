@@ -47,7 +47,7 @@ beforeEach(() => {
   const s = RunState.open(dir);
   try {
     s.registry.createRoot(registerContainerTemplate(s.store, "root", TEMPLATE, "root_config"), "job-1");
-    s.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { t: "x" });
+    s.runtime.send({ instance: "job-1/worker", port: "in" }, { t: "x" });
     s.persist();
   } finally {
     s.close();

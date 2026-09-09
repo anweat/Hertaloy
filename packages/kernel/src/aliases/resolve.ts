@@ -23,7 +23,12 @@
  * 副产品：跨界的 REQUEST「恰好 1 个」是构造性成立的（一个地址就是一个）。
  */
 
-import { type Endpoint, type TraceId, parentTrace as parentOf } from "@nodeflow/contracts";
+import {
+  type Endpoint,
+  type TraceId,
+  endpointAt,
+  parentTrace as parentOf,
+} from "@nodeflow/contracts";
 import type { InstanceFact } from "../facts.js";
 import type { MaterializedBinding } from "./materialize.js";
 
@@ -46,18 +51,18 @@ export function resolveAlias(
     if (b.alias !== alias) continue;
     if (b.external !== undefined) {
       // 不透明地址：不枚举对面，投一条就完
-      out.push({ traceid: b.external as TraceId, node: b.node, port: b.port });
+      out.push(endpointAt(b.external as TraceId, b.node, b.port));
       continue;
     }
     if (b.slot === undefined) {
-      out.push({ traceid: b.container, node: b.node, port: b.port });
+      out.push(endpointAt(b.container, b.node, b.port));
       continue;
     }
     for (const inst of instances) {
       if (inst.status !== "OPEN") continue;
       if (inst.slot !== b.slot) continue;
       if (parentOf(inst.traceid) !== b.container) continue;
-      out.push({ traceid: inst.traceid, node: b.node, port: b.port });
+      out.push(endpointAt(inst.traceid, b.node, b.port));
     }
   }
   return out;

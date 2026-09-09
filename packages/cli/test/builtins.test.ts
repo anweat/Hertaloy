@@ -46,7 +46,7 @@ describe("★ collect：相同答案也要各算一份", () => {
       expect: { type: "short", from: "$.expect" },
     });
     for (let i = 0; i < 3; i += 1) {
-      runtime.send({ traceid: "job-1", node: "n", port: "in" }, { value: "same", expect: 3 });
+      runtime.send({ instance: "job-1/n", port: "in" }, { value: "same", expect: 3 });
       runtime.drain();
     }
     // 修之前：去重把三份合成一份，版本数停在 1，汇聚永远等不齐
@@ -59,7 +59,7 @@ describe("★ collect：相同答案也要各算一份", () => {
       expect: { type: "short", from: "$.expect" },
     });
     for (let i = 0; i < 2; i += 1) {
-      runtime.send({ traceid: "job-1", node: "n", port: "in" }, { value: "same", expect: 2 });
+      runtime.send({ instance: "job-1/n", port: "in" }, { value: "same", expect: 2 });
       runtime.drain();
     }
     expect(store.history("job-1/parts").map((v) => v.body.index)).toEqual([1, 2]);
@@ -70,7 +70,7 @@ describe("★ loop：轮次真的往前走", () => {
   it("跑三轮 → 三版 epoch（修之前恒为 1 版，rounds>1 永不退出）", () => {
     const { store, runtime } = rig("loop", { rounds: { type: "short", from: "$.rounds" } });
     for (let i = 0; i < 3; i += 1) {
-      runtime.send({ traceid: "job-1", node: "n", port: "in" }, { rounds: 3 });
+      runtime.send({ instance: "job-1/n", port: "in" }, { rounds: 3 });
       runtime.drain();
     }
     expect(store.history("job-1/epoch")).toHaveLength(3);

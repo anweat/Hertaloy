@@ -16,7 +16,7 @@ import type { Message } from "../src/queue.js";
 function msg(id: string, state: Message["state"], traceid = "job-1"): Message {
   return {
     id,
-    target: { traceid, node: "n", port: "in" },
+    target: { instance: `${traceid}/n`, port: "in" },
     payload: {},
     state,
     attempts: 0,

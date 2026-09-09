@@ -183,7 +183,7 @@ it("获准子树内的消息可读，根因果无权时明确标为不可用", (
   let id: string;
   try {
     s.control.spawn(HUMAN, "job/a", "leaf", "worker");
-    id = s.control.send(HUMAN, { traceid: "job/a/worker", node: "w", port: "in" }, { visible: true });
+    id = s.control.send(HUMAN, { instance: "job/a/worker/w", port: "in" }, { visible: true });
     s.persist();
   } finally { s.close(); }
   writeFileSync(join(dir, "permissions.json"), JSON.stringify({ format: 1, grants: [

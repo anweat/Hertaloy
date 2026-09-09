@@ -12,7 +12,7 @@
  * 形状仍是 head 的形状，只是去掉了外衣和用不上的字段。
  */
 
-import type { Principal } from "@nodeflow/contracts";
+import { type Principal, containerOf } from "@nodeflow/contracts";
 import { execLog } from "@nodeflow/kernel";
 import type { RunState } from "./run-state.js";
 
@@ -132,7 +132,7 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
 
   const messages = runtime
     .messages()
-    .filter((m) => inScope(m.target.traceid))
+    .filter((m) => inScope(containerOf(m.target)))
     // 载荷不出去 —— 画布只需要"有没有流过"
     .map((m) => ({
       id: m.id,

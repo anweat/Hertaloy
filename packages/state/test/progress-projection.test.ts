@@ -76,8 +76,8 @@ it("★ 同一实例的两条执行记录各带自己的进度，不是都跟着
   try {
     const ref = registerContainerTemplate(state.store, "root", TEMPLATE, "root_config");
     state.registry.createRoot(ref, "job-1");
-    state.runtime.send({ traceid: "job-1", node: "slow", port: "in" }, {});
-    state.runtime.send({ traceid: "job-1", node: "fast", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/slow", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/fast", port: "in" }, {});
     await state.runtime.drainAgents();
     state.persist();
 
@@ -113,11 +113,11 @@ it("没有对应观测的记录不带进度 —— 不拿别人的顶上", async
   try {
     const ref = registerContainerTemplate(state.store, "root", TEMPLATE, "root_config");
     state.registry.createRoot(ref, "job-1");
-    state.runtime.send({ traceid: "job-1", node: "slow", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/slow", port: "in" }, {});
     await state.runtime.drainAgents(); // slow 跑完，留下一条带观测的记录
 
     // 第二条消息：claim 住不 apply —— 这条执行**还没有任何观测**
-    state.runtime.send({ traceid: "job-1", node: "fast", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/fast", port: "in" }, {});
     const claimed = state.runtime.claimAgent();
     expect(claimed.kind).toBe("claimed");
     state.persist();
@@ -166,7 +166,7 @@ it("★ 进度格式坏掉 → 这条执行标不可用，整份快照仍然解�
   try {
     const ref = registerContainerTemplate(state.store, "root", TEMPLATE, "root_config");
     state.registry.createRoot(ref, "job-1");
-    state.runtime.send({ traceid: "job-1", node: "slow", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/slow", port: "in" }, {});
     await state.runtime.drainAgents();
     state.persist();
 
@@ -236,9 +236,9 @@ it("★ 同步节点的每次执行都出得去，各带自己的终止原因", 
     const ref = registerContainerTemplate(state.store, "root", SYNC_TEMPLATE, "root_config");
     state.registry.createRoot(ref, "job-1");
     state.runtime.registerHandler("noop", () => ({}));
-    state.runtime.send({ traceid: "job-1", node: "a", port: "in" }, {});
-    state.runtime.send({ traceid: "job-1", node: "a", port: "in" }, {});
-    state.runtime.send({ traceid: "job-1", node: "b", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/a", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/a", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/b", port: "in" }, {});
     state.runtime.drain();
     state.persist();
 
@@ -264,8 +264,8 @@ it("执行记录跟着授权子树走，看不见的实例不出现", () => {
     state.registry.createRoot(ref, "job-1");
     state.runtime.registerHandler("noop", () => ({}));
     state.runtime.spawn("job-1", "kid", "k1");
-    state.runtime.send({ traceid: "job-1", node: "a", port: "in" }, {});
-    state.runtime.send({ traceid: "job-1/k1", node: "a", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/a", port: "in" }, {});
+    state.runtime.send({ instance: "job-1/k1/a", port: "in" }, {});
     state.runtime.drain();
     state.persist();
 

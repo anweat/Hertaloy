@@ -31,7 +31,7 @@ it("同步节点的当前结果跨落盘可追到消息与提交，消息本身�
     } } };
     state.registry.createRoot(registerContainerTemplate(state.store, "root", { nodes: { work: node, other: node } }, "root_config"), "job");
     state.runtime.registerHandler("noop", () => ({}));
-    const failed = state.runtime.send({ traceid: "job", node: "work", port: "in" }, {});
+    const failed = state.runtime.send({ instance: "job/work", port: "in" }, {});
     state.runtime.drain();
     state.persist();
 
@@ -48,7 +48,7 @@ it("同步节点的当前结果跨落盘可追到消息与提交，消息本身�
     expect(failedDetail.commit).toBeUndefined();
     expect(message(dir, HUMAN, failed).data).toHaveProperty("lastFailure");
 
-    const success = state.runtime.send({ traceid: "job", node: "work", port: "in" }, { value: 1 });
+    const success = state.runtime.send({ instance: "job/work", port: "in" }, { value: 1 });
     state.runtime.drain();
     expect(state.runtime.message(failed).state).toBe("FAILED");
     state.persist();

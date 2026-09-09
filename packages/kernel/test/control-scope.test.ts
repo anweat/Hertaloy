@@ -28,8 +28,8 @@ function setup(scope: string, mode = "") {
   runtime.spawn("job", "leaves", "c");
   runtime.registerHandler("noop", () => ({}));
   runtime.registerHandler("forward", () => ({ out: {} }));
-  runtime.send({ traceid: "job/b", node: "sync", port: "in" }, {});
-  runtime.send({ traceid: "job/b", node: "agent", port: "in" }, {});
+  runtime.send({ instance: "job/b/sync", port: "in" }, {});
+  runtime.send({ instance: "job/b/agent", port: "in" }, {});
   if (mode === "reconcile") {
     expect(runtime.claimAgent().kind).toBe("claimed");
     const snapshot = runtime.snapshot();

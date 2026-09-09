@@ -44,7 +44,7 @@ export function isLive(message: { readonly state: string }): boolean {
 /** 一条消息里，纯函数用得上的那部分。完整的 `Message` 在 `queue.ts`。 */
 export interface MessageFact {
   readonly id: string;
-  readonly target: { readonly traceid: TraceId; readonly node: string };
+  readonly target: { readonly instance: TraceId };
   readonly state: string;
 }
 
@@ -73,8 +73,14 @@ export interface ExecutionFact {
 
 export interface RequestFact {
   readonly requestId: string;
+  /**
+   * 请求方**节点自己的**实例路径。
+   *
+   * V6 阶段 1b 之前这里是 `{ requester, node }` 两段 —— 与 `Endpoint` 同形，
+   * 同一个理由：节点没有身份，只能用对儿指它。地址收成一段之后这里也是一段。
+   * 容器（义务的 holder，L2）由 `parentTrace` 派生。
+   */
   readonly requester: TraceId;
-  readonly node: string;
   /**
    * 服务方。**本地记录**，不去问对面 —— 租户将来未必在同一个进程里，
    * 派生只许读本地持有的事实。

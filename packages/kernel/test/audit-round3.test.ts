@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodeflow/contracts";
-import { PermissionTable } from "@nodeflow/contracts";
+import { PermissionTable, lastSegment } from "@nodeflow/contracts";
 import { ControlPlane } from "../src/control.js";
 import { BoundedAuthzLog } from "../src/authz-log.js";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
@@ -54,7 +54,7 @@ describe("★ P0-1 重复 apply 只生效一次", () => {
       cancel: async () => {},
     };
     const rt = boot(AGENT_FLOW, backend);
-    rt.send({ traceid: "job-1", node: "n", port: "in" }, {});
+    rt.send({ instance: "job-1/n", port: "in" }, {});
     await rt.stepAgent();
 
     const again = rt.applyAgentResult("exec-1", {
@@ -67,7 +67,7 @@ describe("★ P0-1 重复 apply 只生效一次", () => {
     expect(rt.record("exec-1")).toMatchObject({ status: "SETTLED", termination: "DONE" });
 
     // ★ 下游只有一条 —— 副作用没有重复
-    expect(rt.messages().filter((m) => m.target.node === "sink")).toHaveLength(1);
+    expect(rt.messages().filter((m) => lastSegment(m.target.instance) === "sink")).toHaveLength(1);
     rt.checkInvariants();
   });
 });
@@ -84,7 +84,7 @@ describe("★ P0-3 失败执行也要留下现场", () => {
       cancel: async () => {},
     };
     const rt = boot(AGENT_FLOW, backend);
-    rt.send({ traceid: "job-1", node: "n", port: "in" }, {});
+    rt.send({ instance: "job-1/n", port: "in" }, {});
     await rt.stepAgent();
 
     expect(store.has("job-1/n/$exec")).toBe(true);
@@ -104,7 +104,7 @@ describe("★ P0-3 失败执行也要留下现场", () => {
       cancel: async () => {},
     };
     const rt = boot(AGENT_FLOW, backend);
-    rt.send({ traceid: "job-1", node: "n", port: "in" }, {});
+    rt.send({ instance: "job-1/n", port: "in" }, {});
     await rt.stepAgent();
     expect(store.head("job-1/n/$exec").body).toMatchObject({ termination: "DONE" });
   });
@@ -134,7 +134,7 @@ describe("★ P0-4 同步 handler 路径也编上下文", () => {
   it("运行期上界对同步节点生效 —— 此前完全没查", () => {
     const rt = boot(syncFlow(1));
     rt.registerHandler("probe", () => ({}));
-    rt.send({ traceid: "job-1", node: "h", port: "in" }, { big: "超上界的一大段".repeat(200) });
+    rt.send({ instance: "job-1/h", port: "in" }, { big: "超上界的一大段".repeat(200) });
 
     const [step] = rt.drain();
     expect(step).toBeDefined();
@@ -149,7 +149,7 @@ describe("★ P0-4 同步 handler 路径也编上下文", () => {
       seen = vars as Record<string, unknown>;
       return {};
     });
-    rt.send({ traceid: "job-1", node: "h", port: "in" }, { big: "短的" });
+    rt.send({ instance: "job-1/h", port: "in" }, { big: "短的" });
     rt.drain();
 
     expect(seen.rule).toBe("编译期绑定的规范正文");
@@ -263,7 +263,7 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
 
   it("放行留下记录 —— 事后答得出「凭什么放行」", () => {
     const { log, control } = plane();
-    control.send(HUMAN, { traceid: "job-1", node: "n", port: "in" }, {});
+    control.send(HUMAN, { instance: "job-1/n", port: "in" }, {});
     const last = log.recent().at(-1);
     expect(last?.allowed).toBe(true);
     expect(last?.actor).toBe("human:alice");
@@ -274,7 +274,7 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
 
   it("★ 拒绝更要留下 —— 那往往就是「权限配错了」的现场", () => {
     const { log, control } = plane();
-    expect(() => control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {})).toThrow();
+    expect(() => control.send(AGENT, { instance: "job-1/n", port: "in" }, {})).toThrow();
     const last = log.recent().at(-1);
     expect(last?.allowed).toBe(false);
     expect(last?.actor).toBe("agent:bot");
@@ -283,9 +283,9 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
 
   it("序号单调 —— 决策的先后是可读的", () => {
     const { log, control } = plane();
-    control.send(HUMAN, { traceid: "job-1", node: "n", port: "in" }, {});
+    control.send(HUMAN, { instance: "job-1/n", port: "in" }, {});
     try {
-      control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {});
+      control.send(AGENT, { instance: "job-1/n", port: "in" }, {});
     } catch {
       /* 意料之中 */
     }
@@ -298,7 +298,7 @@ describe("★ 授权决策落日志：放行和拒绝都记", () => {
     const { log, control } = plane();
     for (let i = 0; i < 620; i += 1) {
       try {
-        control.send(AGENT, { traceid: "job-1", node: "n", port: "in" }, {});
+        control.send(AGENT, { instance: "job-1/n", port: "in" }, {});
       } catch {
         /* 全被拒，正好用来灌日志 */
       }

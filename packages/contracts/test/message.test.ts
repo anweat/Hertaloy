@@ -5,7 +5,7 @@ import { TraceId } from "../src/identity.js";
 
 const envelope = {
   message_id: "msg-1",
-  target: { traceid: "job-1/coder-2", node: "work", port: "in" },
+  target: { instance: "job-1/coder-2/work", port: "in" },
   payload: { task: "export" },
 };
 

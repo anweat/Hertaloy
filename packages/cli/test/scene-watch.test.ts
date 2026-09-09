@@ -101,7 +101,7 @@ describe("★ scene --watch", () => {
     const baseline = lines.length;
 
     // 另一个进程干了活
-    send(dir, HUMAN, "job-1", "gate", "in", { value: 1, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { value: 1, expect: 1 });
     await drain(dir, HUMAN, undefined);
 
     expect(await until(() => lines.length > baseline)).toBe(true);
@@ -127,7 +127,7 @@ describe("★ scene --watch", () => {
     expect(await until(() => lines.length >= 1)).toBe(true);
 
     // watch 正跑着，写命令照样拿得到锁
-    const sent = send(dir, HUMAN, "job-1", "gate", "in", { value: 1, expect: 1 });
+    const sent = send(dir, HUMAN, "job-1/gate", "in", { value: 1, expect: 1 });
     expect(sent.code, sent.text).toBe(0);
     const drained = await drain(dir, HUMAN, undefined);
     expect(drained.code, drained.text).toBe(0);

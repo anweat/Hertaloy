@@ -23,12 +23,12 @@ try {
     nodes: { failed: node, recovered: node, idle: node, filler: node },
   }, "root_config"), "handler-review");
   state.runtime.registerHandler("noop", () => ({}));
-  failed = state.runtime.send({ traceid: "handler-review", node: "failed", port: "in" }, {});
-  state.runtime.send({ traceid: "handler-review", node: "recovered", port: "in" }, {});
+  failed = state.runtime.send({ instance: "handler-review/failed", port: "in" }, {});
+  state.runtime.send({ instance: "handler-review/recovered", port: "in" }, {});
   state.runtime.drain();
-  recovered = state.runtime.send({ traceid: "handler-review", node: "recovered", port: "in" }, { value: "RECOVERED" });
+  recovered = state.runtime.send({ instance: "handler-review/recovered", port: "in" }, { value: "RECOVERED" });
   state.runtime.drain();
-  for (let i = 0; i < 405; i++) state.runtime.send({ traceid: "handler-review", node: "filler", port: "in" }, { value: i });
+  for (let i = 0; i < 405; i++) state.runtime.send({ instance: "handler-review/filler", port: "in" }, { value: i });
   state.runtime.drain();
   assert.equal(state.runtime.messages().some((m) => m.id === recovered), false);
   state.runtime.checkInvariants();

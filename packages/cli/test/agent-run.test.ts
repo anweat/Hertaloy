@@ -17,6 +17,7 @@ import { registerContainerTemplate } from "@nodeflow/kernel";
 import { LocalRunner, SandboxBackend } from "@nodeflow/sandbox";
 import { RunState } from "@nodeflow/state";
 import { drain, history, reclaim, show, status, why } from "../src/state-commands.js";
+import { lastSegment } from "@nodeflow/contracts";
 
 const HUMAN = { kind: "human", id: "local" } as const;
 let dir: string;
@@ -71,7 +72,7 @@ beforeEach(() => {
       registerContainerTemplate(s.store, "root", TEMPLATE, "root_config"),
       "job-1",
     );
-    s.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { task: "hello" });
+    s.runtime.send({ instance: "job-1/worker", port: "in" }, { task: "hello" });
     s.persist();
   } finally {
     s.close();
@@ -143,7 +144,7 @@ describe("★ 执行观测落成对象，不给 ExecutionRecord 加字段", () =
     // 第二条要在第一次 drain 之前投：drain 跑完实例就收进终态了
     const s = RunState.open(dir);
     try {
-      s.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { task: "again" });
+      s.runtime.send({ instance: "job-1/worker", port: "in" }, { task: "again" });
       s.persist();
     } finally {
       s.close();
@@ -157,7 +158,7 @@ describe("★ 因果反查有出口了", () => {
   it("why 报出这条消息的前因", async () => {
     await drain(dir, HUMAN, backend());
     const s = RunState.open(dir, { readOnly: true });
-    const produced = s.runtime.messages().find((m) => m.target.node === "sink");
+    const produced = s.runtime.messages().find((m) => lastSegment(m.target.instance) === "sink");
     s.close();
     const r = why(dir, HUMAN, produced!.id);
     expect(r.code).toBe(0);
@@ -194,7 +195,7 @@ describe("★ 沙箱保留：多开 agent 时现场留得住", () => {
   it("多个 agent 各占一个沙箱，互不覆盖", async () => {
     const s = RunState.open(dir);
     try {
-      s.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { task: "second" });
+      s.runtime.send({ instance: "job-1/worker", port: "in" }, { task: "second" });
       s.persist();
     } finally {
       s.close();
@@ -227,7 +228,7 @@ describe("★ 沙箱回收（GC 第三条）", () => {
     const s = RunState.open(dir);
     try {
       for (const t of ["a", "b"]) {
-        s.runtime.send({ traceid: "job-1", node: "worker", port: "in" }, { task: t });
+        s.runtime.send({ instance: "job-1/worker", port: "in" }, { task: t });
       }
       s.persist();
     } finally {

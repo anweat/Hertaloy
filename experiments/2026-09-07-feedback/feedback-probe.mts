@@ -22,7 +22,7 @@ function seed(dir: string) {
       work: { kind: "handler", agent: { argv: ["fixture"] },
         ports: { in: { direction: "receive" } } },
     } } }], root: { id: "job", template: "root" },
-    send: [{ traceid: "job", node: "work", port: "in", payload: {} }],
+    send: [{ instance: "job/work", port: "in", payload: {} }],
   } as never);
   assert.equal(r.code, 0, r.text);
 }

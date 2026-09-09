@@ -24,16 +24,35 @@
 
 import { z } from "zod";
 
+/**
+ * 地址是**一段**（V6 阶段 1b）：`instance` 就是节点自己的实例路径。
+ *
+ * 原来是 `{traceid, node, port}`。改这里时后端只有映射那一处会报编译错误 ——
+ * 前端读点全都编译通过，因为它们读的是这份自己声明的形状。**那道保险就是
+ * 文件头说的 parse**：形状对不上，`Snapshot.safeParse` 当场指着字段名失败。
+ */
 const Endpoint = z.object({
-  traceid: z.string(),
-  node: z.string(),
+  instance: z.string(),
   port: z.string(),
 });
 
 const Source = z.object({
-  traceid: z.string(),
-  node: z.string().optional(),
+  instance: z.string(),
   port: z.string().optional(),
+});
+
+/**
+ * **模板内部**的节点引用 —— 与 `Endpoint` 不是一回事。
+ *
+ * 这里原来写的是 `Endpoint.partial({ traceid: true })`：拿实例地址删掉一个字段
+ * 当模板引用用。两者同型只是巧合（都恰好有 `{node, port}`），语义上一个指
+ * "运行中的哪个节点"、一个指"这份模板里的哪个节点"。contracts 那边本来就是
+ * `PortRef` 与 `Endpoint` 两个类型，只有这份线上 schema 把它们并了 ——
+ * 地址收成一段之后并不动了，正好分开。
+ */
+const PortRef = z.object({
+  node: z.string(),
+  port: z.string(),
 });
 
 export const SnapshotMessage = z.object({
@@ -103,13 +122,13 @@ export const SnapshotTemplate = z.object({
       }),
     )
     .default({}),
-  edges: z.record(z.object({ from: Endpoint.partial({ traceid: true }), to: Endpoint.partial({ traceid: true }) })).default({}),
+  edges: z.record(z.object({ from: PortRef, to: PortRef })).default({}),
   children: z
     .record(
       z.object({
         template: z.string(),
-        entry: Endpoint.partial({ traceid: true }).optional(),
-        exit: Endpoint.partial({ traceid: true }).optional(),
+        entry: PortRef.optional(),
+        exit: PortRef.optional(),
       }),
     )
     .default({}),

@@ -53,9 +53,13 @@ import {
   type Usage,
   allowedEmitPorts,
   checkBackendResult,
+  containerOf,
+  endpointAt,
+  lastSegment,
   formatContractIssues,
   formatJsonViolations,
   jsonViolations,
+  childTrace,
   parentTrace as parentTrace_,
   validateContract,
 } from "@nodeflow/contracts";
@@ -417,7 +421,7 @@ export class Runtime implements Snapshotable {
   #settleMessage(id: string, patch: Partial<Message>): Message {
     const terminal = Object.freeze({ ...this.#queue.get(id), ...patch }) as Message;
     this.#store.put(
-      msgLog(terminal.target.traceid, terminal.target.node),
+      msgLog(terminal.target.instance),
       "message",
       {
         message_id: terminal.id,
@@ -430,20 +434,24 @@ export class Runtime implements Snapshotable {
         ...(terminal.source === undefined ? {} : { source: terminal.source as unknown as Json }),
         ...(terminal.requestId === undefined ? {} : { request_id: terminal.requestId }),
       },
-      { traceid: terminal.target.traceid, node_id: terminal.target.node, derived_from: [] },
+      {
+        traceid: containerOf(terminal.target),
+        node_id: lastSegment(terminal.target.instance),
+        derived_from: [],
+      },
     );
     this.#queue.drop(id);
     return terminal;
   }
 
   /** 从一版 `$msg` 还原一条消息。`message_id` 缺失 ⇒ 不是这个形状，跳过。 */
-  static #messageOf(body: Json, traceid: TraceId, nodeId: string): Message | undefined {
+  static #messageOf(body: Json, instance: TraceId): Message | undefined {
     if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
     const b = body as Record<string, Json | undefined>;
     if (typeof b.message_id !== "string") return undefined;
     return Object.freeze({
       id: b.message_id,
-      target: { traceid, node: nodeId, port: String(b.port ?? "") },
+      target: { instance, port: String(b.port ?? "") },
       payload: b.payload ?? null,
       state: b.state as MessageState,
       attempts: typeof b.attempts === "number" ? b.attempts : 0,
@@ -458,8 +466,9 @@ export class Runtime implements Snapshotable {
   #settledMessagesOf(trace: TraceId): readonly Message[] {
     const out: Message[] = [];
     for (const nodeId of Object.keys(this.#registry.template(trace).nodes)) {
-      for (const v of this.#store.history(msgLog(trace, nodeId))) {
-        const m = Runtime.#messageOf(v.body, trace, nodeId);
+      const instance = childTrace(trace, nodeId);
+      for (const v of this.#store.history(msgLog(instance))) {
+        const m = Runtime.#messageOf(v.body, instance);
         if (m !== undefined) out.push(m);
       }
     }
@@ -584,7 +593,7 @@ export class Runtime implements Snapshotable {
     const port = this.#resolvePort(target, "send");
     invariant(
       port.direction === "receive",
-      `端口 ${target.node}.${target.port} 方向是 emit，不能作为投递目标`,
+      `端口 ${target.instance}.${target.port} 方向是 emit，不能作为投递目标`,
     );
     return this.#queue.enqueue({ target, payload });
   }
@@ -637,7 +646,7 @@ export class Runtime implements Snapshotable {
     // 提交是事务：抛异常则消息状态、锁、产物、快照全部回滚（§10.1）
     return transact(this.#parts, () => {
       const result = this.#commitSync(next);
-      this.#commit({ kind: "commit", traceid: next.target.traceid });
+      this.#commit({ kind: "commit", traceid: containerOf(next.target) });
       return result;
     });
   }
@@ -784,7 +793,8 @@ export class Runtime implements Snapshotable {
     const input = this.#pickWork((node) => node.agent !== undefined);
     if (input === null) return { kind: "idle" };
 
-    const { traceid, node: nodeId } = input.target;
+    const traceid = containerOf(input.target);
+    const nodeId = lastSegment(input.target.instance);
     if (this.#ledger.isDriving(traceid, nodeId)) return { kind: "idle" };
 
     const instance = this.#registry.get(traceid);
@@ -997,7 +1007,7 @@ export class Runtime implements Snapshotable {
     }
 
     const outcome = stageOutputs(
-      this.#stageContext(template, node, record.traceid, record.nodeId, input),
+      this.#stageContext(template, node, input),
       result.emissions,
     );
     if (!outcome.ok) {
@@ -1181,7 +1191,7 @@ export class Runtime implements Snapshotable {
     if (exit === undefined) return;
 
     this.#signal(
-      { traceid: parentTrace, node: exit.node, port: exit.port },
+      endpointAt(parentTrace, exit.node, exit.port),
       { slot: child.slot, traceid: child.traceid, status: "TERMINAL" },
       child.traceid,
     );
@@ -1263,7 +1273,14 @@ export class Runtime implements Snapshotable {
     // 2. 未消费消息 → 丢弃，留计数
     let truncatedMessages = 0;
     for (const msg of this.messages()) {
-      if (msg.target.traceid !== trace) continue;
+      /**
+       * **恰好本容器的**，不是整棵子树 —— `#truncate` 自己是递归的，
+       * 子树各级各自处理自己的消息。用子树匹配会在这里丢一遍、递归里再丢一遍。
+       *
+       * 阶段 0 把这里标成"地雷"，担心的是地址收成一段之后 `!==` 会漏掉节点
+       * 名下的消息。`containerOf` 正是那个修法：地址是一段，容器是派生的。
+       */
+      if (containerOf(msg.target) !== trace) continue;
       if (msg.state !== "QUEUED" && msg.state !== "CLAIMED") continue;
       this.#settleMessage(msg.id, { state: "DISCARDED", failure: `实例被截断：${reason}` });
       truncatedMessages += 1;
@@ -1276,7 +1293,8 @@ export class Runtime implements Snapshotable {
 
     // 3. 自己发出的请求：请求方死了，回复没人收 —— 直接销账
     for (const [requestId, req] of [...this.#pending]) {
-      if (req.requester === trace) this.#pending.delete(requestId);
+      // `requester` 是请求方**节点**的路径，容器要派生 —— 直接比会一条都删不掉
+      if (containerOf({ instance: req.requester }) === trace) this.#pending.delete(requestId);
     }
 
     /**
@@ -1338,16 +1356,13 @@ export class Runtime implements Snapshotable {
     const eligible: Message[] = [];
     const candidates: Candidate[] = [];
     for (const msg of this.pending()) {
-      const instance = this.#registry.get(msg.target.traceid);
+      const traceid = containerOf(msg.target);
+      const nodeId = lastSegment(msg.target.instance);
+      const instance = this.#registry.get(traceid);
       if (instance.status !== "OPEN") continue;
-      const node = this.#registry.template(msg.target.traceid).nodes[msg.target.node];
+      const node = this.#registry.template(traceid).nodes[nodeId];
       if (node === undefined || !accept(node)) continue;
-      candidates.push({
-        message: msg,
-        traceid: msg.target.traceid,
-        nodeId: msg.target.node,
-        position: candidates.length,
-      });
+      candidates.push({ message: msg, traceid, nodeId, position: candidates.length });
       eligible.push(msg);
     }
     if (candidates.length === 0) return null;
@@ -1407,7 +1422,8 @@ export class Runtime implements Snapshotable {
   }
 
   #commitSync(input: Message): StepResult | StepFailure {
-    const { traceid, node: nodeId } = input.target;
+    const traceid = containerOf(input.target);
+    const nodeId = lastSegment(input.target.instance);
     const instance = this.#registry.get(traceid);
     const template = this.#registry.template(traceid);
     const node = template.nodes[nodeId];
@@ -1468,7 +1484,7 @@ export class Runtime implements Snapshotable {
     }
 
     const outcome = stageOutputs(
-      this.#stageContext(template, node, traceid, nodeId, input),
+      this.#stageContext(template, node, input),
       outputs,
     );
     if (!outcome.ok) return failed(outcome.reason, "INVALID_OUTPUT");
@@ -1614,7 +1630,7 @@ export class Runtime implements Snapshotable {
               `要么在模板里声明 entry，要么只建空壳（不传 payload）`,
           );
         }
-        this.send({ traceid: child.traceid, node: entry.node, port: entry.port }, payload);
+        this.send(endpointAt(child.traceid, entry.node, entry.port), payload);
         return child.traceid;
       },
       put: (name: string, kind: string, body: JsonObject): Ref => {
@@ -1643,15 +1659,14 @@ export class Runtime implements Snapshotable {
   #stageContext(
     template: ReturnType<InstanceRegistry["template"]>,
     node: NonNullable<ReturnType<InstanceRegistry["template"]>["nodes"][string]>,
-    traceid: TraceId,
-    nodeId: string,
     input: Message,
   ) {
+    const instance = input.target.instance;
+    const traceid = containerOf(input.target);
     return {
       template,
       node,
-      traceid,
-      nodeId,
+      instance,
       inboundMessageId: input.id,
       ...(input.requestId === undefined ? {} : { inboundRequestId: input.requestId }),
       /**
@@ -1698,13 +1713,13 @@ export class Runtime implements Snapshotable {
    *
    * 但此前没有对应的动作 —— 两处信号各自手写 `source: { traceid }`，
    * 而"别忘了不写 node"只靠注释提醒。收成一处之后这条由**签名**保证：
-   * 调用方给的是实例，写不出 node 来。
+   * 调用方给的是实例，写不出端口来。
    *
    * 载荷一律是协议级通知，不带内容：内容在资产里，收信方自己去取
    * （C5，`#notifyParent` 那条注释里的"消息降级成通知"）。
    */
   #signal(target: Endpoint, payload: Json, from: TraceId): void {
-    this.#queue.enqueue({ target, payload, source: { traceid: from } });
+    this.#queue.enqueue({ target, payload, source: { instance: from } });
   }
 
   /**
@@ -1721,8 +1736,16 @@ export class Runtime implements Snapshotable {
     const req = this.#pending.get(requestId);
     if (req === undefined) return;
     this.#pending.delete(requestId);
-    if (!this.#registry.has(req.requester)) return;
-    if (this.#registry.get(req.requester).status !== "OPEN") return;
+    /**
+     * 查的是**容器**，不是 `req.requester`。
+     *
+     * 地址收成一段之后 `requester` 是请求方**节点**的路径，而节点还不是注册实例
+     * （那是"节点成为实例"那一半）。直接拿它去 `registry.has` 会永远是 false ——
+     * 类型完全合法（两个都是 TraceId），编译器抓不到，后果是请求方永远等不到通知。
+     */
+    const requesterContainer = containerOf({ instance: req.requester });
+    if (!this.#registry.has(requesterContainer)) return;
+    if (this.#registry.get(requesterContainer).status !== "OPEN") return;
     /**
      * 投**请求方自己声明的**那份载荷，不是内核自造的形状。
      *
@@ -1734,11 +1757,7 @@ export class Runtime implements Snapshotable {
      * 想知道"这是不是真回复"，看的是 source 与消息记录，不是往载荷里塞标记 ——
      * 那会让载荷时有时无一个字段，正是 servo 受不了的那种形状。
      */
-    this.#signal(
-      { traceid: req.requester, node: req.node, port: req.callbackPort },
-      req.unavailable,
-      service,
-    );
+    this.#signal({ instance: req.requester, port: req.callbackPort }, req.unavailable, service);
   }
 
   /**
@@ -1767,7 +1786,7 @@ export class Runtime implements Snapshotable {
       attempts === undefined ? { state, failure: reason } : { state, attempts, failure: reason },
     );
     if (input.requestId !== undefined) {
-      this.#settleRequest(input.requestId, input.target.traceid, reason);
+      this.#settleRequest(input.requestId, containerOf(input.target), reason);
     }
   }
 
@@ -1775,8 +1794,8 @@ export class Runtime implements Snapshotable {
     this.#failMessage(input, reason);
     return {
       consumed: input.id,
-      traceid: input.target.traceid,
-      nodeId: input.target.node,
+      traceid: containerOf(input.target),
+      nodeId: lastSegment(input.target.instance),
       reason,
     };
   }
@@ -1786,20 +1805,22 @@ export class Runtime implements Snapshotable {
   }
 
   #resolvePort(target: Endpoint, where: string): Port {
-    const instance = this.#registry.get(target.traceid);
-    invariant(instance.status === "OPEN", `${where}：实例 ${target.traceid} 已 ${instance.status}`);
-    const template = this.#registry.template(target.traceid);
-    const node = template.nodes[target.node];
+    const container = containerOf(target);
+    const nodeId = lastSegment(target.instance);
+    const instance = this.#registry.get(container);
+    invariant(instance.status === "OPEN", `${where}：实例 ${container} 已 ${instance.status}`);
+    const template = this.#registry.template(container);
+    const node = template.nodes[nodeId];
     if (node === undefined) {
       throw new InvariantError(
-        `${where}：实例 ${target.traceid} 无节点 \`${target.node}\`。` +
+        `${where}：实例 ${container} 无节点 \`${nodeId}\`。` +
           `可用节点：${Object.keys(template.nodes).sort().join(", ") || "（无）"}`,
       );
     }
     const port = node.ports[target.port];
     if (port === undefined) {
       throw new InvariantError(
-        `${where}：节点 \`${target.node}\` 未声明端口 \`${target.port}\`。` +
+        `${where}：节点 \`${target.instance}\` 未声明端口 \`${target.port}\`。` +
           `可用端口：${Object.keys(node.ports).sort().join(", ") || "（无）"}`,
       );
     }

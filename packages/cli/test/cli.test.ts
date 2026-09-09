@@ -113,9 +113,7 @@ describe("hertaloy run —— 一次性场景", () => {
       templates: [{ id: "root", kind: "root_config", spec: leaf }],
       root: { template: "root", id: "job-1" },
       send: [1, 2, 3].map((v) => ({
-        traceid: "job-1",
-        node: "w",
-        port: "in",
+        instance: "job-1/w", port: "in",
         payload: { value: v, expect: 3 },
       })),
     });

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState, writePermissions } from "@nodeflow/state";
+import { lastSegment } from "@nodeflow/contracts";
 import {
   authz,
   drain,
@@ -89,26 +90,26 @@ describe("status", () => {
 
 describe("★ send：人的放行走这条，不需要第二套审批机制", () => {
   it("投消息 → 落盘 → 换次调用 status 看得到", () => {
-    expect(send(dir, HUMAN, "job-1", "gate", "in", { value: "a", expect: 2 }).code).toBe(0);
+    expect(send(dir, HUMAN, "job-1/gate", "in", { value: "a", expect: 2 }).code).toBe(0);
     expect(status(dir, HUMAN).text).toContain("在途消息 1 条");
   });
 
   it("投给不存在的实例 → 拒绝并指路", () => {
-    const r = send(dir, HUMAN, "job-9", "gate", "in", {});
+    const r = send(dir, HUMAN, "job-9/gate", "in", {});
     expect(r.code).toBe(1);
     expect(r.text).toContain("hertaloy status");
   });
 
   it("失败的投递不落盘 —— 状态不该被一次错误命令改动", () => {
-    send(dir, HUMAN, "job-9", "gate", "in", {});
+    send(dir, HUMAN, "job-9/gate", "in", {});
     expect(status(dir, HUMAN).text).toContain("在途消息 0 条");
   });
 });
 
 describe("★ 全流程：投两次 → 推进 → 查资产", () => {
   it("两条消息各算一份，凑齐后汇聚（跨四次进程调用）", async () => {
-    send(dir, HUMAN, "job-1", "gate", "in", { value: "same", expect: 2 });
-    send(dir, HUMAN, "job-1", "gate", "in", { value: "same", expect: 2 });
+    send(dir, HUMAN, "job-1/gate", "in", { value: "same", expect: 2 });
+    send(dir, HUMAN, "job-1/gate", "in", { value: "same", expect: 2 });
     const d = await drain(dir, HUMAN);
     expect(d.code).toBe(0);
     expect(d.text).toContain("提交 2 次，失败 0 次");
@@ -121,7 +122,7 @@ describe("★ 全流程：投两次 → 推进 → 查资产", () => {
 
 describe("show / history", () => {
   it("show 取最新版，show id@n 取指定版", async () => {
-    send(dir, HUMAN, "job-1", "gate", "in", { value: "x", expect: 9 });
+    send(dir, HUMAN, "job-1/gate", "in", { value: "x", expect: 9 });
     await drain(dir, HUMAN);
     expect(JSON.parse(show(dir, HUMAN, "job-1/parts").text).version).toBe(1);
     expect(JSON.parse(show(dir, HUMAN, "job-1/parts@1").text).body.value).toBe("x");
@@ -147,7 +148,7 @@ describe("只读命令不拿锁（§17.8）", () => {
   it("写命令在锁被占时明确拒绝", () => {
     const holder = RunState.open(dir);
     try {
-      expect(() => send(dir, HUMAN, "job-1", "gate", "in", {})).toThrow(/已被占用/);
+      expect(() => send(dir, HUMAN, "job-1/gate", "in", {})).toThrow(/已被占用/);
     } finally {
       holder.close();
     }
@@ -156,7 +157,7 @@ describe("只读命令不拿锁（§17.8）", () => {
 
 describe("★ truncate：卡住的 run 杀得掉（K3）", () => {
   it("截断后实例进终态，在途消息被丢弃", () => {
-    send(dir, HUMAN, "job-1", "gate", "in", { value: "a", expect: 99 });
+    send(dir, HUMAN, "job-1/gate", "in", { value: "a", expect: 99 });
     const r = truncate(dir, HUMAN, "job-1", "测试");
     expect(r.code).toBe(0);
     expect(r.text).toContain("丢弃消息 1 条");
@@ -177,7 +178,7 @@ describe("★ 权限层真的在起作用（K2）", () => {
   });
 
   it("拒绝理由里列出当前授权 —— 人得看得见缺什么才改得动配置", () => {
-    expect(send(dir, AGENT, "job-1", "gate", "in", {}).text).toContain("human:*");
+    expect(send(dir, AGENT, "job-1/gate", "in", {}).text).toContain("human:*");
   });
 
   it("agent 的写操作同样被拒，且状态没被改动", () => {
@@ -296,7 +297,7 @@ describe("★ 绕过 ControlPlane 的两条路收回来了", () => {
  */
 describe("★ scene：观测链的出口", () => {
   it("真跑一段之后，场景里有实例、有节点、有流", async () => {
-    send(dir, HUMAN, "job-1", "gate", "in", { value: 1, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { value: 1, expect: 1 });
     await drain(dir, HUMAN, undefined);
 
     const r = scene(dir, HUMAN);
@@ -319,7 +320,7 @@ describe("★ scene：观测链的出口", () => {
   });
 
   it("--scope 就是前缀裁剪 —— 视口即前缀", async () => {
-    send(dir, HUMAN, "job-1", "gate", "in", { value: 1, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { value: 1, expect: 1 });
     await drain(dir, HUMAN, undefined);
 
     const r = scene(dir, HUMAN, "job-1");
@@ -343,7 +344,7 @@ describe("★ scene：观测链的出口", () => {
    * （夹具定格之后两端各自演化，谁也不知道）。
    */
   it("★ 导出端与 scene 收的形状必须对得上，对不上当场炸", async () => {
-    send(dir, HUMAN, "job-1", "gate", "in", { value: 1, expect: 1 });
+    send(dir, HUMAN, "job-1/gate", "in", { value: 1, expect: 1 });
     await drain(dir, HUMAN, undefined);
     // 这条命令内部就是 exportSnapshot → parseSnapshot → buildScene，
     // 能跑通本身就是那条接缝的红灯
@@ -363,8 +364,8 @@ describe("★ scene：观测链的出口", () => {
  */
 describe("★ authz：谁做了什么", () => {
   it("放行与拒绝都在里面，被拒的带理由", () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
-    send(dir, AGENT, "job-1", "gate", "in", "{}"); // 无权，会被拒
+    send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
+    send(dir, AGENT, "job-1/gate", "in", "{}"); // 无权，会被拒
 
     const r = authz(dir, HUMAN);
     expect(r.code).toBe(0);
@@ -377,14 +378,14 @@ describe("★ authz：谁做了什么", () => {
   });
 
   it("★ 读流水本身也要授权 —— 按根实例判定", () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
     const r = authz(dir, AGENT);
     expect(r.code).toBe(1);
     expect(r.text).toMatch(/拒绝/);
   });
 
   it("序号单调，读流水这件事本身也留痕", () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
     const first = authz(dir, HUMAN).data as { seq: number }[];
     const second = authz(dir, HUMAN).data as { seq: number }[];
     expect(first.map((e) => e.seq)).toEqual([...first.keys()].map((i) => i + 1));
@@ -443,7 +444,7 @@ describe("★ templates：配置流", () => {
  */
 describe("★ 详情查询", () => {
   it("★ status 的 data 给结构化义务，中文只留在 text 里", () => {
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
     const r = status(dir, HUMAN);
     const data = r.data as { instances: { blockers: { kind: string; key: string }[] }[] };
     const blockers = data.instances[0]?.blockers ?? [];
@@ -456,12 +457,12 @@ describe("★ 详情查询", () => {
   });
 
   it("消息详情：端点、来源、因果都在", () => {
-    const sent = send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    const sent = send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
     const id = (sent.data as { messageId: string }).messageId;
     const r = message(dir, HUMAN, id);
     expect(r.code).toBe(0);
-    const d = r.data as { message: { target: { node: string } }; causes: string[] };
-    expect(d.message.target.node).toBe("gate");
+    const d = r.data as { message: { target: { instance: string } }; causes: string[] };
+    expect(lastSegment(d.message.target.instance)).toBe("gate");
     // 人投的：来源是图外
     expect(r.text).toMatch(/图外/);
     expect(d.causes).toEqual([]);
@@ -477,7 +478,7 @@ describe("★ 详情查询", () => {
     expect(a.code).toBe(1);
     expect(a.text).toMatch(/拒绝/);
     // 存在的那条也是同一个答案 —— 存在性不是泄漏面
-    send(dir, HUMAN, "job-1", "gate", "in", '{"value":1,"expect":1}');
+    send(dir, HUMAN, "job-1/gate", "in", '{"value":1,"expect":1}');
     expect(message(dir, AGENT, "msg-1").text).toMatch(/拒绝/);
   });
 });

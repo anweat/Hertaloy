@@ -49,7 +49,7 @@ function claimOne(): { executionId: string; traceid: string; nodeId: string } {
   try {
     const ref = registerContainerTemplate(s.store, "root", TEMPLATE, "root_config");
     s.registry.createRoot(ref, "job");
-    s.runtime.send({ traceid: "job", node: "w", port: "in" }, {});
+    s.runtime.send({ instance: "job/w", port: "in" }, {});
     const claimed = s.runtime.claimAgent();
     expect(claimed.kind).toBe("claimed");
     s.persist();

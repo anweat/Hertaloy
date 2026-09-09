@@ -14,7 +14,10 @@ function q(): MessageQueue {
   return new MessageQueue();
 }
 
-const to = (traceid: string, node = "n", port = "in") => ({ traceid, node, port });
+const to = (traceid: string, node = "n", port = "in") => ({
+  instance: `${traceid}/${node}`,
+  port,
+});
 
 describe("投递与取值", () => {
   it("id 单调发放，`all()` 按投递顺序", () => {
@@ -34,7 +37,7 @@ describe("投递与取值", () => {
     expect(() => queue.get("msg-9")).toThrow(/未知消息/);
   });
 
-  it("`queued()` 只给还在排队的；`liveFor` 按实例 + 还会动的状态过滤", () => {
+  it("`queued()` 只给还在排队的；CLAIMED 仍算「还会动的」", () => {
     const queue = q();
     const a = queue.enqueue({ target: to("job-1"), payload: {} });
     const b = queue.enqueue({ target: to("job-1"), payload: {} });
@@ -43,9 +46,8 @@ describe("投递与取值", () => {
     queue.setState(b, "CONSUMED");
 
     expect(queue.queued().map((m) => m.id)).toEqual([c]);
-    // CLAIMED 仍然算"还会动的" —— 它正被某个执行占着
-    expect(queue.liveFor("job-1").map((m) => m.id)).toEqual([a]);
-    expect(queue.liveFor("job-2").map((m) => m.id)).toEqual([c]);
+    // CLAIMED 正被某个执行占着，所以它是活的；CONSUMED 已了结
+    expect(isLive(queue.get(a))).toBe(true);
     expect(isLive(queue.get(b))).toBe(false);
   });
 });

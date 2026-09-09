@@ -29,7 +29,7 @@ function seed(dir: string, agent: string, extra: Record<string, unknown> = {}) {
         ports: { in: { direction: "receive" } } },
     } } }],
     root: { id: "job", template: "root" },
-    send: [{ traceid: "job", node: "work", port: "in", payload: {} }],
+    send: [{ instance: "job/work", port: "in", payload: {} }],
   } as never);
   assert.equal(result.code, 0, result.text);
 }

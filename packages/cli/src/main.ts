@@ -76,7 +76,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
        加 --watch [--interval 毫秒] 持续输出**场景差量**（NDJSON，一行一帧）
        第一帧是与空场景的差量，所以流上只有一种形状；没变化的轮次不输出
   hertaloy history <dir> <object-id>            某对象的版本历史
-  hertaloy send    <dir> <traceid> <node> <port> [json]   投一条消息（人的放行走这条）
+  hertaloy send    <dir> <instance> <port> [json]         投一条消息（人的放行走这条）
   hertaloy drain   <dir> [--runner local|wsl|docker]  推进到静止
        不给 --runner 就没有执行面：agent 节点不会被推进
   hertaloy why     <dir> <message-id>           这条消息由哪些消息导致（因果反查）
@@ -94,7 +94,7 @@ const USAGE = `hertaloy —— Nodeflow V5 命令行
 场景文件形如：
   { "templates": [{"id": "root", "kind": "root_config", "spec": {…}}],
     "root": {"template": "root", "id": "job-1"},
-    "send": [{"traceid": "job-1", "node": "n", "port": "in", "payload": {}}] }
+    "send": [{"instance": "job-1/n", "port": "in", "payload": {}}] }
 `;
 
 function readJson(path: string): unknown {
@@ -236,17 +236,17 @@ ${USAGE}`, code: 2 } : null;
     case "truncate":
       return need(2) ?? truncate(dir as string, actor, a as string, b ?? "人工截断");
     case "send": {
-      const short = need(4);
+      const short = need(3);
       if (short !== null) return short;
       let payload: unknown = {};
-      if (d !== undefined) {
+      if (c !== undefined) {
         try {
-          payload = JSON.parse(d);
+          payload = JSON.parse(c);
         } catch (error) {
           return { text: `载荷不是合法 JSON：${(error as Error).message}`, code: 2 };
         }
       }
-      return send(dir as string, actor, a as string, b as string, c as string, payload as never);
+      return send(dir as string, actor, a as string, b as string, payload as never);
     }
     default:
       return null;

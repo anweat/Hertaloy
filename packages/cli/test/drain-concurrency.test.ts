@@ -18,7 +18,7 @@ beforeEach(() => {
       a: { kind: "handler", agent: { argv: ["unused"] }, ports: { in: { direction: "receive" } } },
     } } }],
     root: { id: "job", template: "root" },
-    send: [{ traceid: "job", node: "a", port: "in", payload: {} }],
+    send: [{ instance: "job/a", port: "in", payload: {} }],
   }).code).toBe(0);
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -49,7 +49,7 @@ it("两个进程 drain 同一 run：只允许一个驱动，send/truncate 仍能
     expect(second.text).toContain("driver.lock");
     expect(duplicateStarts).toBe(0);
     expect(status(dir, HUMAN).text).toContain("在跑的 execution 1 个");
-    expect(send(dir, HUMAN, "job", "a", "in", {}).code).toBe(0);
+    expect(send(dir, HUMAN, "job/a", "in", {}).code).toBe(0);
     expect(truncate(dir, HUMAN, "job", "test stop").code).toBe(0);
     const completed = once(child, "message");
     child.send("release");

@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 it("★ 终态记录不留在头里 —— 落盘形状只装在途的", () => {
-  for (let i = 0; i < 5; i += 1) rt.send({ traceid: "job", node: "n", port: "in" }, {});
+  for (let i = 0; i < 5; i += 1) rt.send({ instance: "job/n", port: "in" }, {});
   rt.drain();
 
   const head = rt.snapshot() as { records: Map<string, unknown> };
@@ -45,7 +45,7 @@ it("★ 终态记录不留在头里 —— 落盘形状只装在途的", () => {
 });
 
 it("★ 查得到照旧 —— records() 与 record(id) 合并在途与历史", () => {
-  rt.send({ traceid: "job", node: "n", port: "in" }, {});
+  rt.send({ instance: "job/n", port: "in" }, {});
   rt.drain();
 
   const all = rt.records();
@@ -66,7 +66,7 @@ it("在途的仍然在头里 —— 那是崩溃恢复要的唯一一份", () =>
   const reg2 = new InstanceRegistry(store);
   reg2.createRoot(agentRef, "job2");
   const rt3 = new Runtime(store, reg2, { backend });
-  rt3.send({ traceid: "job2", node: "a", port: "in" }, {});
+  rt3.send({ instance: "job2/a", port: "in" }, {});
   const claimed = rt3.claimAgent();
   expect(claimed.kind).toBe("claimed");
 
@@ -77,7 +77,7 @@ it("在途的仍然在头里 —— 那是崩溃恢复要的唯一一份", () =>
 });
 
 it("义务与不变量只看在途的 —— 终态搬走不影响它们", () => {
-  for (let i = 0; i < 3; i += 1) rt.send({ traceid: "job", node: "n", port: "in" }, {});
+  for (let i = 0; i < 3; i += 1) rt.send({ instance: "job/n", port: "in" }, {});
   rt.drain();
   expect(rt.obligations("job").filter((o) => o.kind === "execution")).toEqual([]);
   expect(rt.canTerminate("job")).toBe(true);

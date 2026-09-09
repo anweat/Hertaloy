@@ -12,10 +12,10 @@
 import { z } from "zod";
 import { Json } from "@nodeflow/contracts";
 
+/** 入站消息。地址是**一段**（V6 阶段 1b）：`"job-1/plan"` 就是那个节点。 */
 export const SendSpec = z
   .object({
-    traceid: z.string(),
-    node: z.string(),
+    instance: z.string(),
     port: z.string(),
     payload: Json.default({}),
   })

@@ -127,34 +127,34 @@ s.runtime.registerHandler("emit", (_v, ctx) => {
 });
 s.runtime.registerHandler("noop", () => ({}));
 
-s.runtime.send({ traceid: "job-1", node: "plan", port: "start" }, {});
+s.runtime.send({ instance: "job-1/plan", port: "start" }, {});
 
 /**
  * **同一个子槽扇出三个实例** —— 实测一个槽能有 N 个活实例（a1/a2/a3）。
  * 画布上它们叠在模板那一个位置上，而不是各自散开。
  */
 const a1 = s.runtime.spawn("job-1", "a", "a1");
-s.runtime.send({ traceid: a1.traceid, node: "scan", port: "in" }, {});
+s.runtime.send({ instance: `${a1.traceid}/scan`, port: "in" }, {});
 s.runtime.drain();
 
 const a2 = s.runtime.spawn("job-1", "a", "a2");
-s.runtime.send({ traceid: a2.traceid, node: "scan", port: "in" }, {});
+s.runtime.send({ instance: `${a2.traceid}/scan`, port: "in" }, {});
 s.runtime.drain();
 
 // a3 晚出生，且留一条没消费的活儿 → 它会一直开着
 const a3 = s.runtime.spawn("job-1", "a", "a3");
-s.runtime.send({ traceid: a3.traceid, node: "scan", port: "in" }, {});
+s.runtime.send({ instance: `${a3.traceid}/scan`, port: "in" }, {});
 s.runtime.drain();
 
 /**
  * review 出去且永不返回 —— 它得是 RUNNING，那是**有宽度的执行段**。
  */
-s.runtime.send({ traceid: "job-1", node: "review", port: "task" }, {});
+s.runtime.send({ instance: "job-1/review", port: "task" }, {});
 void s.runtime.stepAgent();
 await Promise.resolve();
 
 // audit 跑完并失败
-s.runtime.send({ traceid: "job-1", node: "audit", port: "task" }, {});
+s.runtime.send({ instance: "job-1/audit", port: "task" }, {});
 await s.runtime.stepAgent();
 
 /**
@@ -163,7 +163,7 @@ await s.runtime.stepAgent();
  * a3 靠**还有一条没消费的消息**留住。
  * 子槽 b 一次都不 spawn —— 声明了没用过的那个位置也要看得见。
  */
-s.runtime.send({ traceid: a3.traceid, node: "scan", port: "in" }, {});
+s.runtime.send({ instance: `${a3.traceid}/scan`, port: "in" }, {});
 s.runtime.settleAll();
 s.persist();
 

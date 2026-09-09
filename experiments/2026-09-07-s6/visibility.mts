@@ -75,7 +75,7 @@ const scenario = {
     } },
   ],
   root: { id: "visibility", template: "root" },
-  send: [{ traceid: "visibility", node: "work", port: "in", payload: {} }],
+  send: [{ instance: "visibility/work", port: "in", payload: {} }],
 };
 assert.equal(init(dir, HUMAN, scenario).code, 0);
 assert.equal(define(dir, HUMAN, "leaf", {}).code, 0);
