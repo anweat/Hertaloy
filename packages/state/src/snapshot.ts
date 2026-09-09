@@ -160,8 +160,8 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
   const progressBroken = new Map<string, string>();
   for (const instance of roots) {
     // `$exec` 挂在执行位点自己名下（V6：节点有自己的对象命名空间）
-    for (const nodeId of Object.keys(state.registry.template(instance.traceid).nodes))
-    for (const version of state.store.history(execLog(`${instance.traceid}/${nodeId}`))) {
+    for (const site of state.registry.sites(instance.traceid))
+    for (const version of state.store.history(execLog(site))) {
       const body = version.body as {
         execution_id?: string;
         diagnostics?: { progress?: unknown };

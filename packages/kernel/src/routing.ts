@@ -151,7 +151,7 @@ export function stageOutputs(
   const resolved: string[] = [];
 
   // 地址收成一段之后，容器与声明名都是从执行位点派生的 —— 算一次，别在循环里重算
-  const container = containerOf({ instance: ctx.instance });
+  const container = containerOf(ctx);
   const selfNode = lastSegment(ctx.instance);
 
   for (const [portName, value] of Object.entries(outputs)) {

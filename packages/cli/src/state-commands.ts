@@ -196,9 +196,7 @@ export function status(dir: string, actor: Principal): CommandResult {
     }
     // `$exec` 挂在执行位点自己名下（V6：节点有自己的对象命名空间），所以按位点枚举
     const execs = subtree.flatMap((i) =>
-      Object.keys(s.registry.template(i.traceid).nodes).flatMap((n) =>
-        s.store.history(execLog(`${i.traceid}/${n}`)),
-      ),
+      s.registry.sites(i.traceid).flatMap((site) => s.store.history(execLog(site))),
     );
     let retained = 0;
     if (execs.length > 0) {
@@ -975,8 +973,8 @@ export function reclaim(dir: string, actor: Principal, keep: number): CommandRes
 
     const boxes: { path: string; exec: string }[] = [];
     for (const inst of s.control.subtree(actor, root)) {
-      for (const n of Object.keys(s.registry.template(inst.traceid).nodes))
-      for (const v of s.store.history(execLog(`${inst.traceid}/${n}`))) {
+      for (const site of s.registry.sites(inst.traceid))
+      for (const v of s.store.history(execLog(site))) {
         const d = ((v.body as Record<string, unknown>).diagnostics ?? {}) as {
           sandbox?: { path?: string; retained?: boolean };
         };

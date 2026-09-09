@@ -710,9 +710,31 @@ if (req.nodeId === "review") return await new Promise(() => {});
 - 那道 schema 缝的运行期保险如约生效：夹具没跟上时 `Snapshot.safeParse`
   当场指着 `messages.0.target.instance：Required` 报错，不是画面少半张。
 
+### 地址收完之后的自审
+
+两次很宽的机械改动之后回头看，抓到三处**类型合法但语义不对**的残留：
+
+**一、`#recordOf` 先填空串再回头补地址。**签名返回 `ExecutionRecord`，而
+`instance: ""` 是句谎话 —— 只因为唯一的调用方会覆盖它才成立。改成把地址当参数传，
+一条地址是假的记录就**构造不出来**。判据是这个项目自己的「半状态不可表达」，
+不是"记得补"。（`#messageOf` 当初就写对了，这处是漏的那半。）
+
+**二、"这个容器有哪些执行位点"被五处各自算了一遍。**kernel 两处、state 一处、
+cli 两处，每处都是 `Object.keys(template(t).nodes)` 之后自己拼 `${t}/${n}`。
+地址收成一段之后这件事**终于有名字了**（位点就是 `instance`），
+所以它成了 `InstanceRegistry.sites(trace)` 一处。
+
+> 拼法写歪一处的后果特别难查：`$exec` / `$msg` 会去查一批不存在的对象 id，
+> 而那**不报错**，只是安静地少一批历史。补了一条钉"写入方与枚举方给出同一个字符串"的用例。
+
+**三、`instances.ts` 文件头那段寻址说明两句都错了。**它写着"节点用
+`(容器 traceid, node_id)` 寻址，不产生更深的 traceid 段，所以 node_id 的字符集
+不受 traceid 段规则约束"—— 这两句正是这一阶段推翻的东西。**注释不会自己失效，
+只会变成误导。**
+
 ### 门检
 
-- **957 passed / 7 skipped**（contracts 71 / kernel 324 / scene 66 / state 87 / cli 198 / mcp 19 / sandbox 192+7），
+- **960 passed / 7 skipped**（contracts 71 / kernel 327 / scene 66 / state 87 / cli 198 / mcp 19 / sandbox 192+7），
   7 个包 typecheck 通过，可达性 210 无孤儿。跳过的 7 项仍是 Docker daemon 未运行。
 - 地址收完之后全仓**一处两段执行地址都不剩**：`grep -rn "\.nodeId"` 只剩
   模板遍历里的循环变量（`for (const nodeId of Object.keys(template.nodes))`），

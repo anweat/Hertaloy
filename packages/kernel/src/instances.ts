@@ -6,9 +6,12 @@
  *   C2 traceid 是实例路径，容器是层级发生器
  *   C4 实例终身 pin 创建时的定义版本，不做热迁移
  *
- * **寻址分工**：容器嵌套产生 traceid 层级；节点是容器**内部**的，
- * 用 `(容器 traceid, node_id)` 寻址（这正是 `Endpoint` 的形状），不产生更深的 traceid 段。
- * 所以 node_id 的字符集不受 traceid 段规则约束。
+ * **寻址**：一段。`Endpoint` 是 `{instance, port}`，而 `instance` 就是路径 ——
+ * 容器嵌套产生层级，节点占最后一段（V6 阶段 1b）。容器由 `parentTrace` 派生。
+ *
+ * 这里原来写的是"节点用 `(容器 traceid, node_id)` 寻址，不产生更深的 traceid 段，
+ * 所以 node_id 的字符集不受 traceid 段规则约束"—— **两句都不再成立**：
+ * 节点 id 就是路径的一段，字符集与 traceid 段并成了一套（见 `NodeId`）。
  *
  * **纯转发边暂不物化为实例对象**：它在本阶段没有任何状态、永不持锁、随容器生死（C3），
  * 物化一个空对象是纯开销。等运行时动态边出现（容器工具编辑内网）再物化 —— 那时它才有生命周期。
@@ -179,6 +182,22 @@ export class InstanceRegistry implements Snapshotable {
   /** 解析实例 pin 住的模板。**永远走 pin 的 ref，不取 head**（C4）。 */
   template(trace: TraceId): ContainerTemplate {
     return this.#template(this.get(trace).templateRef);
+  }
+
+  /**
+   * 这个容器有哪些**执行位点** —— 按节点声明序。
+   *
+   * 位点就是地址（V6 阶段 1b：`{instance, port}` 里的那个 `instance`），
+   * 所以"有哪些位点"是个可以直接问的问题。此前它被**五处**各自算了一遍
+   * （kernel 两处、state 一处、cli 两处），每处都是
+   * `Object.keys(template(t).nodes)` 之后自己拼 `${t}/${n}` ——
+   * 同一个概念散在三个包里，而拼法只要有一处写歪就是查不出来的空结果。
+   *
+   * 走 `childTrace` 而不是模板字符串：顺带把"节点 id 必须是合法路径段"这条
+   * 在每次枚举时也过一遍。
+   */
+  sites(trace: TraceId): readonly TraceId[] {
+    return Object.keys(this.template(trace).nodes).map((node) => childTrace(trace, node));
   }
 
   /**

@@ -471,8 +471,7 @@ export class Runtime implements Snapshotable {
   /** 某实例各节点的终态消息，按节点声明序 × 写入序。 */
   #settledMessagesOf(trace: TraceId): readonly Message[] {
     const out: Message[] = [];
-    for (const nodeId of Object.keys(this.#registry.template(trace).nodes)) {
-      const instance = childTrace(trace, nodeId);
+    for (const instance of this.#registry.sites(trace)) {
       for (const v of this.#store.history(msgLog(instance))) {
         const m = Runtime.#messageOf(v.body, instance);
         if (m !== undefined) out.push(m);
@@ -481,14 +480,19 @@ export class Runtime implements Snapshotable {
     return out;
   }
 
-  /** 一版 `$exec` 还原成记录；不是记录（老观测）就给 undefined。 */
-  static #recordOf(body: unknown): ExecutionRecord | undefined {
+  /**
+   * 一版 `$exec` 还原成记录；不是记录（老观测）就给 undefined。
+   *
+   * **地址由调用方给**（对象 id 就是 `<执行位点>/$exec`），正文里不存第二份。
+   * 它是参数而不是"先填空串、回头补上" —— 后者能构造出一条地址是谎话的记录，
+   * 而这个项目的判据是**半状态不可表达**，不是"记得补"。与 `#messageOf` 同形。
+   */
+  static #recordOf(body: unknown, instance: TraceId): ExecutionRecord | undefined {
     const b = body as Record<string, unknown>;
     if (typeof b.status !== "string" || typeof b.execution_id !== "string") return undefined;
     return Object.freeze({
       executionId: b.execution_id,
-      // 地址由调用方按对象 id 补 —— 正文里再存一份就是第二份拷贝
-      instance: "",
+      instance,
       status: b.status as ExecutionRecord["status"],
       ...(b.termination === undefined ? {} : { termination: b.termination as never }),
       claimed: Array.isArray(b.claimed) ? (b.claimed as string[]) : [],
@@ -500,11 +504,10 @@ export class Runtime implements Snapshotable {
   /** 某实例各节点的终态执行，按节点声明序 × 写入序。 */
   #settledOf(trace: TraceId): readonly ExecutionRecord[] {
     const out: ExecutionRecord[] = [];
-    for (const nodeId of Object.keys(this.#registry.template(trace).nodes)) {
-      const instance = childTrace(trace, nodeId);
+    for (const instance of this.#registry.sites(trace)) {
       for (const v of this.#store.history(execLog(instance))) {
-        const r = Runtime.#recordOf(v.body);
-        if (r !== undefined) out.push({ ...r, instance });
+        const r = Runtime.#recordOf(v.body, instance);
+        if (r !== undefined) out.push(r);
       }
     }
     return out;

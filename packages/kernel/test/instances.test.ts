@@ -147,6 +147,49 @@ describe("子树查询（不变量 C2）", () => {
   });
 });
 
+describe("★ 执行位点：容器有哪些可寻址的节点（V6 阶段 1b）", () => {
+  /**
+   * 位点就是地址。此前"这个容器有哪些位点"被五处各自算了一遍
+   * （kernel 两处、state 一处、cli 两处），每处都是
+   * `Object.keys(template(t).nodes)` 之后自己拼路径。
+   *
+   * 钉两条：**位点是完整路径**（不是节点名），以及**子容器各算各的**
+   * （不是把子树的节点混进来）—— 后者写错的话，`$exec` / `$msg` 会去查
+   * 一批根本不存在的对象 id，而那种错查不出报错，只会安静地少一批历史。
+   */
+  beforeEach(() => {
+    reg.createRoot(rootRef, "job-1");
+    reg.spawn("job-1", "coders", "coder-1");
+  });
+
+  it("位点是完整实例路径，不是节点名", () => {
+    expect(reg.sites("job-1")).toEqual(["job-1/plan"]);
+    // 子容器的模板不同，位点也不同 —— 各算各的
+    expect(reg.sites("job-1/coder-1")).toEqual(["job-1/coder-1/work"]);
+  });
+
+  it("★ 位点拼出来的对象 id 与内核实际写入的一致", () => {
+    // 这条是那五处拼法的公共下游：写入方与枚举方必须给出同一个字符串
+    expect(reg.sites("job-1").map((s) => `${s}/$exec`)).toEqual(["job-1/plan/$exec"]);
+  });
+
+  it("★ 非法节点 id 在注册期就拦下了 —— 位点枚举根本走不到它", () => {
+    /**
+     * `sites()` 用 `childTrace` 而不是模板字符串，那是最后一道；但**真正的门在上游**：
+     * 节点 id 与 traceid 段并成了一套字符集（阶段 1 前置），所以一个拼不出路径的
+     * 节点 id 在模板注册那一步就被拒了，根本进不了实例。
+     */
+    expect(() =>
+      registerContainerTemplate(
+        store,
+        "bad-nodes",
+        { nodes: { Coder: { kind: "handler", handler: "noop", ports: {} } } },
+        "root_config",
+      ),
+    ).toThrow(/实例路径段/);
+  });
+});
+
 describe("注册期校验（修 V4 缺陷 1：propose 不校验）", () => {
   it("边引用不存在的节点 → 注册期拒绝并列出可用节点", () => {
     expect(() =>
