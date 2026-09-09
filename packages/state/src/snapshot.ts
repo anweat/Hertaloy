@@ -159,9 +159,9 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
   const progressOf = new Map<string, ProgressReport>();
   const progressBroken = new Map<string, string>();
   for (const instance of roots) {
-    // `$exec` 按节点索引（V6：节点有自己的对象命名空间）
+    // `$exec` 挂在执行位点自己名下（V6：节点有自己的对象命名空间）
     for (const nodeId of Object.keys(state.registry.template(instance.traceid).nodes))
-    for (const version of state.store.history(execLog(instance.traceid, nodeId))) {
+    for (const version of state.store.history(execLog(`${instance.traceid}/${nodeId}`))) {
       const body = version.body as {
         execution_id?: string;
         diagnostics?: { progress?: unknown };
@@ -183,7 +183,7 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
    */
   const records = runtime
     .records()
-    .filter((r) => inScope(r.traceid))
+    .filter((r) => inScope(containerOf(r)))
     .map((r) => {
       // agent 自报的语义进度 —— 推不出来的那一半，只能从执行观测里带出来。
       // 没有对应观测就**不带**，不拿别人的顶上。
@@ -195,8 +195,7 @@ export function exportSnapshot(state: RunState, actor: Principal, scope?: string
          * 而重试之后"第一条"几乎一定不是当前那条（审核 F02）。
          */
         executionId: r.executionId,
-        traceid: r.traceid,
-        nodeId: r.nodeId,
+        instance: r.instance,
         status: r.status,
         ...(r.termination === undefined ? {} : { termination: r.termination }),
         ...(progress === undefined ? {} : { progress }),

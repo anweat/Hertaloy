@@ -40,10 +40,14 @@ import type { MessageFact } from "./facts.js";
  * 一条可以立刻开跑的候选 —— 内核已经筛过，剩下的只是"先跑哪条"。
  */
 export interface Candidate {
-  /** 消息本身。调度器可以读 target / state，但改不了它（冻结对象）。 */
+  /**
+   * 消息本身。调度器可以读 target / state，但改不了它（冻结对象）。
+   *
+   * **地址就在 `message.target.instance` 里**（V6 阶段 1b）。这里原来另有
+   * `traceid` / `nodeId` 两个字段 —— 地址两段时它们省了调用方一次拆分，
+   * 收成一段之后就是同一个事实的第二份拷贝，所以删掉而不是改名。
+   */
   readonly message: MessageFact;
-  readonly traceid: TraceId;
-  readonly nodeId: string;
   /**
    * 在投递顺序里的位置，越小越老。
    *

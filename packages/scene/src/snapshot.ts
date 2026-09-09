@@ -94,8 +94,8 @@ export const SnapshotInstance = z.object({
 export const SnapshotRecord = z.object({
   /** 执行身份。没有它就只能靠"第几条"猜，而重试之后那是错的。 */
   executionId: z.string().optional(),
-  traceid: z.string(),
-  nodeId: z.string(),
+  /** 执行位点 —— 节点自己的实例路径，一段（V6 阶段 1b），与 `target.instance` 同形。 */
+  instance: z.string(),
   status: z.string(),
   termination: z.string().optional(),
   /** agent 自报的语义进度 —— 内核原则上推不出来的那一半。 */

@@ -19,8 +19,7 @@ import { InvariantError } from "../src/errors.js";
 function rec(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
   return {
     executionId: "exec-1",
-    traceid: "job-1",
-    nodeId: "n",
+    instance: "job-1/n",
     status: "RUNNING",
     claimed: ["msg-1"],
     generation: 0,
@@ -63,7 +62,7 @@ describe("★ 孤儿 = RUNNING ∧ 本进程没在驱动", () => {
     l.put(rec());
     expect(l.orphans().map((r) => r.executionId)).toEqual(["exec-1"]);
 
-    l.markDriving("job-1", "n");
+    l.markDriving("job-1/n");
     expect(l.orphans()).toEqual([]);
   });
 
@@ -76,15 +75,15 @@ describe("★ 孤儿 = RUNNING ∧ 本进程没在驱动", () => {
 
   it("驱动标记按 (实例, 节点) 分粒度，不串号", () => {
     const l = new ExecutionLedger();
-    l.put(rec({ executionId: "exec-1", traceid: "job-1", nodeId: "a" }));
-    l.put(rec({ executionId: "exec-2", traceid: "job-1", nodeId: "b" }));
-    l.put(rec({ executionId: "exec-3", traceid: "job-2", nodeId: "a" }));
-    l.markDriving("job-1", "a");
+    l.put(rec({ executionId: "exec-1", instance: "job-1/a" }));
+    l.put(rec({ executionId: "exec-2", instance: "job-1/b" }));
+    l.put(rec({ executionId: "exec-3", instance: "job-2/a" }));
+    l.markDriving("job-1/a");
 
     expect(l.orphans().map((r) => r.executionId)).toEqual(["exec-2", "exec-3"]);
-    expect(l.isDriving("job-1", "a")).toBe(true);
-    expect(l.isDriving("job-1", "b")).toBe(false);
-    expect(l.isDriving("job-2", "a")).toBe(false);
+    expect(l.isDriving("job-1/a")).toBe(true);
+    expect(l.isDriving("job-1/b")).toBe(false);
+    expect(l.isDriving("job-2/a")).toBe(false);
   });
 });
 
@@ -96,14 +95,14 @@ describe("★ 两种寿命：driving 绝不落盘、绝不恢复", () => {
   it("快照里没有 driving", () => {
     const l = new ExecutionLedger();
     l.put(rec());
-    l.markDriving("job-1", "n");
+    l.markDriving("job-1/n");
     expect(Object.keys(l.snapshot() as object).sort()).toEqual(["records", "seq"]);
   });
 
   it("★ 恢复之后 driving 是空的 —— 上个进程的在途执行自动成为孤儿", () => {
     const first = new ExecutionLedger();
     first.put(rec());
-    first.markDriving("job-1", "n");
+    first.markDriving("job-1/n");
     expect(first.orphans()).toEqual([]); // 本进程在跑，不是孤儿
     const snap = first.snapshot();
 
@@ -122,11 +121,11 @@ describe("★ 两种寿命：driving 绝不落盘、绝不恢复", () => {
      */
     const l = new ExecutionLedger();
     l.put(rec());
-    l.markDriving("job-1", "n");
+    l.markDriving("job-1/n");
     expect(l.drivingCount()).toBe(1);
 
     l.replace("exec-1", { status: "SETTLED", termination: "CANCELLED" });
-    l.releaseDriving("job-1", "n");
+    l.releaseDriving("job-1/n");
     expect(l.drivingCount()).toBe(0);
     expect(l.orphans()).toEqual([]);
   });

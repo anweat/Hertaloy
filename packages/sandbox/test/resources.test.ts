@@ -124,8 +124,7 @@ describe("★ 端到端：agent 在真仓库里干活，观察只报它的改动
     });
     const request: ExecutionRequest = {
       executionId: "exec-1",
-      traceid: "job-1",
-      nodeId: "coder",
+      instance: "job-1/coder",
       priorExecutions: {},
       agentSpec: {
         argv: [
@@ -166,8 +165,7 @@ describe("★ 端到端：agent 在真仓库里干活，观察只报它的改动
     const backend = new SandboxBackend({ runner: new LocalRunner(home), resources: {} });
     const result = await backend.run({
       executionId: "exec-2",
-      traceid: "job-1",
-      nodeId: "coder",
+      instance: "job-1/coder",
       priorExecutions: {},
       agentSpec: { argv: ["true"], workspace: { source: "primary" } },
       vars: {},
@@ -290,8 +288,7 @@ describe("★ 工作区交接：换一个 backend 实例仍接得过去", () => 
 
   const base = (over: Partial<ExecutionRequest>): ExecutionRequest => ({
     executionId: "exec-1",
-    traceid: "job-1",
-    nodeId: "build",
+    instance: "job-1/build",
     priorExecutions: {},
     agentSpec: { argv: ["true"] } as never,
     vars: {},
@@ -306,7 +303,7 @@ describe("★ 工作区交接：换一个 backend 实例仍接得过去", () => 
     const up = await first.run(
       base({
         executionId: "exec-1",
-        nodeId: "build",
+        instance: "job-1/build",
         agentSpec: {
           argv: writer("BUILT.txt", "上游产出"),
           workspace: { source: "primary" },
@@ -320,7 +317,7 @@ describe("★ 工作区交接：换一个 backend 实例仍接得过去", () => 
     const down = await second.run(
       base({
         executionId: "exec-2",
-        nodeId: "test",
+        instance: "job-1/test",
         // 内核从**已落盘的执行记录**派生出来的表
         priorExecutions: { build: "exec-1" },
         agentSpec: {
@@ -347,7 +344,7 @@ describe("★ 工作区交接：换一个 backend 实例仍接得过去", () => 
     const backend = new SandboxBackend({ runner: new LocalRunner(home), resources: registry() });
     const result = await backend.run(
       base({
-        nodeId: "test",
+        instance: "job-1/test",
         priorExecutions: {}, // 上游确实没跑过
         agentSpec: { argv: ["true"], workspace: { from: "build" } } as never,
       }),

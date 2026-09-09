@@ -62,12 +62,12 @@ describe("单提交转发链路", () => {
 
     expect(results).toHaveLength(2);
     const first = results[0] as StepResult;
-    expect(first.nodeId).toBe("producer");
+    expect(first.instance).toBe("job-1/producer");
     expect(first.vars).toEqual({ seed: 7 });
     expect(first.delivered).toHaveLength(1);
 
     const second = results[1] as StepResult;
-    expect(second.nodeId).toBe("consumer");
+    expect(second.instance).toBe("job-1/consumer");
     expect(second.vars).toEqual({ got: 7 });
     expect(collected).toEqual([7]);
     expect(rt.pending()).toEqual([]);

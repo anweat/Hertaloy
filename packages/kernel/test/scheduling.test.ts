@@ -17,6 +17,7 @@ import { ObjectStore } from "../src/store.js";
 import { Runtime, type StepResult } from "../src/runtime.js";
 import { type Candidate, type Scheduler, acceptedPick, fifo } from "../src/scheduling.js";
 import { InvariantError } from "../src/errors.js";
+import { containerOf, lastSegment } from "@nodeflow/contracts";
 
 const leafSpec = {
   nodes: {
@@ -80,8 +81,6 @@ describe("默认 FIFO", () => {
   it("`fifo` 就是取候选集的第一个；空集给 null", () => {
     const c = (id: string, position: number): Candidate => ({
       message: { id, target: { instance: "job-1/a" }, state: "QUEUED" },
-      traceid: "job-1",
-      nodeId: "a",
       position,
     });
     const list = [c("msg-1", 0), c("msg-2", 1)];
@@ -102,7 +101,7 @@ describe("★ 缝是通的", () => {
   it("按载荷挑 —— 调度器读得到消息本身", () => {
     // 只是证明候选带着足够的信息；真策略不该读载荷，这里是为了可观察
     const byNode: Scheduler = (candidates) =>
-      candidates.find((c) => c.nodeId === "a") ?? candidates[0] ?? null;
+      candidates.find((c) => lastSegment(c.message.target.instance) === "a") ?? candidates[0] ?? null;
     const rt = build(byNode);
     sendThree(rt);
     rt.drain();
@@ -139,14 +138,13 @@ describe("★ 换不坏不变量", () => {
     rt.truncate("job-1/k2", "下线");
 
     rt.step();
-    expect(offered.map((c) => `${c.traceid}/${c.nodeId}`)).toEqual(["job-1/k1/a"]);
+    expect(offered.map((c) => c.message.target.instance)).toEqual(["job-1/k1/a"]);
   });
 
   it("★ 返回候选集外的东西 → 当场抛，不静默变成「本轮空闲」", () => {
     const forged: Scheduler = () => ({
       message: { id: "msg-999", target: { instance: "job-1/k1/a" }, state: "QUEUED" },
-      traceid: "job-1/k1",
-      nodeId: "a",
+      instance: "job-1/k1/a",
       position: 0,
     });
     const rt = build(forged);
@@ -158,8 +156,6 @@ describe("★ 换不坏不变量", () => {
   it("按引用比对，内容一样的伪造对象也不算", () => {
     const c: Candidate = {
       message: { id: "msg-1", target: { instance: "job-1/a" }, state: "QUEUED" },
-      traceid: "job-1",
-      nodeId: "a",
       position: 0,
     };
     // 内容逐字相同的另一个对象
@@ -171,8 +167,6 @@ describe("★ 换不坏不变量", () => {
   it("不挑（null）是合法的，不抛", () => {
     const c: Candidate = {
       message: { id: "msg-1", target: { instance: "job-1/a" }, state: "QUEUED" },
-      traceid: "job-1",
-      nodeId: "a",
       position: 0,
     };
     expect(acceptedPick([c], null)).toBeNull();

@@ -9,7 +9,7 @@
 
 import { join } from "node:path";
 import { z } from "zod";
-import { MASK, SECRET_PATTERNS, resolveEnv } from "@nodeflow/contracts";
+import { MASK, SECRET_PATTERNS, containerOf, resolveEnv } from "@nodeflow/contracts";
 import { AgentSpec } from "./agent-spec.js";
 import type {
   ExecutionBackend,
@@ -175,12 +175,11 @@ export class SandboxBackend implements ExecutionBackend {
      * 沙箱跑完即删时无所谓，留着就会在共享目录里真的撞名。
      */
     /**
-     * id 里带上**节点名**，因为"接过上游工作区"要靠它找人（见 inheritWorkspace）。
-     * 顺带 traceid 在前 —— 于是搜索前缀天然把范围限定在自己的命名空间内。
+     * id 就是**执行位点的实例路径** + executionId。位点里带着节点名，
+     * 而"接过上游工作区"要靠它找人（见 inheritWorkspace）；容器在前，
+     * 于是搜索前缀天然把范围限定在自己的命名空间内。
      */
-    const root = this.#runner.allocate(
-      `${request.traceid}/${request.nodeId}/${request.executionId}`,
-    );
+    const root = this.#runner.allocate(`${request.instance}/${request.executionId}`);
     const paths = createSandbox(root);
     // 记录仓放在沙箱**同级**的隐藏目录 —— 与工作树同一个文件系统，
     // 但不在 workspace 内，所以 agent 看不到（S1 布局的同一条理由）
@@ -275,8 +274,7 @@ export class SandboxBackend implements ExecutionBackend {
       });
       writeRequest(paths, {
         executionId: request.executionId,
-        traceid: request.traceid,
-        nodeId: request.nodeId,
+        instance: request.instance,
         allowedEmitPorts: request.outputContract.allowedEmitPorts,
         limits: request.limits,
         emitPath,
@@ -323,8 +321,7 @@ export class SandboxBackend implements ExecutionBackend {
         allowedEmitPorts: request.outputContract.allowedEmitPorts,
         emitPath,
         artifactsDir,
-        traceid: request.traceid,
-        nodeId: request.nodeId,
+        instance: request.instance,
         ...(workspace === undefined ? {} : { workspace }),
         limits: request.limits,
         resources: Object.entries(placed).map(([alias, rel]) => `${alias} → ${rel}`),
@@ -460,7 +457,8 @@ export class SandboxBackend implements ExecutionBackend {
           "要么它确实还没跑（检查一下图里有没有边指向它），要么 `workspace.from` 写错了节点名。",
       );
     }
-    return sandboxPaths(this.#runner.locate(`${request.traceid}/${from}/${executionId}`)).workspace;
+    const container = containerOf(request);
+    return sandboxPaths(this.#runner.locate(`${container}/${from}/${executionId}`)).workspace;
   }
 
   /** best effort —— 气密性靠 generation fence，不靠这个（不变量 L3）。 */

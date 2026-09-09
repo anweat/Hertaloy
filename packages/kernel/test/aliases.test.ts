@@ -20,7 +20,7 @@ import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js
 import { ObjectStore } from "../src/store.js";
 import { Runtime, type StepResult } from "../src/runtime.js";
 import { InvariantError } from "../src/errors.js";
-import { formatEndpoint } from "@nodeflow/contracts";
+import { containerOf, formatEndpoint } from "@nodeflow/contracts";
 
 let store: ObjectStore;
 
@@ -197,7 +197,7 @@ describe("S3 · 帧 11 —— 不需要表达", () => {
     rt.send({ instance: "job-9/w-b/t2/worker", port: "start" }, { q: "b" });
     const second = rt
       .drain()
-      .filter((r): r is StepResult => !("reason" in r) && r.traceid === "job-9/w-b/t2");
+      .filter((r): r is StepResult => !("reason" in r) && containerOf(r) === "job-9/w-b/t2");
     expect(deliveredTo(rt, second[0] as StepResult)).toEqual(["job-9/w-b/metrics.in"]);
 
     // ★ 自给自足：t1 的表里记的是 w-a，解析不需要再往上问任何人

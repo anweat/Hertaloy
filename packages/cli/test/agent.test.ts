@@ -21,8 +21,7 @@ import {
 
 const REQUEST = {
   executionId: "exec-1",
-  traceid: "job-1/coder-1",
-  nodeId: "work",
+  instance: "job-1/coder-1/work",
   allowedEmitPorts: ["out", "err"],
   limits: { tokenBudget: 4000, wallClockSeconds: 60 },
   emitPath: "../.hertaloy/emit.json",

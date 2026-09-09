@@ -466,92 +466,79 @@ export const FIXTURE: unknown = {
  "records": [
   {
    "executionId": "exec-1",
-   "traceid": "job-1",
-   "nodeId": "plan",
+   "instance": "job-1/plan",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-3",
-   "traceid": "job-1",
-   "nodeId": "merge",
+   "instance": "job-1/merge",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-5",
-   "traceid": "job-1",
-   "nodeId": "watch",
+   "instance": "job-1/watch",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-8",
-   "traceid": "job-1",
-   "nodeId": "watch",
+   "instance": "job-1/watch",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-11",
-   "traceid": "job-1",
-   "nodeId": "watch",
+   "instance": "job-1/watch",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-13",
-   "traceid": "job-1",
-   "nodeId": "audit",
+   "instance": "job-1/audit",
    "status": "SETTLED",
    "termination": "FAILED"
   },
   {
    "executionId": "exec-2",
-   "traceid": "job-1/a1",
-   "nodeId": "scan",
+   "instance": "job-1/a1/scan",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-4",
-   "traceid": "job-1/a1",
-   "nodeId": "wrap",
+   "instance": "job-1/a1/wrap",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-6",
-   "traceid": "job-1/a2",
-   "nodeId": "scan",
+   "instance": "job-1/a2/scan",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-7",
-   "traceid": "job-1/a2",
-   "nodeId": "wrap",
+   "instance": "job-1/a2/wrap",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-9",
-   "traceid": "job-1/a3",
-   "nodeId": "scan",
+   "instance": "job-1/a3/scan",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-10",
-   "traceid": "job-1/a3",
-   "nodeId": "wrap",
+   "instance": "job-1/a3/wrap",
    "status": "SETTLED",
    "termination": "DONE"
   },
   {
    "executionId": "exec-12",
-   "traceid": "job-1",
-   "nodeId": "review",
+   "instance": "job-1/review",
    "status": "RUNNING"
   }
  ],

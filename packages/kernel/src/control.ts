@@ -310,7 +310,7 @@ export class ControlPlane {
    */
   execution(actor: Principal, executionId: string): ExecutionRecord | undefined {
     const found = this.#runtime.records().find((r) => r.executionId === executionId);
-    const target = found?.traceid ?? this.#registry.rootTrace ?? executionId;
+    const target = found?.instance ?? this.#registry.rootTrace ?? executionId;
     this.#authorize(actor, "query", target);
     // **缺席是答复，不是异常**：`InvariantError` 是给"不变量被破"用的，
     // 而"你查的 id 不存在"是一个正常结果，该由调用方决定怎么呈现。
@@ -332,7 +332,7 @@ export class ControlPlane {
 
   records(actor: Principal, trace: TraceId): readonly ExecutionRecord[] {
     this.#authorize(actor, "query", trace);
-    return this.#runtime.records().filter((r) => r.traceid === trace);
+    return this.#runtime.records().filter((r) => containerOf(r) === trace);
   }
 
   /**

@@ -24,7 +24,7 @@ it.each([
   roots.push(workRoot);
   const backend = new SandboxBackend({ workRoot, retain: fallback as RetainPolicy });
   const request: ExecutionRequest = {
-    executionId: "exec-1", traceid: "job", nodeId: "work", priorExecutions: {},
+    executionId: "exec-1", instance: "job/work", priorExecutions: {},
     agentSpec: {
       argv: [process.execPath, "-e", success
         ? 'require("node:fs").writeFileSync("../.hertaloy/emit.json", JSON.stringify({out:{ok:true}}))'

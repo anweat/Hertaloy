@@ -9,7 +9,7 @@
  *   workspace/          真实项目文件 —— **git work-tree，唯一被观察的**
  *   .hertaloy/          契约目录 —— **在 work-tree 之外**
  *     context/          注入（按 profile 渲染）
- *     request.json      允许的 emit 端口、预算、traceid
+ *     request.json      允许的 emit 端口、预算、执行位点（instance）
  *     emit.json         → agent 写这里表达输出
  *     artifacts/        → 放这里的文件被收成版本化资产
  * ```

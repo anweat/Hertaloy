@@ -274,8 +274,8 @@ const advance: Tool = {
             `${text}\n` +
               failures
                 .map((f) => {
-                  const x = f as { traceid: string; nodeId: string; reason: string };
-                  return `  ${x.traceid}/${x.nodeId}：${x.reason}`;
+                  const x = f as { instance: string; reason: string };
+                  return `  ${x.instance}：${x.reason}`;
                 })
                 .join("\n"),
           )

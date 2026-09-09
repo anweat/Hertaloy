@@ -105,7 +105,7 @@ export function stateProblems(facts: InvariantFacts): readonly string[] {
     }
 
     for (const rec of facts.executions) {
-      if (rec.traceid === inst.traceid && rec.status === "RUNNING") {
+      if (containerOf(rec) === inst.traceid && rec.status === "RUNNING") {
         problems.push(`实例 ${inst.traceid} 已 TERMINAL，却仍有 RUNNING 执行 ${rec.executionId}`);
       }
     }

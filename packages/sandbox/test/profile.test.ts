@@ -28,8 +28,7 @@ const input = {
   allowedEmitPorts: ["out", "err"] as const,
   emitPath: "../.hertaloy/emit.json",
   artifactsDir: "../.hertaloy/artifacts",
-  traceid: "job-1/coder-1",
-  nodeId: "work",
+  instance: "job-1/coder-1/work",
   priorExecutions: {},
 };
 
@@ -78,8 +77,7 @@ describe("★ 渲染发生在打基线之前 —— CLAUDE.md 不会被当成 ag
     const backend = new SandboxBackend({ runner: localRunner() });
     const request: ExecutionRequest = {
       executionId: "exec-p",
-      traceid: "job-1",
-      nodeId: "w",
+      instance: "job-1/w",
       priorExecutions: {},
       agentSpec: {
         argv: [
@@ -105,8 +103,7 @@ describe("★ 渲染发生在打基线之前 —— CLAUDE.md 不会被当成 ag
     const backend = new SandboxBackend({ runner: localRunner() });
     const result = await backend.run({
       executionId: "exec-p2",
-      traceid: "job-1",
-      nodeId: "w",
+      instance: "job-1/w",
       priorExecutions: {},
       agentSpec: {
         argv: [

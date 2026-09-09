@@ -320,10 +320,13 @@ POST /api/truncate → { ..., cursor: {seq, objects, config} }
   > 地址是**一段**（V6 阶段 1b）：`instance` 就是节点自己的实例路径，
   > 容器由 `parentTrace` 派生。头里**只有在途的**（QUEUED / CLAIMED）——
   > 终态消息在 `<instance>/$msg`（阶段 5）。
-- **执行记录**：`executionId` · `traceid` · `nodeId` · `status`（RUNNING / SETTLED /
+- **执行记录**：`executionId` · `instance` · `status`（RUNNING / SETTLED /
   VOIDED）· `termination`（DONE / CANCELLED / BUDGET / INVALID_OUTPUT / FAILED，
   **五种不能混成一种**）· `claimed[]` · `generation` ·
   `usage{inTokens,outTokens,costUsd,wallClockSeconds,toolCalls,compactions}`
+
+  > `instance` 与消息地址同形，也是**一段**（V6 阶段 1b）。头里只有 RUNNING ——
+  > 终态记录在 `<instance>/$exec`（阶段 5）。
 - **计数器**：`seq` · `requestSeq` · `executionSeq`
 
 ### D. `objects/` —— 版本层
@@ -334,8 +337,8 @@ POST /api/truncate → { ..., cursor: {seq, objects, config} }
 | 内核对象 | body 里有什么 | 值钱在哪 |
 |---|---|---|
 | `<traceid>/$run` | `{seq, node, consumed[], produced[]}` | **因果边**。全量，不被 200 条窗口裁剪 |
-| `<traceid>/<node>/$exec` | `{execution_id, node, status, termination, claimed[], generation, usage?, diagnostics{sandbox{path,retained}, observation{changes[]}}}` | 终态执行记录 + 观测。**按节点索引**（阶段 1a），一次执行一版 |
-| `<traceid>/<node>/$msg` | `{message_id, port, state, payload, attempts, failure?, alias?, source?, request_id?}` | 终态消息。头里只留在途（阶段 5） |
+| `<instance>/$exec` | `{execution_id, status, termination, claimed[], generation, usage?, diagnostics{sandbox{path,retained}, observation{changes[]}}}` | 终态执行记录 + 观测。**挂在执行位点名下**，一次执行一版。正文里不再重存地址 —— 对象 id 就是地址 |
+| `<instance>/$msg` | `{message_id, port, state, payload, attempts, failure?, alias?, source?, request_id?}` | 终态消息。头里只留在途（阶段 5） |
 | `materialized` | 实例 pin 的**完整定义** | 端口 / 边 / 子槽 / bind / 预算 —— 画结构靠它 |
 | `container_template` `root_config` | 定义与覆盖层 | 定义面 |
 | `layout` `proposal` `annotation` | — | kind 占着位，**目前没有任何生产者**（前端就是第一个） |

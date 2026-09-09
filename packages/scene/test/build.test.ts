@@ -19,7 +19,7 @@ const flow = (from: string | null, to: string) =>
 
 it("坏进度的不可用原因穿过 Scene，不在最后一次投影里丢失", () => {
   const snapshot = parseSnapshot(FIXTURE);
-  snapshot.records.push({ executionId: "broken", traceid: "job-1/a1", nodeId: "scan",
+  snapshot.records.push({ executionId: "broken", instance: "job-1/a1/scan",
     status: "SETTLED", termination: "DONE", progressUnavailable: "采集格式不合法" });
   expect(buildScene(snapshot).cells.find((c) => c.id === "job-1/a1#scan"))
     .toHaveProperty("progressUnavailable", "采集格式不合法");
@@ -208,7 +208,7 @@ describe("★ 执行状态：跑着的、失败的、没跑过的", () => {
   it("同步节点失败 → 记录带非 DONE 的终止原因，相位是 failed", () => {
     const snapshot = parseSnapshot(FIXTURE);
     snapshot.records.push({
-      executionId: "exec-sync-fail", traceid: "job-1", nodeId: "plan",
+      executionId: "exec-sync-fail", instance: "job-1/plan",
       status: "SETTLED", termination: "FAILED",
     });
     expect(buildScene(snapshot).cells.find((c) => c.id === "job-1#plan")?.phase).toBe("failed");
@@ -462,8 +462,8 @@ describe("★ 重试后选当前那次执行", () => {
     const c = node({
       ...base,
       records: [
-        { executionId: "exec-1", traceid: "job", nodeId: "w", status: "SETTLED", termination: "FAILED", progress: { done: 1, total: 10 } },
-        { executionId: "exec-2", traceid: "job", nodeId: "w", status: "RUNNING" },
+        { executionId: "exec-1", instance: "job/w", status: "SETTLED", termination: "FAILED", progress: { done: 1, total: 10 } },
+        { executionId: "exec-2", instance: "job/w", status: "RUNNING" },
       ],
     });
     expect(c?.phase).toBe("running");
@@ -476,8 +476,8 @@ describe("★ 重试后选当前那次执行", () => {
     const c = node({
       ...base,
       records: [
-        { executionId: "exec-1", traceid: "job", nodeId: "w", status: "SETTLED", termination: "FAILED", progress: { done: 1, total: 10 } },
-        { executionId: "exec-2", traceid: "job", nodeId: "w", status: "SETTLED", termination: "DONE", progress: { done: 9, total: 10 } },
+        { executionId: "exec-1", instance: "job/w", status: "SETTLED", termination: "FAILED", progress: { done: 1, total: 10 } },
+        { executionId: "exec-2", instance: "job/w", status: "SETTLED", termination: "DONE", progress: { done: 9, total: 10 } },
       ],
     });
     expect(c?.phase).toBe("done");
@@ -489,8 +489,8 @@ describe("★ 重试后选当前那次执行", () => {
     const c = node({
       ...base,
       records: [
-        { executionId: "exec-1", traceid: "job", nodeId: "w", status: "SETTLED", termination: "DONE", progress: { done: 5, total: 5 } },
-        { executionId: "exec-2", traceid: "job", nodeId: "w", status: "VOIDED" },
+        { executionId: "exec-1", instance: "job/w", status: "SETTLED", termination: "DONE", progress: { done: 5, total: 5 } },
+        { executionId: "exec-2", instance: "job/w", status: "VOIDED" },
       ],
     });
     expect(c?.phase).toBe("done");

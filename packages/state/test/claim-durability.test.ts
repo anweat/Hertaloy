@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodeflow/contracts";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "../src/run-state.js";
-import { lastSegment } from "@nodeflow/contracts";
+import { containerOf, lastSegment } from "@nodeflow/contracts";
 
 let dir: string;
 beforeEach(() => {
@@ -74,7 +74,7 @@ describe("★ claim 熬过崩溃", () => {
     try {
       const running = second.runtime.records().filter((r) => r.status === "RUNNING");
       expect(running).toHaveLength(1);
-      expect(running[0]?.traceid).toBe("job-1");
+      expect(containerOf(running[0]!)).toBe("job-1");
       // 那条消息也该是 CLAIMED，不是还在队列里等人捡
       expect(second.runtime.message(running[0]!.claimed[0]!).state).toBe("CLAIMED");
       expect(second.runtime.pending()).toHaveLength(0);

@@ -52,7 +52,7 @@ it("★ 查得到照旧 —— records() 与 record(id) 合并在途与历史", 
   expect(all).toHaveLength(1);
   expect(all[0]?.status).toBe("SETTLED");
   expect(all[0]?.termination).toBe("DONE");
-  expect(all[0]?.nodeId).toBe("n");
+  expect(all[0]?.instance).toBe("job/n");
   expect(rt.record(all[0]!.executionId).termination).toBe("DONE");
 });
 

@@ -20,6 +20,7 @@ import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "@nodeflow/state";
 import { LocalRunner, createSandbox } from "@nodeflow/sandbox";
 import { execution } from "../src/state-commands.js";
+import { containerOf, lastSegment } from "@nodeflow/contracts";
 
 const HUMAN = { kind: "human", id: "local" } as const;
 let dir: string;
@@ -42,7 +43,7 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 /** 造一条 RUNNING 记录 —— claim 住不 apply。 */
-function claimOne(): { executionId: string; traceid: string; nodeId: string } {
+function claimOne(): { executionId: string; instance: string } {
   const s = RunState.open(dir, {
     backend: { async run() { throw new Error("不该被调用"); }, async cancel() {} },
   });
@@ -54,7 +55,7 @@ function claimOne(): { executionId: string; traceid: string; nodeId: string } {
     expect(claimed.kind).toBe("claimed");
     s.persist();
     const rec = s.runtime.records().find((r) => r.status === "RUNNING");
-    return { executionId: rec!.executionId, traceid: rec!.traceid, nodeId: rec!.nodeId };
+    return { executionId: rec!.executionId, instance: rec!.instance };
   } finally {
     s.close();
   }
@@ -65,7 +66,7 @@ it("★ 执行中：返回 agent 到这一刻的输出，不只是进度数字",
   // 沙箱在确定性路径上 —— 观察方按同一条规则算得出来
   const runner = new LocalRunner(join(dir, "sandboxes"));
   // 按 backend 的真实顺序：allocate（写下身份标记）→ createSandbox
-  const paths = createSandbox(runner.allocate(`${rec.traceid}/${rec.nodeId}/${rec.executionId}`));
+  const paths = createSandbox(runner.allocate(`${rec.instance}/${rec.executionId}`));
   writeFileSync(
     join(paths.journal, "1.json"),
     JSON.stringify({ op: "read", path: "src/index.ts" }),
@@ -111,7 +112,7 @@ it("沙箱不在（已回收 / 配错 workRoot）也是读不到，不是空", (
 it("真实 CLI 把 --runner 传给现场查询", () => {
   const rec = claimOne();
   const runner = new LocalRunner(join(dir, "sandboxes"));
-  createSandbox(runner.allocate(`${rec.traceid}/${rec.nodeId}/${rec.executionId}`));
+  createSandbox(runner.allocate(`${rec.instance}/${rec.executionId}`));
   const output = execFileSync(process.execPath, [
     "--import", "tsx", "src/main.ts", "execution", dir, rec.executionId,
     "--runner", "local", "--json",

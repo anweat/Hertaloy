@@ -58,8 +58,8 @@ export type ExecutionStatus = "RUNNING" | "SETTLED" | "VOIDED";
 /** claim/execute/apply 的持久事实 —— 取消与崩溃接管的唯一依据。 */
 export interface ExecutionRecord {
   readonly executionId: string;
-  readonly traceid: TraceId;
-  readonly nodeId: string;
+  /** 执行位点 —— **节点自己的**实例路径，一段（V6 阶段 1b）。 */
+  readonly instance: TraceId;
   readonly status: ExecutionStatus;
   /**
    * 怎么结束的。`RUNNING` 时没有；`VOIDED` 时无意义 —— 结果被栅栏丢掉了，
@@ -76,11 +76,6 @@ export interface ExecutionRecord {
 interface LedgerSnapshot {
   readonly records: Map<string, ExecutionRecord>;
   readonly seq: number;
-}
-
-/** `(实例, 节点)` —— 冲突域的门就开在这个粒度上。 */
-function slot(traceid: TraceId, nodeId: string): string {
-  return `${traceid}/${nodeId}`;
 }
 
 export class ExecutionLedger implements Snapshotable {
@@ -148,16 +143,16 @@ export class ExecutionLedger implements Snapshotable {
 
   // --- 进程本地：本进程在驱动谁 -------------------------------------------
 
-  isDriving(traceid: TraceId, nodeId: string): boolean {
-    return this.#driving.has(slot(traceid, nodeId));
+  isDriving(instance: TraceId): boolean {
+    return this.#driving.has(instance);
   }
 
-  markDriving(traceid: TraceId, nodeId: string): void {
-    this.#driving.add(slot(traceid, nodeId));
+  markDriving(instance: TraceId): void {
+    this.#driving.add(instance);
   }
 
-  releaseDriving(traceid: TraceId, nodeId: string): void {
-    this.#driving.delete(slot(traceid, nodeId));
+  releaseDriving(instance: TraceId): void {
+    this.#driving.delete(instance);
   }
 
   /** 本进程正在驱动的数量 —— 只给用例与排查看。 */
@@ -171,16 +166,17 @@ export class ExecutionLedger implements Snapshotable {
    * 判定同时读两种寿命的东西，这正是它们放在一个类里的理由。
    */
   orphans(): readonly ExecutionRecord[] {
-    return this.all().filter((r) => r.status === "RUNNING" && !this.isDriving(r.traceid, r.nodeId));
+    return this.all().filter((r) => r.status === "RUNNING" && !this.isDriving(r.instance));
   }
 }
 
 /**
  * 一个节点的执行日志对象 id。
  *
- * **按节点索引，不按实例** —— `$exec` 原来挂在实例上是因为节点没有身份。
+ * **挂在执行位点自己名下** —— `$exec` 原来挂在容器上是因为节点没有身份。
+ * 地址收成一段之后 `instance` 就是那个身份，拼出来的字符串与之前逐字相同。
  * `$` 前缀是内核内务的约定（用户资产名是 `Ident`，不含 `$`），所以撞不上。
  */
-export function execLog(traceid: TraceId, nodeId: string): string {
-  return `${traceid}/${nodeId}/$exec`;
+export function execLog(instance: TraceId): string {
+  return `${instance}/$exec`;
 }

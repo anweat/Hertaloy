@@ -53,7 +53,7 @@ it("WSL 与其他运行器使用相同的身份区分规则", () => {
 function legacy(base: string, claimed = "job/a"): string {
   const root = join(base, "hertaloy-box-job-a-work-exec-1");
   const paths = createSandbox(root);
-  writeFileSync(paths.request, JSON.stringify({ traceid: claimed, nodeId: "work", executionId: "exec-1" }));
+  writeFileSync(paths.request, JSON.stringify({ instance: `${claimed}/work`, executionId: "exec-1" }));
   writeFileSync(join(paths.workspace, "keep.txt"), "legacy");
   return root;
 }
@@ -102,7 +102,7 @@ it("新 backend 可从已验证的旧布局继承工作区，原文件保持不�
   const old = legacy(base);
   const backend = new SandboxBackend({ workRoot: base });
   const result = await backend.run({
-    traceid: "job/a", nodeId: "next", executionId: "exec-2", priorExecutions: { work: "exec-1" },
+    instance: "job/a/next", executionId: "exec-2", priorExecutions: { work: "exec-1" },
     agentSpec: {
       workspace: { from: "work" },
       argv: [process.execPath, "-e", 'const fs=require("node:fs"); fs.writeFileSync("../.hertaloy/emit.json", JSON.stringify({out:{text:fs.readFileSync("keep.txt","utf8")}}))'],

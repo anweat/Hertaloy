@@ -28,8 +28,8 @@ import { z } from "zod";
 export const AgentRequest = z
   .object({
     executionId: z.string(),
-    traceid: z.string(),
-    nodeId: z.string(),
+    /** 执行位点 —— 节点自己的实例路径，一段（V6 阶段 1b）。 */
+    instance: z.string(),
     allowedEmitPorts: z.array(z.string()),
     limits: z
       .object({ tokenBudget: z.number().optional(), wallClockSeconds: z.number().optional() })

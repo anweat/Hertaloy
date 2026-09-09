@@ -17,6 +17,7 @@ import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodef
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "../src/run-state.js";
 import { exportSnapshot } from "../src/snapshot.js";
+import { containerOf, lastSegment } from "@nodeflow/contracts";
 
 const HUMAN = { kind: "human", id: "local" } as const;
 
@@ -57,7 +58,7 @@ const SYNC_TEMPLATE = {
 /** 按节点给不同进度；`diagnostics` 会落成 `<traceid>/$exec` 一版。 */
 class ReportsProgress implements ExecutionBackend {
   async run(request: ExecutionRequest): Promise<ExecutionResult> {
-    const done = request.nodeId === "slow" ? 1 : 9;
+    const done = lastSegment(request.instance) === "slow" ? 1 : 9;
     return {
       executionId: request.executionId,
       emissions: {},
@@ -83,8 +84,8 @@ it("★ 同一实例的两条执行记录各带自己的进度，不是都跟着
 
     const snap = exportSnapshot(state, HUMAN);
     const byNode = new Map(
-      (snap.records as { nodeId: string; progress?: { done: number } }[]).map((r) => [
-        r.nodeId,
+      (snap.records as { instance: string; progress?: { done: number } }[]).map((r) => [
+        lastSegment(r.instance),
         r.progress?.done,
       ]),
     );
@@ -126,8 +127,8 @@ it("没有对应观测的记录不带进度 —— 不拿别人的顶上", async
     expect(running).toHaveLength(1);
 
     const snap = exportSnapshot(state, HUMAN);
-    const all = snap.records as { nodeId: string; status: string; progress?: { done: number } }[];
-    const done = all.find((r) => r.nodeId === "slow");
+    const all = snap.records as { instance: string; status: string; progress?: { done: number } }[];
+    const done = all.find((r) => lastSegment(r.instance) === "slow");
     const inflight = all.find((r) => r.status === "RUNNING");
 
     expect(done?.progress?.done).toBe(1);
@@ -243,13 +244,13 @@ it("★ 同步节点的每次执行都出得去，各带自己的终止原因", 
     state.persist();
 
     const records = exportSnapshot(state, HUMAN).records as
-      { traceid: string; nodeId: string; status: string; termination?: string }[];
+      { instance: string; status: string; termination?: string }[];
 
     // a 跑了两次、b 一次 —— 每次都留一条，不再是"每个节点最后一次"
-    expect(records.map((r) => r.nodeId).sort()).toEqual(["a", "a", "b"]);
+    expect(records.map((r) => lastSegment(r.instance)).sort()).toEqual(["a", "a", "b"]);
     expect(records.every((r) => r.status === "SETTLED" && r.termination === "DONE")).toBe(true);
     // 从没跑过的节点一条都没有 —— 记录是"跑过"的证据，不是"存在"的证据
-    expect(records.some((r) => r.nodeId === "c")).toBe(false);
+    expect(records.some((r) => lastSegment(r.instance) === "c")).toBe(false);
   } finally {
     state.close();
   }
@@ -269,10 +270,10 @@ it("执行记录跟着授权子树走，看不见的实例不出现", () => {
     state.runtime.drain();
     state.persist();
 
-    const all = exportSnapshot(state, HUMAN).records as { traceid: string }[];
-    expect(new Set(all.map((r) => r.traceid))).toEqual(new Set(["job-1", "job-1/k1"]));
-    const sub = exportSnapshot(state, HUMAN, "job-1/k1").records as { traceid: string }[];
-    expect(new Set(sub.map((r) => r.traceid))).toEqual(new Set(["job-1/k1"]));
+    const all = exportSnapshot(state, HUMAN).records as { instance: string }[];
+    expect(new Set(all.map((r) => containerOf(r)))).toEqual(new Set(["job-1", "job-1/k1"]));
+    const sub = exportSnapshot(state, HUMAN, "job-1/k1").records as { instance: string }[];
+    expect(new Set(sub.map((r) => containerOf(r)))).toEqual(new Set(["job-1/k1"]));
   } finally {
     state.close();
   }

@@ -31,8 +31,7 @@ function request(
 ): ExecutionRequest {
   return {
     executionId: "exec-1",
-    traceid: "job-1/coder-1",
-    nodeId: "work",
+    instance: "job-1/coder-1/work",
     agentSpec: { argv: [...argv], ...spec } as never,
     priorExecutions: {},
     vars: { task: "写个导出功能" },

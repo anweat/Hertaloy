@@ -17,6 +17,7 @@ import { beforeEach, expect, it } from "vitest";
 import { InstanceRegistry, registerContainerTemplate } from "../src/instances.js";
 import { ObjectStore } from "../src/store.js";
 import { Runtime } from "../src/runtime.js";
+import { lastSegment } from "@nodeflow/contracts";
 
 const TEMPLATE = {
   nodes: {
@@ -50,14 +51,14 @@ it("★ 同步节点跑完留一条执行记录：SETTLED / DONE，认领的是�
   rt.drain();
 
   const records = rt.records();
-  expect(records.map((r) => r.nodeId).sort()).toEqual(["ok", "sink"]);
-  const ok = records.find((r) => r.nodeId === "ok");
+  expect(records.map((r) => lastSegment(r.instance)).sort()).toEqual(["ok", "sink"]);
+  const ok = records.find((r) => lastSegment(r.instance) === "ok");
   expect(ok?.status).toBe("SETTLED");
   expect(ok?.termination).toBe("DONE");
   expect(ok?.claimed).toHaveLength(1);
-  expect(ok?.traceid).toBe("job");
+  expect(ok?.instance).toBe("job/ok");
   // 没跑过的节点仍然一条都没有 —— 记录是"跑过"的证据，不是"存在"的证据
-  expect(records.some((r) => r.nodeId === "idle")).toBe(false);
+  expect(records.some((r) => lastSegment(r.instance) === "idle")).toBe(false);
 });
 
 it("★ 入站校验失败也留记录 —— 首次就失败的节点不能看起来像没跑过", () => {
@@ -65,7 +66,7 @@ it("★ 入站校验失败也留记录 —— 首次就失败的节点不能看�
   rt.send({ instance: "job/ok", port: "in" }, { 别的: 1 });
   rt.drain();
 
-  const ok = rt.records().find((r) => r.nodeId === "ok");
+  const ok = rt.records().find((r) => lastSegment(r.instance) === "ok");
   expect(ok).toBeDefined();
   expect(ok?.status).toBe("SETTLED");
   expect(ok?.termination).not.toBe("DONE");

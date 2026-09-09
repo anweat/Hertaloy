@@ -52,6 +52,7 @@ import type { ExecutionBackend } from "@nodeflow/contracts";
 import {
   containerOf,
   formatEndpoint,
+  parentTrace,
   isOverlay,
   type Json,
   type Principal,
@@ -193,10 +194,10 @@ export function status(dir: string, actor: Principal): CommandResult {
         `  ${m.state === "CLAIMED" ? "⟳" : "→"} ${formatEndpoint(m.target)}`,
       );
     }
-    // `$exec` 按节点索引（V6：节点有自己的对象命名空间），所以按 (实例, 节点) 枚举
+    // `$exec` 挂在执行位点自己名下（V6：节点有自己的对象命名空间），所以按位点枚举
     const execs = subtree.flatMap((i) =>
       Object.keys(s.registry.template(i.traceid).nodes).flatMap((n) =>
-        s.store.history(execLog(i.traceid, n)),
+        s.store.history(execLog(`${i.traceid}/${n}`)),
       ),
     );
     let retained = 0;
@@ -216,7 +217,9 @@ export function status(dir: string, actor: Principal): CommandResult {
         const obs = (d.observation ?? {}) as { changes?: unknown[] };
         const box = (d.sandbox ?? {}) as { path?: string; retained?: boolean };
         lines.push(
-          `  ${String(b.execution_id)}  ${String(b.node)}  ${String(b.termination)}` +
+          // 位点从对象 id 读（`<位点>/$exec`），不从正文 —— 正文里已经没有第二份了
+          `  ${String(b.execution_id)}  ${parentTrace(v.object_id) ?? v.object_id}  ` +
+            `${String(b.termination)}` +
             (obs.changes === undefined ? "" : `  改动 ${obs.changes.length} 个文件`) +
             (box.retained === true ? `
       沙箱 ${String(box.path)}` : ""),
@@ -233,7 +236,7 @@ export function status(dir: string, actor: Principal): CommandResult {
     );
     if (running.length > 0) {
       lines.push("", `在跑的 execution ${running.length} 个：`);
-      for (const r of running) lines.push(`  ${r.executionId}  ${r.traceid}/${r.nodeId}`);
+      for (const r of running) lines.push(`  ${r.executionId}  ${r.instance}`);
     }
 
     /**
@@ -287,11 +290,7 @@ export function status(dir: string, actor: Principal): CommandResult {
       })),
       queued: pending.map((m) => ({ id: m.id, ...m.target })),
       claimed: claimed.map((m) => ({ id: m.id, ...m.target })),
-      running: running.map((r) => ({
-        executionId: r.executionId,
-        traceid: r.traceid,
-        node: r.nodeId,
-      })),
+      running: running.map((r) => ({ executionId: r.executionId, instance: r.instance })),
       deadlocks: deadlocks.map((c) => [...c]),
       retainedSandboxes: retained,
     } as never);
@@ -355,7 +354,7 @@ const LIVE_WINDOW = 20;
 
 function liveJournal(
   runner: Runner | undefined,
-  record: { traceid: string; nodeId: string; executionId: string },
+  record: { instance: string; executionId: string },
 ): { readonly available: false; readonly why: string } | { readonly available: true; readonly entries: readonly JournalEntry[] } {
   if (runner === undefined) {
     return {
@@ -364,7 +363,7 @@ function liveJournal(
     };
   }
   try {
-    const root = runner.locate(`${record.traceid}/${record.nodeId}/${record.executionId}`);
+    const root = runner.locate(`${record.instance}/${record.executionId}`);
     const paths = sandboxPaths(root);
     // readJournal 为结算容忍目录缺席；观察接口不能把缺席解释成空现场。
     readdirSync(paths.journal);
@@ -386,9 +385,9 @@ export function execution(
     // 从来没有过 —— 与"无权"分开：无权在上面就抛了（拒绝路径）
     if (record === undefined) return fail(`没有 execution ${executionId}`);
 
-    // 观测：`<traceid>/$exec` 的历史里找本次那一版
+    // 观测：`<执行位点>/$exec` 的历史里找本次那一版
     const observation = s.control
-      .history(actor, execLog(record.traceid, record.nodeId))
+      .history(actor, execLog(record.instance))
       .find((v) => (v.body as { execution_id?: string }).execution_id === executionId);
 
     /**
@@ -399,9 +398,10 @@ export function execution(
      * 而这正是 `Cell.result.commit` 曾经要解决的事 —— 现在它落在
      * 执行上，同步与 agent 走同一条路。
      */
-    const internal = new Set([execLog(record.traceid, record.nodeId), `${record.traceid}/$run`]);
+    const container = containerOf(record);
+    const internal = new Set([execLog(record.instance), `${container}/$run`]);
     const byExecution = s.store.appended(0).filter((v) => v.provenance.execution_id === executionId);
-    const commit = byExecution.find((v) => v.object_id === `${record.traceid}/$run`);
+    const commit = byExecution.find((v) => v.object_id === `${container}/$run`);
     // 产物：provenance 记着是哪次执行写的 —— 不靠名字猜
     const artifacts = byExecution
       .filter((v) => !internal.has(v.object_id))
@@ -417,16 +417,16 @@ export function execution(
     const live = record.status === "RUNNING" ? liveJournal(locator(runnerKind, dir), record) : null;
 
     const lines = [
-      `${record.executionId}  ${record.traceid}/${record.nodeId}`,
+      `${record.executionId}  ${record.instance}`,
       `  状态 ${record.status}${record.termination === undefined ? "" : ` · ${record.termination}`}` +
         `  generation ${String(record.generation)}`,
       `  消费的消息：${record.claimed.join("、") || "（无）"}`,
       observation === undefined
         ? "  观测：未采集（这次执行没有留下 $exec —— backend 没给 diagnostics）"
-        : `  观测：${execLog(record.traceid, record.nodeId)}@${String(observation.version)}（\`show\` 看详情）`,
+        : `  观测：${execLog(record.instance)}@${String(observation.version)}（\`show\` 看详情）`,
       commit === undefined
         ? "  提交：未记录（这次执行没有留下 $run）"
-        : `  提交：${record.traceid}/$run@${String(commit.version)}（\`show\` 看 consumed / produced）`,
+        : `  提交：${container}/$run@${String(commit.version)}（\`show\` 看 consumed / produced）`,
       `  产物 ${String(artifacts.length)} 个${artifacts.length === 0 ? "" : `：${artifacts.map((a) => a.ref).join("、")}`}`,
       ...(live === null
         ? []
@@ -442,8 +442,7 @@ export function execution(
     return ok(lines.join("\n"), {
       execution: {
         executionId: record.executionId,
-        traceid: record.traceid,
-        nodeId: record.nodeId,
+        instance: record.instance,
         status: record.status,
         ...(record.termination === undefined ? {} : { termination: record.termination }),
         generation: record.generation,
@@ -453,10 +452,10 @@ export function execution(
       observation:
         observation === undefined
           ? { available: false, why: "未采集：这次执行没有留下 $exec" }
-          : { available: true, ref: `${execLog(record.traceid, record.nodeId)}@${String(observation.version)}` },
+          : { available: true, ref: `${execLog(record.instance)}@${String(observation.version)}` },
       ...(commit === undefined
         ? {}
-        : { commit: `${record.traceid}/$run@${String(commit.version)}` }),
+        : { commit: `${container}/$run@${String(commit.version)}` }),
       artifacts,
       ...(live === null ? {} : { live }),
     } as never);
@@ -729,7 +728,7 @@ export async function drain(
   actor: Principal,
   backend?: ExecutionBackend,
 ): Promise<CommandResult> {
-  type Step = { traceid: string; nodeId: string; reason?: string; retrying?: boolean };
+  type Step = { instance: string; reason?: string; retrying?: boolean };
   const results: Step[] = [];
   let settled: readonly string[] = [];
   let converged = false;
@@ -888,7 +887,7 @@ export async function drain(
     failed: failures.length,
     retried,
     settled: [...settled],
-    failures: failures.map((f) => ({ traceid: f.traceid, node: f.nodeId, reason: String(f.reason) })),
+    failures: failures.map((f) => ({ instance: f.instance, reason: String(f.reason) })),
     executionFace: backend === undefined ? null : "configured",
   } as never;
 
@@ -896,7 +895,7 @@ export async function drain(
   return failures.length > 0
     ? fail(
         `${text}\n失败：\n` +
-          failures.map((f) => `  ${f.traceid}/${f.nodeId}：${String(f.reason)}`).join("\n"),
+          failures.map((f) => `  ${f.instance}：${String(f.reason)}`).join("\n"),
         data,
       )
     : ok(text, data);
@@ -977,7 +976,7 @@ export function reclaim(dir: string, actor: Principal, keep: number): CommandRes
     const boxes: { path: string; exec: string }[] = [];
     for (const inst of s.control.subtree(actor, root)) {
       for (const n of Object.keys(s.registry.template(inst.traceid).nodes))
-      for (const v of s.store.history(execLog(inst.traceid, n))) {
+      for (const v of s.store.history(execLog(`${inst.traceid}/${n}`))) {
         const d = ((v.body as Record<string, unknown>).diagnostics ?? {}) as {
           sandbox?: { path?: string; retained?: boolean };
         };

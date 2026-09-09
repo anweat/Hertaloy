@@ -83,8 +83,7 @@ describe.skipIf(!HAS_WSL)("真跑 WSL", () => {
     const backend = new SandboxBackend({ runner });
     const request: ExecutionRequest = {
       executionId: "exec-wsl",
-      traceid: "job-1",
-      nodeId: "w",
+      instance: "job-1/w",
       priorExecutions: {},
       agentSpec: {
         argv: [
@@ -130,8 +129,7 @@ describe.skipIf(!HAS_WSL)("真跑 WSL", () => {
     const start = (executionId: string) =>
       backend.run({
         executionId,
-        traceid: "job-1",
-        nodeId: "w",
+        instance: "job-1/w",
         priorExecutions: {},
         agentSpec: { argv } as never,
         vars: {},
@@ -159,8 +157,7 @@ describe.skipIf(!HAS_WSL)("真跑 WSL", () => {
 
     const running = backend.run({
       executionId: "exec-regex",
-      traceid: "job-1",
-      nodeId: "w",
+      instance: "job-1/w",
       priorExecutions: {},
       agentSpec: { argv } as never,
       vars: {},
@@ -185,8 +182,7 @@ describe.skipIf(!HAS_WSL)("真跑 WSL", () => {
     const backend = new SandboxBackend({ runner });
     const result = await backend.run({
       executionId: "exec-timeout",
-      traceid: "job-1",
-      nodeId: "w",
+      instance: "job-1/w",
       priorExecutions: {},
       agentSpec: { argv: ["sleep", "120"] } as never,
       vars: {},

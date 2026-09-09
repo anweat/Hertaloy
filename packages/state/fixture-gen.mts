@@ -14,6 +14,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { lastSegment } from "@nodeflow/contracts";
 import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "@nodeflow/contracts";
 import { registerContainerTemplate } from "@nodeflow/kernel";
 import { RunState } from "./src/run-state.js";
@@ -22,7 +23,7 @@ import { exportSnapshot } from "./src/snapshot.js";
 /** `review` 永不返回（模拟还在外面跑），`audit` 返回失败。 */
 class Mixed implements ExecutionBackend {
   async run(req: ExecutionRequest): Promise<ExecutionResult> {
-    if (req.nodeId === "review") return await new Promise<ExecutionResult>(() => {});
+    if (lastSegment(req.instance) === "review") return await new Promise<ExecutionResult>(() => {});
     return {
       executionId: req.executionId,
       emissions: {},
@@ -122,7 +123,8 @@ const root = registerContainerTemplate(
 
 s.registry.createRoot(root, "job-1");
 s.runtime.registerHandler("emit", (_v, ctx) => {
-  ctx.put(`note-${ctx.nodeId}`, "artifact", { text: `${ctx.nodeId} 的产出` });
+  const self = lastSegment(ctx.instance);
+  ctx.put(`note-${self}`, "artifact", { text: `${self} 的产出` });
   return { out: { ok: true }, ...(ctx.port === "in" ? { found: { what: "看这儿" } } : {}) };
 });
 s.runtime.registerHandler("noop", () => ({}));

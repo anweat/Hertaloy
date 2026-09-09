@@ -187,7 +187,7 @@ function report(
   if (failures.length > 0) {
     lines.push("");
     lines.push("失败：");
-    for (const f of failures) lines.push(`  ${f.traceid}/${f.nodeId}：${f.reason}`);
+    for (const f of failures) lines.push(`  ${f.instance}：${f.reason}`);
   }
 
   lines.push("");

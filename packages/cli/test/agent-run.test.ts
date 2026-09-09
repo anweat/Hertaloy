@@ -107,7 +107,7 @@ describe("★ 落盘的 run 真跑 agent（E1）", () => {
     const s = RunState.open(dir, { readOnly: true });
     try {
       // 同步节点现在也留记录（V6 阶段 1a），所以按 agent 那个节点挑出来看
-      const records = s.runtime.records().filter((r) => r.nodeId === "worker");
+      const records = s.runtime.records().filter((r) => lastSegment(r.instance) === "worker");
       expect(records).toHaveLength(1);
       expect(records[0]?.status).toBe("SETTLED");
       expect(records[0]?.termination).toBe("DONE");
@@ -126,7 +126,10 @@ describe("★ 执行观测落成对象，不给 ExecutionRecord 加字段", () =
     expect(h.text).toContain("1 版");
 
     const v = JSON.parse(show(dir, HUMAN, "job-1/worker/$exec").text);
-    expect(v.body.node).toBe("worker");
+    // 地址不在正文里 —— 对象 id 就是 `<执行位点>/$exec`，正文只放这次执行的事实
+    expect(v.body.node).toBeUndefined();
+    expect(v.object_id).toBe("job-1/worker/$exec");
+    expect(v.provenance.node_id).toBe("worker");
     expect(v.body.termination).toBe("DONE");
     // 观测本身：runner 是谁、隔离与出网受不受控
     expect(v.body.diagnostics.runner).toBe("local");

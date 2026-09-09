@@ -20,8 +20,8 @@ export interface ProfileInput {
   /** emit.json 相对 workspace 的路径 —— agent 的 cwd 就是 workspace。 */
   readonly emitPath: string;
   readonly artifactsDir: string;
-  readonly traceid: string;
-  readonly nodeId: string;
+  /** 执行位点 —— 节点自己的实例路径，一段（V6 阶段 1b）。 */
+  readonly instance: string;
   /** 工作区从哪个具名源、哪个 commit 起的。没有工作区时不给。 */
   readonly workspace?: { readonly source: string; readonly base: string; readonly commit: string };
   /** 限额。**要告诉 agent** —— 它才好决定花多少力气。 */
@@ -93,7 +93,7 @@ function emitInstruction(input: ProfileInput): string {
     `需要留下版本化产物就写进 \`${input.artifactsDir}\`，目录里的每个文件会被收成一份资产。`,
     "",
     ...environment(input),
-    `本次执行：\`${input.traceid}\` 的节点 \`${input.nodeId}\`。`,
+    `本次执行位点：\`${input.instance}\`（路径最后一段是节点名）。`,
     "",
   ].join("\n");
 }

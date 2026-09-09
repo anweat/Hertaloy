@@ -137,11 +137,10 @@ function touchIndex(messages: readonly SnapshotMessage[]): Map<string, number[]>
  *   3. VOIDED 永远不当当前：它的结论已被 generation 栅栏丢掉
  */
 function currentRecord(
-  traceid: string,
-  nodeId: string,
+  instance: string,
   snapshot: Snapshot,
 ): Snapshot["records"][number] | undefined {
-  const mine = snapshot.records.filter((r) => r.traceid === traceid && r.nodeId === nodeId);
+  const mine = snapshot.records.filter((r) => r.instance === instance);
   const running = mine.find((r) => r.status === "RUNNING");
   if (running !== undefined) return running;
   const settled = mine.filter((r) => r.status !== "VOIDED");
@@ -176,8 +175,7 @@ function phaseOf(record: Snapshot["records"][number] | undefined): Phase {
  * 有记录时不再看消息 —— 那是本函数一直以来的行为，不是本轮新加的取舍。
  */
 function phaseOfNode(
-  traceid: string,
-  nodeId: string,
+  instance: string,
   snapshot: Snapshot,
   record: Snapshot["records"][number] | undefined,
 ): Phase {
@@ -186,7 +184,7 @@ function phaseOfNode(
   let phase: Phase = "idle";
   let latest = 0;
   for (const m of snapshot.messages) {
-    if (m.target.instance !== `${traceid}/${nodeId}`) continue;
+    if (m.target.instance !== instance) continue;
     const ended: Phase | undefined =
       m.state === "FAILED" ? "failed" : m.state === "DISCARDED" ? "voided" : undefined;
     if (ended === undefined || seqOf(m.id) < latest) continue;
@@ -299,10 +297,11 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
         direction: p.direction,
         ...(p.contract === undefined ? {} : { contract: p.contract }),
       }));
+      const site = `${instance.traceid}/${nodeId}`;
       const id = nodeCellId(instance.traceid, nodeId);
       const own = spanOf(id, instance.status === "OPEN");
       // 相位与进度取**同一次**执行 —— 分别去找就会各选各的
-      const current = currentRecord(instance.traceid, nodeId, snapshot);
+      const current = currentRecord(site, snapshot);
       cells.push({
         id,
         kind: "node",
@@ -337,7 +336,7 @@ export function buildScene(snapshot: Snapshot, viewport?: string): Scene {
                 ...(current.progress.note === undefined ? {} : { note: current.progress.note }),
               },
             }),
-        phase: phaseOfNode(instance.traceid, nodeId, snapshot, current),
+        phase: phaseOfNode(site, snapshot, current),
         ...(current?.progressUnavailable === undefined ? {} : { progressUnavailable: current.progressUnavailable }),
         ...(current?.executionId === undefined ? {} : { execution: current.executionId }),
         activity: activityOf(id),

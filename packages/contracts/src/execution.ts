@@ -84,8 +84,13 @@ export type OutputContract = z.infer<typeof OutputContract>;
 
 export interface ExecutionRequest {
   readonly executionId: string;
-  readonly traceid: TraceId;
-  readonly nodeId: string;
+  /**
+   * 执行位点 —— **节点自己的**实例路径，一段（V6 阶段 1b）。
+   *
+   * 原来是 `{traceid, nodeId}` 两段，而两个消费方（沙箱目录名、runner 的
+   * 工作区路径）拿到手第一件事都是用 `/` 拼回去。拼回去的那个字符串就是这里。
+   */
+  readonly instance: TraceId;
   readonly agentSpec: JsonObject;
   /**
    * 本实例各节点**最近一次**执行的 id（节点名 → executionId）。

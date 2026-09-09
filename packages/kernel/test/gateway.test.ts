@@ -102,7 +102,7 @@ describe("REQUEST / REPLY 与锁账本", () => {
 
     // 第二步：服务方回复，锁销账，回复落 got 端口
     const second = rt.step() as StepResult;
-    expect(second.traceid).toBe("job-1/discovery");
+    expect(containerOf(second)).toBe("job-1/discovery");
     expect(rt.obligations("job-1/coder-1").filter((o) => o.kind === "request")).toHaveLength(0);
 
     const reply = rt.message(second.delivered[0] as string);
@@ -292,7 +292,7 @@ describe("PUBLISH 的可见范围（原不变量 M2 的作用域）", () => {
     // team-a 发的 progress 落到 w1
     rt2.send({ instance: "job-1/team-a/worker", port: "start" }, { q: "a" });
     const inScope = rt2.step() as StepResult;
-    expect(inScope.traceid).toBe("job-1/team-a");
+    expect(containerOf(inScope)).toBe("job-1/team-a");
     expect(containerOf(rt2.message(inScope.delivered[0] as string).target)).toBe("job-1/w1");
 
     // team-b 发的**到不了 w1** —— 它那一支绑的是根自己的 spill
@@ -300,7 +300,7 @@ describe("PUBLISH 的可见范围（原不变量 M2 的作用域）", () => {
     rt2.send({ instance: "job-1/team-b/worker", port: "start" }, { q: "b" });
     const outside = rt2
       .drain()
-      .filter((r): r is StepResult => !("reason" in r) && r.traceid === "job-1/team-b");
+      .filter((r): r is StepResult => !("reason" in r) && containerOf(r) === "job-1/team-b");
     expect(outside).toHaveLength(1);
     const target = rt2.message(outside[0]?.delivered[0] as string).target;
     expect(target).toEqual({ instance: "job-1/spill", port: "in" });

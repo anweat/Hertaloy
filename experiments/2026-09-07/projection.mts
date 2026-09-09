@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RunState, exportSnapshot } from "../../packages/state/src/index.js";
 import { init, drain, templates } from "../../packages/cli/src/state-commands.js";
+import { lastSegment } from "../../packages/contracts/src/index.js";
 
 const actor = { kind: "human", id: "local" } as const;
 const root = mkdtempSync(join(tmpdir(), "hertaloy-projection-audit-"));
@@ -18,7 +19,7 @@ assert.equal(init(progressDir, actor, {
 const result = await drain(progressDir, actor, {
   async run(request) {
     return { executionId: request.executionId, termination: "DONE", emissions: {},
-      diagnostics: { progress: { done: request.nodeId === "a" ? 1 : 9, total: 10, note: request.nodeId } } };
+      diagnostics: { progress: { done: lastSegment(request.instance) === "a" ? 1 : 9, total: 10, note: lastSegment(request.instance) } } };
   }, async cancel() {},
 });
 assert.equal(result.code, 0, result.text);

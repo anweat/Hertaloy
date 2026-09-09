@@ -710,7 +710,30 @@ CLI `hertaloy send <dir> <instance> <port>`、场景文件 `send:`、MCP `send_m
    而且不报错**。这一脚是靠别处一条断言的字面值对不上才暴露的，那是运气；
    已补一条钉**域**而不是钉字面值的用例
 
-**实例那半（未做）**：节点进注册表、义务与执行记录挪到节点名下、
+**执行地址那半（已完成，与消息地址同形）：**
+
+```
+ExecutionRecord  {traceid, nodeId}  →  {instance}
+ExecutionFact    {traceid, nodeId}  →  {instance}
+ExecutionRequest {traceid, nodeId}  →  {instance}        沙箱契约，agent 读的那份
+HandlerContext   {traceid, nodeId}  →  {instance}        全仓只被用过一次
+StepResult / StepFailure            →  {instance}
+execLog(traceid, nodeId)            →  execLog(instance)
+ExecutionLedger 的 driving 键        →  直接是 instance
+```
+
+`ExecutionLedger` 里本来就有一个 `slot(traceid, nodeId)`，返回的正是 `traceid/nodeId`，
+`#driving` 正是按它索引的 —— **收成一段的形式早就在代码里**，只是没被当成地址。
+这一步做完那个函数整个消失。
+
+同时删掉两处**纯冗余**（不是改名，是删）：
+
+- `Candidate.{traceid, nodeId}` —— `candidate.message.target.instance` 就是同一个
+  事实。地址两段时它们省了调用方一次拆分；收成一段之后是第二份拷贝
+- `$exec` 正文里的 `node` —— 对象 id 就是 `<执行位点>/$exec`。消费方改为从
+  对象 id 读，正文只放这次执行的事实
+
+**实例那半（未做）**：节点进注册表、义务的 holder 挪到节点名下、
 L5 改成递归（§10.5）、scene 的 cell id 分隔符并进路径。
 最后一条现在不能做：节点还不是实例，`spawn(job-1, slot, "work")` 与
 `nodes.work` 仍在两个空间里，改成路径会让两个不同的东西撞成同一个 cell id。

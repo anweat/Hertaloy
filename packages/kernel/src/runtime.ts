@@ -105,8 +105,14 @@ export { MessageQueue, isLive, LIVE_MESSAGE_STATES } from "./queue.js";
 export type { Message, MessageState } from "./queue.js";
 
 export interface HandlerContext {
-  readonly traceid: TraceId;
-  readonly nodeId: string;
+  /**
+   * 执行位点 —— **节点自己的**实例路径，一段（V6 阶段 1b）。
+   *
+   * 原来是 `{traceid, nodeId}` 两段。容器由 `containerOf(ctx)` 派生 ——
+   * 而下面 `history` / `put` / `collect` 的命名空间根**就是那个容器**
+   * （chroot，§12），不是这里的位点。
+   */
+  readonly instance: TraceId;
   /**
    * 本次消息从哪个 receive 端口进来。
    *
@@ -168,8 +174,8 @@ export type BuiltinHandler = (
 
 export interface StepResult {
   readonly consumed: string;
-  readonly traceid: TraceId;
-  readonly nodeId: string;
+  /** 执行位点 —— 节点自己的实例路径，一段（V6 阶段 1b）。 */
+  readonly instance: TraceId;
   readonly delivered: readonly string[];
   readonly dangling: readonly string[];
   readonly vars: VarBag;
@@ -179,8 +185,8 @@ export interface StepResult {
 
 export interface StepFailure {
   readonly consumed: string;
-  readonly traceid: TraceId;
-  readonly nodeId: string;
+  /** 执行位点 —— 节点自己的实例路径，一段（V6 阶段 1b）。 */
+  readonly instance: TraceId;
   readonly reason: string;
   readonly termination?: Termination;
   readonly retrying?: boolean;
@@ -384,11 +390,11 @@ export class Runtime implements Snapshotable {
    */
   #settleExecution(terminal: ExecutionRecord, diagnostics?: JsonObject): void {
     this.#store.put(
-      execLog(terminal.traceid, terminal.nodeId),
+      execLog(terminal.instance),
       "execution",
       {
         execution_id: terminal.executionId,
-        node: terminal.nodeId,
+        // 地址不进正文：对象 id 就是 `<执行位点>/$exec`，再存一份必然漂
         status: terminal.status,
         ...(terminal.termination === undefined ? {} : { termination: terminal.termination }),
         claimed: [...terminal.claimed],
@@ -397,8 +403,8 @@ export class Runtime implements Snapshotable {
         ...(diagnostics === undefined ? {} : { diagnostics }),
       },
       {
-        traceid: terminal.traceid,
-        node_id: terminal.nodeId,
+        traceid: containerOf(terminal),
+        node_id: lastSegment(terminal.instance),
         execution_id: terminal.executionId,
         derived_from: [],
       },
@@ -481,8 +487,8 @@ export class Runtime implements Snapshotable {
     if (typeof b.status !== "string" || typeof b.execution_id !== "string") return undefined;
     return Object.freeze({
       executionId: b.execution_id,
-      traceid: (b.traceid as string | undefined) ?? "",
-      nodeId: String(b.node ?? ""),
+      // 地址由调用方按对象 id 补 —— 正文里再存一份就是第二份拷贝
+      instance: "",
       status: b.status as ExecutionRecord["status"],
       ...(b.termination === undefined ? {} : { termination: b.termination as never }),
       claimed: Array.isArray(b.claimed) ? (b.claimed as string[]) : [],
@@ -495,9 +501,10 @@ export class Runtime implements Snapshotable {
   #settledOf(trace: TraceId): readonly ExecutionRecord[] {
     const out: ExecutionRecord[] = [];
     for (const nodeId of Object.keys(this.#registry.template(trace).nodes)) {
-      for (const v of this.#store.history(execLog(trace, nodeId))) {
+      const instance = childTrace(trace, nodeId);
+      for (const v of this.#store.history(execLog(instance))) {
         const r = Runtime.#recordOf(v.body);
-        if (r !== undefined) out.push({ ...r, traceid: trace, nodeId });
+        if (r !== undefined) out.push({ ...r, instance });
       }
     }
     return out;
@@ -540,8 +547,8 @@ export class Runtime implements Snapshotable {
   #latestPerNode(trace: TraceId): Readonly<Record<string, string>> {
     const out: Record<string, string> = {};
     for (const r of [...this.#settledOf(trace), ...this.#ledger.all()]) {
-      if (r.traceid !== trace || r.status === "VOIDED") continue;
-      out[r.nodeId] = r.executionId;
+      if (containerOf(r) !== trace || r.status === "VOIDED") continue;
+      out[lastSegment(r.instance)] = r.executionId;
     }
     return Object.freeze(out);
   }
@@ -690,12 +697,12 @@ export class Runtime implements Snapshotable {
         try {
           this.#commit({
             kind: "claim",
-            traceid: outcome.record.traceid,
+            traceid: containerOf(outcome.record),
             executionId: outcome.record.executionId,
           });
         } catch (error) {
           // 钩子抛了 → 这次 claim 要整体撤销，而 driving 标记不归 transact 管
-          this.#ledger.releaseDriving(outcome.record.traceid, outcome.record.nodeId);
+          this.#ledger.releaseDriving(outcome.record.instance);
           throw error;
         }
       }
@@ -718,7 +725,7 @@ export class Runtime implements Snapshotable {
     invariant(inputId !== undefined, `execution ${executionId} 没有被 claim 的消息`);
     const input = this.message(inputId);
 
-    this.#ledger.releaseDriving(record.traceid, record.nodeId);
+    this.#ledger.releaseDriving(record.instance);
 
     const checked = checkBackendResult(executionId, raw);
     if (!checked.ok) {
@@ -726,7 +733,7 @@ export class Runtime implements Snapshotable {
     }
     return transact(this.#parts, () => {
       const result = this.#apply(record, input, checked.result);
-      this.#commit({ kind: "apply", traceid: record.traceid, executionId });
+      this.#commit({ kind: "apply", traceid: containerOf(record), executionId });
       return result;
     });
   }
@@ -738,7 +745,7 @@ export class Runtime implements Snapshotable {
     if (closed !== null) return closed;
     const inputId = record.claimed[0];
     invariant(inputId !== undefined, `execution ${executionId} 没有被 claim 的消息`);
-    this.#ledger.releaseDriving(record.traceid, record.nodeId);
+    this.#ledger.releaseDriving(record.instance);
     return this.#applyFailure(record, this.message(inputId), termination, reason);
   }
 
@@ -751,8 +758,7 @@ export class Runtime implements Snapshotable {
     if (record.status === "RUNNING") return null;
     return {
       consumed: record.claimed[0] ?? "",
-      traceid: record.traceid,
-      nodeId: record.nodeId,
+      instance: record.instance,
       reason: `结果作废：execution ${record.executionId} 已结束（${record.status}），迟到结果不改变已结算状态`,
       retrying: false,
     };
@@ -793,9 +799,10 @@ export class Runtime implements Snapshotable {
     const input = this.#pickWork((node) => node.agent !== undefined);
     if (input === null) return { kind: "idle" };
 
+    const site = input.target.instance;
     const traceid = containerOf(input.target);
-    const nodeId = lastSegment(input.target.instance);
-    if (this.#ledger.isDriving(traceid, nodeId)) return { kind: "idle" };
+    const nodeId = lastSegment(site);
+    if (this.#ledger.isDriving(site)) return { kind: "idle" };
 
     const instance = this.#registry.get(traceid);
     const template = this.#registry.template(traceid);
@@ -836,8 +843,7 @@ export class Runtime implements Snapshotable {
 
     const record: ExecutionRecord = Object.freeze({
       executionId,
-      traceid,
-      nodeId,
+      instance: site,
       status: "RUNNING" as const,
       claimed: [input.id],
       generation: instance.generation,
@@ -848,8 +854,7 @@ export class Runtime implements Snapshotable {
       node.budget === undefined ? {} : { tokenBudget: node.budget.tokens };
     const request: ExecutionRequest = {
       executionId,
-      traceid,
-      nodeId,
+      instance: site,
       agentSpec: node.agent ?? {},
       // 派生，不是记账 —— 见 ExecutionLedger.latestPerNode
       priorExecutions,
@@ -865,7 +870,7 @@ export class Runtime implements Snapshotable {
      * 的 busy 标记，那个 (实例, 节点) 从此再也不被调度 —— 而且悄无声息。
      * 推迟到"确定要执行"才置位，被拒的路径就不留残迹。
      */
-    this.#ledger.markDriving(traceid, nodeId);
+    this.#ledger.markDriving(site);
     return { kind: "claimed", record, input: this.message(input.id), request };
   }
 
@@ -899,7 +904,7 @@ export class Runtime implements Snapshotable {
      * 后果是真的：认领把消息退回 QUEUED 之后，迟到的 apply 照样落地、
      * 照样下发下游 —— 于是"两个 agent 改同一份东西"不需要崩溃就会发生。
      */
-    const instance = this.#registry.get(record.traceid);
+    const instance = this.#registry.get(containerOf(record));
     const stolen = record.claimed.filter((id) => {
       const m = this.#queue.has(id) ? this.#queue.get(id) : undefined;
       return m === undefined || m.state !== "CLAIMED";
@@ -908,8 +913,7 @@ export class Runtime implements Snapshotable {
       this.#settleExecution({ ...record, status: "VOIDED" }, result.diagnostics);
       return {
         consumed: record.claimed[0] ?? "",
-        traceid: record.traceid,
-        nodeId: record.nodeId,
+        instance: record.instance,
         reason:
           `结果作废：被 claim 的消息 ${stolen.join("、")} 已不再是 CLAIMED` +
           `（多半是被认领退回队列、或被截断丢弃）。迟到的结果不覆盖新的 claim`,
@@ -920,8 +924,7 @@ export class Runtime implements Snapshotable {
       this.#settleExecution({ ...record, status: "VOIDED" }, result.diagnostics);
       return {
         consumed: input.id,
-        traceid: record.traceid,
-        nodeId: record.nodeId,
+        instance: record.instance,
         reason:
           `结果作废：实例 generation ${record.generation} → ${instance.generation}` +
           `（状态 ${instance.status}）。迟到的 apply 必然失败，不复活已截断实例`,
@@ -941,9 +944,9 @@ export class Runtime implements Snapshotable {
     }
 
 
-    const template = this.#registry.template(record.traceid);
-    const node = template.nodes[record.nodeId];
-    invariant(node !== undefined, `节点 ${record.nodeId} 不存在`);
+    const template = this.#registry.template(containerOf(record));
+    const node = template.nodes[lastSegment(record.instance)];
+    invariant(node !== undefined, `节点 ${lastSegment(record.instance)} 不存在`);
 
     // 端口越界在 agent 路径是 INVALID_OUTPUT，**不是**编程错误：
     // backend 跑的是模型输出，属不可信边界。抛异常会让消息永久停在 CLAIMED、
@@ -954,7 +957,7 @@ export class Runtime implements Snapshotable {
         record,
         input,
         "INVALID_OUTPUT",
-        describeUndeclared(node, record.nodeId, offenders),
+        describeUndeclared(node, lastSegment(record.instance), offenders),
         result.usage,
         result.diagnostics,
       );
@@ -992,7 +995,7 @@ export class Runtime implements Snapshotable {
       try {
         namespaced.push({
           submission: artifact,
-          id: namespacedId(record.traceid, artifact.object_id),
+          id: namespacedId(containerOf(record), artifact.object_id),
         });
       } catch (error) {
         return this.#applyFailure(
@@ -1018,8 +1021,8 @@ export class Runtime implements Snapshotable {
     // 边写边校验会在中途失败时留下部分版本 —— 违反零部分提交。
     for (const { submission, id } of namespaced) {
       this.#store.put(id, submission.kind, submission.body, {
-        traceid: record.traceid,
-        node_id: record.nodeId,
+        traceid: containerOf(record),
+        node_id: lastSegment(record.instance),
         execution_id: record.executionId,
         derived_from: submission.derived_from,
       });
@@ -1033,7 +1036,7 @@ export class Runtime implements Snapshotable {
       termination: "DONE" as const,
       ...(result.usage === undefined ? {} : { usage: result.usage }),
     }, result.diagnostics);
-    this.#recordSnapshot(record.traceid, record.nodeId, [input.id], delivered, {
+    this.#recordSnapshot(containerOf(record), lastSegment(record.instance), [input.id], delivered, {
       execution: record.executionId,
       termination: result.termination,
       artifacts: (result.artifacts ?? []).map((a) => a.object_id),
@@ -1042,8 +1045,7 @@ export class Runtime implements Snapshotable {
 
     return {
       consumed: input.id,
-      traceid: record.traceid,
-      nodeId: record.nodeId,
+      instance: record.instance,
       delivered,
       dangling: outcome.plan.dangling,
       vars: {},
@@ -1076,8 +1078,7 @@ export class Runtime implements Snapshotable {
       this.#terminateMessage(input, "DISCARDED", reason);
       return {
         consumed: input.id,
-        traceid: record.traceid,
-        nodeId: record.nodeId,
+        instance: record.instance,
         reason,
         termination,
         retrying: false,
@@ -1089,8 +1090,7 @@ export class Runtime implements Snapshotable {
       this.#queue.replace(input.id, { state: "QUEUED", attempts, failure: reason });
       return {
         consumed: input.id,
-        traceid: record.traceid,
-        nodeId: record.nodeId,
+        instance: record.instance,
         reason,
         termination,
         retrying: true,
@@ -1099,8 +1099,7 @@ export class Runtime implements Snapshotable {
     this.#terminateMessage(input, "FAILED", reason, attempts);
     return {
       consumed: input.id,
-      traceid: record.traceid,
-      nodeId: record.nodeId,
+      instance: record.instance,
       reason: `${reason}（已重试 ${attempts} 次，放弃）`,
       termination,
       retrying: false,
@@ -1252,7 +1251,7 @@ export class Runtime implements Snapshotable {
     // 1. 取消在途 execution（best effort；真正保证靠第 0 步）
     let cancelledExecutions = 0;
     for (const rec of this.running()) {
-      if (rec.traceid !== trace) continue;
+      if (containerOf(rec) !== trace) continue;
       this.#settleExecution({ ...rec, status: "SETTLED", termination: "CANCELLED" });
       /**
        * 驱动标记也要放掉。
@@ -1265,7 +1264,7 @@ export class Runtime implements Snapshotable {
        * 抽 `ExecutionLedger` 时才看见：记录与标记本该同进同出，
        * 分散在两处写就会漏。
        */
-      this.#ledger.releaseDriving(rec.traceid, rec.nodeId);
+      this.#ledger.releaseDriving(rec.instance);
       void this.#backend?.cancel(rec.executionId).catch(() => undefined);
       cancelledExecutions += 1;
     }
@@ -1362,7 +1361,7 @@ export class Runtime implements Snapshotable {
       if (instance.status !== "OPEN") continue;
       const node = this.#registry.template(traceid).nodes[nodeId];
       if (node === undefined || !accept(node)) continue;
-      candidates.push({ message: msg, traceid, nodeId, position: candidates.length });
+      candidates.push({ message: msg, position: candidates.length });
       eligible.push(msg);
     }
     if (candidates.length === 0) return null;
@@ -1452,8 +1451,7 @@ export class Runtime implements Snapshotable {
     const settle = (termination: Termination): void => {
       this.#settleExecution({
         executionId,
-        traceid,
-        nodeId,
+        instance: input.target.instance,
         status: "SETTLED" as const,
         termination,
         claimed: [input.id],
@@ -1473,7 +1471,7 @@ export class Runtime implements Snapshotable {
     invariant(node.handler !== undefined, `节点 ${nodeId} 声明了 agent 段，走三段式而非同步路径`);
     const fn = this.#handlers.get(node.handler);
     invariant(fn !== undefined, `未注册的内置 handler：${node.handler}`);
-    const outputs = fn(prepared.vars, this.#handlerContext(traceid, nodeId, input));
+    const outputs = fn(prepared.vars, this.#handlerContext(traceid, input));
 
     assertDeclaredPorts(node, nodeId, outputs);
     for (const [portName, value] of Object.entries(outputs)) {
@@ -1495,8 +1493,7 @@ export class Runtime implements Snapshotable {
     this.#recordSnapshot(traceid, nodeId, [input.id], delivered, {}, executionId);
     return {
       consumed: input.id,
-      traceid,
-      nodeId,
+      instance: input.target.instance,
       delivered,
       dangling: outcome.plan.dangling,
       vars: prepared.portVars,
@@ -1534,7 +1531,7 @@ export class Runtime implements Snapshotable {
     if (orphans.length === 0) return [];
     return transact(this.#parts, () => {
       const out = orphans.map((r) => this.failAgentResult(r.executionId, "FAILED", reason));
-      this.#commit({ kind: "apply", traceid: orphans[0]!.traceid });
+      this.#commit({ kind: "apply", traceid: containerOf(orphans[0]!) });
       return out;
     });
   }
@@ -1608,11 +1605,11 @@ export class Runtime implements Snapshotable {
    * 内核保留 kind 仍然挡着 —— 受信不等于可以伪造 `run` / `annotation`，
    * 那会污染因果记录。
    */
-  #handlerContext(traceid: TraceId, nodeId: string, input: Message): HandlerContext {
+  #handlerContext(traceid: TraceId, input: Message): HandlerContext {
     const store = this.#store;
+    const nodeId = lastSegment(input.target.instance);
     return {
-      traceid,
-      nodeId,
+      instance: input.target.instance,
       port: input.target.port,
       ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
       read: (ref: Ref) => store.resolve(ref),
@@ -1794,8 +1791,7 @@ export class Runtime implements Snapshotable {
     this.#failMessage(input, reason);
     return {
       consumed: input.id,
-      traceid: containerOf(input.target),
-      nodeId: lastSegment(input.target.instance),
+      instance: input.target.instance,
       reason,
     };
   }

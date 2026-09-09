@@ -661,6 +661,46 @@ CLI `hertaloy send <dir> <instance> <port>`、场景文件 `send:`、MCP `send_m
 > 纪律：新补的用例，**必须把它要防的那个 bug 打回去看它变红**。
 > 「加了断言」和「断言走到了」是两回事。
 
+### 阶段 1b（执行地址那半）：执行位点也收成一段
+
+消息地址收完之后仓库处在一个不该久留的中间态：消息 `{instance, port}` 一段，
+执行 `{traceid, nodeId}` 两段。同一个概念两种写法并存，正是一路在删的形状。
+
+```
+ExecutionRecord / ExecutionFact / ExecutionRequest / HandlerContext
+StepResult / StepFailure / execLog / ExecutionLedger 的 driving 键
+```
+
+**收成一段的形式早就在代码里**：`ExecutionLedger` 有一个私有的
+`slot(traceid, nodeId)`，返回 `traceid/nodeId`，而 `#driving` 正是按它索引的。
+只是它没被当成"地址"。这一步做完，那个函数整个消失。
+
+删掉两处**纯冗余**（不是改名，是删）：
+
+- `Candidate.{traceid, nodeId}` —— `candidate.message.target.instance` 是同一个事实
+- `$exec` 正文里的 `node` —— 对象 id 就是 `<执行位点>/$exec`
+
+`HandlerContext.{traceid, nodeId}` 也一并收：全仓统计下来 `ctx.nodeId` 只被用过
+**一次**，`ctx.traceid` **零次**。两个字段几乎纯粹是接口面上的摆设。
+
+#### 一个编译器完全看不见的坑
+
+`packages/state/fixture-gen.mts` 不在任何 tsconfig 里。它的 backend 靠
+`req.nodeId === "review"` 分派"永不返回"：
+
+```ts
+if (req.nodeId === "review") return await new Promise(() => {});
+```
+
+字段没了之后这个比较恒为 false，**生成器一声不吭地产出了一份语义不同的夹具** ——
+`review` 从 RUNNING 变成两条 FAILED，`audit` 整个消失。而那份夹具的存在理由
+正是"刻意造出四种不同的命运"，落差没了它就不再测任何东西。
+
+是 scene 的三条用例把它抓住的（`expected 'failed' to be 'running'`）。
+
+> 纪律：改公共形状时，**tsconfig 之外的脚本要单独扫一遍**。
+> 那里的"绿"不是编译器给的，是没人问过。
+
 #### 顺带
 
 - `MessageQueue.liveFor` 删除 —— 阶段 0 勘察时就标记"只有自己的单测在用"，
@@ -674,5 +714,8 @@ CLI `hertaloy send <dir> <instance> <port>`、场景文件 `send:`、MCP `send_m
 
 - **957 passed / 7 skipped**（contracts 71 / kernel 324 / scene 66 / state 87 / cli 198 / mcp 19 / sandbox 192+7），
   7 个包 typecheck 通过，可达性 210 无孤儿。跳过的 7 项仍是 Docker daemon 未运行。
+- 地址收完之后全仓**一处两段执行地址都不剩**：`grep -rn "\.nodeId"` 只剩
+  模板遍历里的循环变量（`for (const nodeId of Object.keys(template.nodes))`），
+  那是模板内部的声明名，本来就不是地址。
 - 基准见 [2026-09-07-perf](./experiments/2026-09-07-perf/README.md)。
 

@@ -86,7 +86,13 @@ export function outstanding(facts: ObligationFacts): readonly Obligation[] {
 
   for (const e of facts.executions) {
     if (e.status !== "RUNNING") continue;
-    out.push({ kind: "execution", holder: e.traceid, key: e.executionId, originNode: e.nodeId });
+    // holder 仍是容器（L2）；执行位点自己在 `e.instance` 里
+    out.push({
+      kind: "execution",
+      holder: containerOf(e),
+      key: e.executionId,
+      originNode: lastSegment(e.instance),
+    });
   }
 
   for (const r of facts.requests) {

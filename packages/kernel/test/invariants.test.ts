@@ -38,7 +38,7 @@ describe("消息 CLAIMED ⟺ 存在引用它的 RUNNING 记录", () => {
         facts({
           messages: [msg("msg-1", "CLAIMED")],
           executions: [
-            { executionId: "exec-1", traceid: "job-1", nodeId: "n", status: "RUNNING", claimed: ["msg-1"] },
+            { executionId: "exec-1", instance: "job-1/n", status: "RUNNING", claimed: ["msg-1"] },
           ],
         }),
       ),
@@ -55,7 +55,7 @@ describe("消息 CLAIMED ⟺ 存在引用它的 RUNNING 记录", () => {
       facts({
         messages: [msg("msg-1", "CONSUMED")],
         executions: [
-          { executionId: "exec-1", traceid: "job-1", nodeId: "n", status: "RUNNING", claimed: ["msg-1"] },
+          { executionId: "exec-1", instance: "job-1/n", status: "RUNNING", claimed: ["msg-1"] },
         ],
       }),
     );
@@ -67,7 +67,7 @@ describe("消息 CLAIMED ⟺ 存在引用它的 RUNNING 记录", () => {
       stateProblems(
         facts({
           executions: [
-            { executionId: "exec-1", traceid: "job-1", nodeId: "n", status: "RUNNING", claimed: ["msg-9"] },
+            { executionId: "exec-1", instance: "job-1/n", status: "RUNNING", claimed: ["msg-9"] },
           ],
         }),
       ),
@@ -85,8 +85,8 @@ describe("★ 一条消息至多被一条 RUNNING 记录 claim", () => {
       facts({
         messages: [msg("msg-1", "CLAIMED")],
         executions: [
-          { executionId: "exec-1", traceid: "job-1", nodeId: "n", status: "RUNNING", claimed: ["msg-1"] },
-          { executionId: "exec-2", traceid: "job-1", nodeId: "n", status: "RUNNING", claimed: ["msg-1"] },
+          { executionId: "exec-1", instance: "job-1/n", status: "RUNNING", claimed: ["msg-1"] },
+          { executionId: "exec-2", instance: "job-1/n", status: "RUNNING", claimed: ["msg-1"] },
         ],
       }),
     );
@@ -103,8 +103,8 @@ describe("★ 一条消息至多被一条 RUNNING 记录 claim", () => {
         facts({
           messages: [msg("msg-1", "CLAIMED")],
           executions: [
-            { executionId: "exec-1", traceid: "job-1", nodeId: "n", status: "SETTLED", claimed: ["msg-1"] },
-            { executionId: "exec-2", traceid: "job-1", nodeId: "n", status: "RUNNING", claimed: ["msg-1"] },
+            { executionId: "exec-1", instance: "job-1/n", status: "SETTLED", claimed: ["msg-1"] },
+            { executionId: "exec-2", instance: "job-1/n", status: "RUNNING", claimed: ["msg-1"] },
           ],
         }),
       ),
@@ -117,8 +117,8 @@ describe("★ 一条消息至多被一条 RUNNING 记录 claim", () => {
         facts({
           messages: [msg("msg-1", "CLAIMED")],
           executions: [
-            { executionId: "exec-1", traceid: "job-1", nodeId: "n", status: "VOIDED", claimed: ["msg-1"] },
-            { executionId: "exec-2", traceid: "job-1", nodeId: "n", status: "RUNNING", claimed: ["msg-1"] },
+            { executionId: "exec-1", instance: "job-1/n", status: "VOIDED", claimed: ["msg-1"] },
+            { executionId: "exec-2", instance: "job-1/n", status: "RUNNING", claimed: ["msg-1"] },
           ],
         }),
       ),
@@ -135,7 +135,7 @@ describe("TERMINAL 的实例不该还背着东西", () => {
         instances: [dead],
         messages: [msg("msg-1", "QUEUED", "job-1/c1"), msg("msg-2", "CLAIMED", "job-1/c1")],
         executions: [
-          { executionId: "exec-1", traceid: "job-1/c1", nodeId: "n", status: "RUNNING", claimed: ["msg-2"] },
+          { executionId: "exec-1", instance: "job-1/c1/n", status: "RUNNING", claimed: ["msg-2"] },
         ],
       }),
     );

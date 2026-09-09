@@ -60,8 +60,8 @@ export interface MessageFact {
  */
 export interface ExecutionFact {
   readonly executionId: string;
-  readonly traceid: TraceId;
-  readonly nodeId: string;
+  /** 执行位点 —— 节点自己的实例路径，一段（V6 阶段 1b）。 */
+  readonly instance: TraceId;
   readonly status: string;
   /** 被 claim 的消息集合 —— 冲突域的一半。 */
   readonly claimed: readonly string[];

@@ -149,7 +149,7 @@ export function locateSandbox(prefix: string, id: string): string {
       if (JSON.parse(readFileSync(marker, "utf8")).id === id) return found;
     } else {
       const request = JSON.parse(readFileSync(join(found, "box/.hertaloy/request.json"), "utf8"));
-      const parts = [request.traceid, request.nodeId, request.executionId];
+      const parts = [request.instance, request.executionId];
       if (parts.every((part) => typeof part === "string") && parts.join("/") === id) return found;
     }
   } catch { /* 损坏或缺少身份时保留现场，不猜测。 */ }
