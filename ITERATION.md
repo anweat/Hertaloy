@@ -741,3 +741,66 @@ cli 两处，每处都是 `Object.keys(template(t).nodes)` 之后自己拼 `${t}
   那是模板内部的声明名，本来就不是地址。
 - 基准见 [2026-09-07-perf](./experiments/2026-09-07-perf/README.md)。
 
+
+---
+
+# 漂移登记表（自 ONESHOT.md §8 迁入，2026-09-12）
+
+> ONESHOT.md 于本日重写为自包含的架构规格，原 §8 这本账没有落点了 ——
+> 而它是**活账**不是历史，所以迁到这里继续挂。三类原样带过来：
+>
+> - **A 类 = 改代码**（声明了没走通）。12 条，全在沙箱侧，未动。
+> - **B 类 = 改文档**（代码对了文档旧了）。B-1…B-6 指向 `FOUNDATION_V5.md`，
+>   而它已降为设计史，这几条随之作废；**B-7 是真缺口**（默认镜像无 node），
+>   留着。
+> - **C 类 = 欠账**（设计上就还没做）。其中 C-4（队头阻塞）归 MODEL.md §12 轨 A
+>   的"队列按端口分"，C-5（`runtime.ts` 超 800 行）今天已是 1831 行，
+>   C-10（agent 侧读工具）按 MODEL.md §8.4 改为"注入期预绑"解决，不补工具。
+>
+> 每条处置后从表中划掉。
+
+### A 类：声明 ↔ 事实漂移（改代码，先于 API 冻结）
+
+| # | 漂移 | 位置 | 修法 |
+|---|---|---|---|
+| A-1 | `capabilities.retain` 不生效且两处判定矛盾：diagnostics 用 `caps?.retain ?? #retain`，finally 里真正删除只用 `#retain`。声明 "always" 会被删 → 下游 `workspace.from` 当场炸，而 `$exec` 还指着已删路径 | sandbox/backend.ts:388 vs :425 | finally 改为同一条 `caps?.retain ?? this.#retain` |
+| A-2 | docker `internal` 网络双线断裂：(a) 设计说内网名按根 traceid，实现 CLI 从不传 `networkName`，全部 run 共享 `hertaloy-default`，跨 run 隔离不成立；(b) 节点 `capabilities.network:"internal"` 覆盖而 runner 缺省 "none" 时从不 `ensureInternalNetwork`，docker run 直接失败 | cli/main.ts:251, sandbox/docker.ts:97,107 | backend 按根 traceid 传名；run() 遇 internal 时 ensure |
+| A-3 | WSL 超时/取消 `pkill -9 -f <argv>` 全发行版模式匹配：并行同命令沙箱互相误杀；argv 未正则转义 | sandbox/wsl.ts:128 | 记录子进程 PGID 按组杀，或写 PID 文件 |
+| A-4 | usage 恒零：`inTokens/outTokens/costUsd/toolCalls` 硬编码 0。token 预算对 agent 路径无测量，B1 的运行期一半对 agent 真空；成本失控在观测上隐形 | sandbox/backend.ts:412 | 至少自家 agent 从 OpenAI 响应捞 usage；外部 CLI 解析其输出或如实标"不可得" |
+| A-5 | 无默认墙钟上限 + cancel best effort：编排进程崩溃后容器照跑，未声明 wallClock 的执行永久烧钱 | sandbox/backend.ts:348 | backend 构造参数给默认上限；节点声明可覆盖 |
+| A-6 | 配置错误落可重试档：别名配错/agentSpec 非法是确定错，却只能落 FAILED/INVALID_OUTPUT（都按 maxAttempts 重试）。§14.6 第三类"不重试·确定错"在枚举里没落点 | sandbox/backend.ts:240 | Termination 加 `CONFIG`（NON_RETRYABLE），或注册期更严 |
+| A-7 | 产物名去扩展名边角：`.gitignore`→空名整次 INVALID_OUTPUT；`a.txt`/`a.md` 撞名静默合并版本 | sandbox/backend.ts:371 | 空名当场拒并说明；保留扩展名或撞名报警 |
+| A-8 | `safeId` 把非 `[A-Za-z0-9_.-]` 全压成 `-`：`a/b` 与 `a-b` 撞名，确定性路径互相顶掉 | sandbox/runner.ts:113 | 编码改成可逆转义（如 `_x2F_`） |
+| A-9 | 同步 `execFileSync`（git 基线/diff/docker CLI）阻塞单进程事件循环：大仓基线冻结全部在途 agent 的超时定时器 | sandbox/runner.ts:236, docker.ts:254, observe.ts | 改 execFile async，或文档明示单进程边界 |
+| A-10 | Windows 上 local runner 起不了外部 CLI：`spawn(cmd,{shell:false})` 不能执行 `.cmd` shim（Node ≥20.12 限制），claude/codex 在 Windows 正是 .cmd | sandbox/runner.ts:249 | Windows 下 local 对 `.cmd` 走 `cmd /c` 或 doctor 明示用 wsl |
+| A-11 | emit.json 与 journal 混用时 emit.json 整体被忽略，丢端口不报警 | sandbox/backend.ts:369 | 两源并集 + 冲突报警，或文档明示互斥 |
+| A-12 | `vars.json` 被 writeContext 与 profile render 写两遍（后者覆盖前者） | sandbox/backend.ts:267, profile.ts | 收归 profile 一处产出 |
+
+### B 类：文档 ↔ 代码漂移（改文档，以代码为准）
+
+| # | 漂移 | 位置 |
+|---|---|---|
+| B-1 | §14.1–14.4 标 📋（未实现），实际 sandbox 包已全部完成并有测试 | FOUNDATION_V5.md §14 |
+| B-2 | §12「观察」标 📋，`observe.ts` 已实现 | FOUNDATION_V5.md §12 |
+| B-3 | §17.16 reclaim 标"需要"，`state-commands.ts:520` 已实现 | FOUNDATION_V5.md §17.16 |
+| B-4 | 剧本帧 9 标"agent 侧待沙箱"，沙箱已落地 | FOUNDATION_V5.md §2 |
+| B-5 | §16 表"首要不变量：内核工具未做"，toolkit 已有 emit/progress（仍缺 read_artifact 类，如实改标 🚧） | FOUNDATION_V5.md §16 |
+| B-6 | §14.5 docker 行标 ✅，但 internal 网络实际断裂（A-2）——✅ 标记本身失真 | FOUNDATION_V5.md §14.5 |
+| B-7 | `hertaloy agent` 默认 docker 镜像 `alpine/git` 无 node：toolkit 与自家 agent 在默认镜像下全死，文档未声明镜像要求 | sandbox/docker.ts:54 |
+
+### C 类：欠账（设计已认，未做）
+
+| # | 项 | 出处 | 建议归宿 |
+|---|---|---|---|
+| C-1 | 执行租约（孤儿判定窗口只是关小未关闭；跨进程驱动与工作区继承的内存记账矛盾） | §21.2/§21.4 | 阶段 2（见 §9） |
+| C-2 | 帧 14 有测量无强制 | §21.6 | 等真实膨胀案例 |
+| C-3 | `run`/`settleAll` 的 scope 只授权不限范围 | §21.4 | 阶段 1 |
+| C-4 | `#pickWork` 队头阻塞（busy 节点不跳过） | §21.4 | 阶段 2 |
+| C-5 | `runtime.ts` 1497 行超 800 约定 | §21.4 | 阶段 1（封装时拆） |
+| C-6 | 真 kill -9 的耐久验证 | §18 | 阶段 2 验收 |
+| C-7 | executionId 每 Runtime 从 exec-1 起（非全局唯一，靠 traceid 拼接补救） | sandbox/runner.ts:126 注释 | 阶段 2 改 ULID/UUID |
+| C-8 | ExecutionLimits.wallClockSeconds 与 capabilities.wallClockSeconds 双旋钮语义重叠 | contracts/execution.ts, sandbox/agent-spec.ts | 阶段 2 归并 |
+| C-9 | 单镜像 backend：一个 run 内异构节点环境无法共存；AgentSpec 无 image 字段 | sandbox/docker.ts:95 | 外展期按需 |
+| C-10 | agent 侧内核工具只有 emit/progress（read_artifact 等未做） | sandbox/toolkit.ts | 外展期 |
+
+---

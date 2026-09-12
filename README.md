@@ -4,11 +4,13 @@
 
 ## 当前基线
 
-- **概念入口：[MODEL.md](./MODEL.md)** —— 单一概念基线，读这一篇就够
+- **概念入口：[MODEL.md](./MODEL.md)** —— 单一概念基线（带论证、挂代码位置、含迁移路线）
+- **架构规格：[ONESHOT.md](./ONESHOT.md)** —— 自包含的设计指导，一次读完；
+  §11「不许做的事」是一张可直接用来评审提案的清单
 - 开发指南：[DEVELOPING.md](./DEVELOPING.md) —— 每条都对应一次真踩过的坑
-- 迭代约定与修复台账：[ITERATION.md](./ITERATION.md)
-- 设计史：[ONESHOT.md](./ONESHOT.md) · [V6_MODEL.md](./V6_MODEL.md) ·
-  [FOUNDATION_V5.md](./FOUNDATION_V5.md) · [V5_WORKPLAN.md](./V5_WORKPLAN.md)
+- 迭代台账与**漂移登记表**：[ITERATION.md](./ITERATION.md)
+- 设计史：[V6_MODEL.md](./V6_MODEL.md) · [FOUNDATION_V5.md](./FOUNDATION_V5.md) ·
+  [V5_WORKPLAN.md](./V5_WORKPLAN.md)
 - 历史资料与旧实现索引：[archive/README.md](./archive/README.md)
 
 第十一次归约（节点即容器）删掉了节点、边、`entry`/`exit`、两个判别式以及不变量
