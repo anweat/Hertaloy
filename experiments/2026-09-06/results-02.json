@@ -1,0 +1,54 @@
+{
+  "at": "2026-09-06T10:51:58.118Z",
+  "commit": "81f622f9d393ddede4dab30bee7955c59316d543",
+  "runtime": "v24.14.0",
+  "stateRoot": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-interface-probe-Xy8G4n",
+  "modelCalls": 0,
+  "results": [
+    {
+      "name": "02-validation-and-adapter-parity",
+      "observed": {
+        "missingDependency": {
+          "validate": {
+            "text": "合法：0 个节点，0 条边，1 个子槽。",
+            "code": 0
+          },
+          "define": {
+            "text": "已注册 missing-parent@1",
+            "isError": false
+          },
+          "spawn": "InvariantError: 未知版本 missing@1",
+          "withEntry": {
+            "text": "模板 missing-with-entry 连接期校验失败：\n  children.workers.template：子模板 missing@1 无法解析为合法容器模板",
+            "isError": true
+          }
+        },
+        "invalidAgent": {
+          "validate": {
+            "text": "连接期校验失败：\n  nodes.worker.agent：nodes.worker.agent.workspace.source：Expected string, received number",
+            "code": 1
+          },
+          "mcpDefine": {
+            "text": "已注册 invalid-agent@1",
+            "isError": false
+          },
+          "checkedDefine": "InvariantError: 模板 invalid-agent 连接期校验失败：\n  nodes.worker.agent：nodes.worker.agent.workspace.source：Expected string, received number"
+        },
+        "unknownHandler": {
+          "validate": {
+            "text": "合法：1 个节点，0 条边，0 个子槽。",
+            "code": 0
+          },
+          "define": {
+            "text": "已注册 unknown-handler@1",
+            "isError": false
+          }
+        },
+        "malformedOverlay": {
+          "text": "覆盖层：结构合法。合并结果需要基定义才能校验，请用 `run` 或 `define`。",
+          "code": 0
+        }
+      }
+    }
+  ]
+}

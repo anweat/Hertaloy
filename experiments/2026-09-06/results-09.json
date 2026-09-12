@@ -1,0 +1,147 @@
+{
+  "at": "2026-09-06T10:52:35.984Z",
+  "commit": "81f622f9d393ddede4dab30bee7955c59316d543",
+  "runtime": "v24.14.0",
+  "stateRoot": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-interface-probe-Z3osas",
+  "modelCalls": 0,
+  "results": [
+    {
+      "name": "09-real-wsl-execution-through-cli-driver",
+      "observed": {
+        "command": {
+          "text": "提交 2 次，失败 0 次，终结 1 个实例。\n可用内置 handler：branch, collect, echo, loop, noop, route",
+          "code": 0,
+          "data": {
+            "converged": true,
+            "committed": 2,
+            "failed": 0,
+            "retried": 0,
+            "settled": [
+              "probe-z3osas"
+            ],
+            "failures": [],
+            "executionFace": "configured"
+          }
+        },
+        "details": {
+          "status": {
+            "traceid": "probe-z3osas",
+            "templateRef": "root@1",
+            "status": "TERMINAL",
+            "bindings": [],
+            "generation": 0,
+            "seq": 2
+          },
+          "records": [
+            {
+              "executionId": "exec-1",
+              "traceid": "probe-z3osas",
+              "nodeId": "worker",
+              "status": "SETTLED",
+              "claimed": [
+                "msg-1"
+              ],
+              "generation": 0,
+              "termination": "DONE",
+              "usage": {
+                "inTokens": 0,
+                "outTokens": 0,
+                "costUsd": 0,
+                "wallClockSeconds": 0.186,
+                "toolCalls": 0,
+                "compactions": 0
+              }
+            }
+          ],
+          "execution": [
+            {
+              "object_id": "probe-z3osas/$exec",
+              "version": 1,
+              "kind": "execution",
+              "content_hash": "10e5e17f810dac4e4a8fa825f2b98d8876c80b0a5a654db7de20b18325a16c8e",
+              "body": {
+                "execution_id": "exec-1",
+                "node": "worker",
+                "termination": "DONE",
+                "usage": {
+                  "inTokens": 0,
+                  "outTokens": 0,
+                  "costUsd": 0,
+                  "wallClockSeconds": 0.186,
+                  "toolCalls": 0,
+                  "compactions": 0
+                },
+                "diagnostics": {
+                  "runner": "wsl",
+                  "isolates": true,
+                  "networkEnforced": false,
+                  "exitCode": 0,
+                  "stdoutTail": "",
+                  "stderrTail": "w\u0000s\u0000l\u0000:\u0000 \u0000�hKm0R \u0000l\u0000o\u0000c\u0000a\u0000l\u0000h\u0000o\u0000s\u0000t\u0000 \u0000�N\u0006tM�n\f�FO*g\\��P0R \u0000W\u0000S\u0000L\u0000\u00020N\u0000A\u0000T\u0000 \u0000!j\u000f_\u000bN�v \u0000W\u0000S\u0000L\u0000 \u0000\rN/e\u0001c \u0000l\u0000o\u0000c\u0000a\u0000l\u0000h\u0000o\u0000s\u0000t\u0000 \u0000�N\u0006t\u00020\r\u0000\n\u0000",
+                  "sandbox": {
+                    "path": "\\\\wsl.localhost\\Ubuntu\\tmp\\hertaloy-box-probe-z3osas-worker-exec-1",
+                    "retained": false
+                  },
+                  "capabilities": {
+                    "network": "wsl"
+                  },
+                  "observation": {
+                    "changes": [
+                      {
+                        "status": "A",
+                        "path": "result.txt"
+                      }
+                    ],
+                    "insertions": 1,
+                    "deletions": 0,
+                    "snapshot": "955b6634f946de65fc76b973e7ad8f1818b08d0a",
+                    "ref": "refs/hertaloy/snapshots/exec-1"
+                  }
+                }
+              },
+              "provenance": {
+                "traceid": "probe-z3osas",
+                "node_id": "worker",
+                "execution_id": "exec-1",
+                "derived_from": []
+              }
+            }
+          ],
+          "messages": [
+            {
+              "target": {
+                "traceid": "probe-z3osas",
+                "node": "worker",
+                "port": "in"
+              },
+              "payload": {
+                "value": "probe"
+              },
+              "id": "msg-1",
+              "state": "CONSUMED",
+              "attempts": 0
+            },
+            {
+              "target": {
+                "traceid": "probe-z3osas",
+                "node": "sink",
+                "port": "in"
+              },
+              "payload": {
+                "value": "from Linux"
+              },
+              "source": {
+                "traceid": "probe-z3osas",
+                "node": "worker",
+                "port": "out"
+              },
+              "id": "msg-2",
+              "state": "CONSUMED",
+              "attempts": 0
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

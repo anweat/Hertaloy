@@ -1,0 +1,43 @@
+{
+  "at": "2026-09-06T10:51:59.802Z",
+  "commit": "81f622f9d393ddede4dab30bee7955c59316d543",
+  "runtime": "v24.14.0",
+  "stateRoot": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-interface-probe-rHkhtO",
+  "modelCalls": 0,
+  "results": [
+    {
+      "name": "11-message-retention-versus-replay",
+      "observed": {
+        "sent": 600,
+        "produced": 600,
+        "retainedMessages": 399,
+        "firstMessage": "InvariantError: 未知消息：msg-1",
+        "oldOutputCauses": [
+          "msg-1"
+        ],
+        "firstCommit": {
+          "object_id": "job/$run",
+          "version": 1,
+          "kind": "run",
+          "content_hash": "0633543ab2d1319dfa2fad0e68401ff4b623c386ce544628492d8c7429ce5319",
+          "body": {
+            "seq": 1,
+            "node": "echo",
+            "consumed": [
+              "msg-1"
+            ],
+            "produced": [
+              "msg-2"
+            ]
+          },
+          "provenance": {
+            "traceid": "job",
+            "node_id": "echo",
+            "derived_from": []
+          }
+        },
+        "snapshotCount": 1200
+      }
+    }
+  ]
+}

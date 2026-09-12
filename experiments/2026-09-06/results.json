@@ -1,0 +1,1154 @@
+{
+  "at": "2026-09-06T10:48:26.272Z",
+  "commit": "81f622f9d393ddede4dab30bee7955c59316d543",
+  "runtime": "v24.14.0",
+  "stateRoot": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-interface-probe-49jnoX",
+  "modelCalls": 0,
+  "results": [
+    {
+      "name": "01-template-library-and-version-pinning",
+      "observed": {
+        "defined": {
+          "text": "已注册 worker@1",
+          "isError": false
+        },
+        "savedWithoutRun": true,
+        "templatesBeforeRoot": {},
+        "templatesAfterRoot": [
+          "root@1",
+          "worker@1"
+        ],
+        "pinning": {
+          "rootPinned": "root@1",
+          "rootHead": "root@2",
+          "firstChild": "worker@1",
+          "laterChild": "worker@1",
+          "workerHead": "worker@2",
+          "overlay": {
+            "object_id": "worker-variant",
+            "version": 1,
+            "kind": "materialized",
+            "content_hash": "623413e674deba631f5e876cd2f393360b2e45b4df56453af8d1989cdb55cad9",
+            "body": {
+              "nodes": {
+                "work": {
+                  "kind": "handler",
+                  "handler": "noop",
+                  "ports": {
+                    "in": {
+                      "direction": "receive"
+                    }
+                  }
+                }
+              },
+              "edges": {},
+              "children": {},
+              "bindings": [],
+              "selfBindings": []
+            },
+            "provenance": {
+              "derived_from": [
+                "worker@2"
+              ]
+            }
+          },
+          "secondRoot": "InvariantError: 根容器唯一且已存在：job。子工作流应经 spawn 从已声明的 children 槽创建"
+        },
+        "recovered": {
+          "root": "root@1",
+          "child": "worker@1"
+        }
+      }
+    },
+    {
+      "name": "02-validation-and-adapter-parity",
+      "observed": {
+        "missingDependency": {
+          "validate": {
+            "text": "合法：0 个节点，0 条边，1 个子槽。",
+            "code": 0
+          },
+          "define": {
+            "text": "已注册 missing-parent@1",
+            "isError": false
+          }
+        },
+        "invalidAgent": {
+          "validate": {
+            "text": "连接期校验失败：\n  nodes.worker.agent：nodes.worker.agent.workspace.source：Expected string, received number",
+            "code": 1
+          },
+          "mcpDefine": {
+            "text": "已注册 invalid-agent@1",
+            "isError": false
+          },
+          "checkedDefine": "InvariantError: 模板 invalid-agent 连接期校验失败：\n  nodes.worker.agent：nodes.worker.agent.workspace.source：Expected string, received number"
+        },
+        "unknownHandler": {
+          "validate": {
+            "text": "合法：1 个节点，0 条边，0 个子槽。",
+            "code": 0
+          },
+          "define": {
+            "text": "已注册 unknown-handler@1",
+            "isError": false
+          }
+        },
+        "malformedOverlay": {
+          "text": "覆盖层：结构合法。合并结果需要基定义才能校验，请用 `run` 或 `define`。",
+          "code": 0
+        }
+      }
+    },
+    {
+      "name": "03-aggregation-causality-and-read-model",
+      "observed": {
+        "before": {
+          "root": "job-1",
+          "permissions": "default",
+          "instances": [
+            {
+              "traceid": "job-1",
+              "status": "OPEN",
+              "seq": 0,
+              "generation": 0,
+              "blockers": [
+                "3 条待处理消息"
+              ]
+            }
+          ],
+          "locks": [],
+          "queued": [
+            {
+              "id": "msg-1",
+              "traceid": "job-1",
+              "node": "gather",
+              "port": "in"
+            },
+            {
+              "id": "msg-2",
+              "traceid": "job-1",
+              "node": "gather",
+              "port": "in"
+            },
+            {
+              "id": "msg-3",
+              "traceid": "job-1",
+              "node": "gather",
+              "port": "in"
+            }
+          ],
+          "claimed": [],
+          "running": [],
+          "deadlocks": [],
+          "retainedSandboxes": 0
+        },
+        "run": {
+          "text": "提交 4 次，失败 0 次，终结 1 个实例。\n（未配置执行面：agent 节点不会被推进，见 --runner）\n可用内置 handler：branch, collect, echo, loop, noop, route",
+          "code": 0,
+          "data": {
+            "converged": true,
+            "committed": 4,
+            "failed": 0,
+            "retried": 0,
+            "settled": [
+              "job-1"
+            ],
+            "failures": [],
+            "executionFace": null
+          }
+        },
+        "after": {
+          "root": "job-1",
+          "permissions": "default",
+          "instances": [
+            {
+              "traceid": "job-1",
+              "status": "TERMINAL",
+              "seq": 4,
+              "generation": 0,
+              "blockers": []
+            }
+          ],
+          "locks": [],
+          "queued": [],
+          "claimed": [],
+          "running": [],
+          "deadlocks": [],
+          "retainedSandboxes": 0
+        },
+        "detail": {
+          "outputMessage": {
+            "target": {
+              "traceid": "job-1",
+              "node": "sink",
+              "port": "in"
+            },
+            "payload": {
+              "parts": [
+                "a",
+                "b",
+                "c"
+              ]
+            },
+            "source": {
+              "traceid": "job-1",
+              "node": "gather",
+              "port": "done"
+            },
+            "id": "msg-4",
+            "state": "CONSUMED",
+            "attempts": 0
+          },
+          "causes": [
+            "msg-3"
+          ],
+          "snapshots": [
+            {
+              "object_id": "job-1/$run",
+              "version": 1,
+              "kind": "run",
+              "content_hash": "9b67910d682b85755ee125f91661e1a3e1986640ee44197119a375ef5af23112",
+              "body": {
+                "seq": 1,
+                "node": "gather",
+                "consumed": [
+                  "msg-1"
+                ],
+                "produced": []
+              },
+              "provenance": {
+                "traceid": "job-1",
+                "node_id": "gather",
+                "derived_from": []
+              }
+            },
+            {
+              "object_id": "job-1/$run",
+              "version": 2,
+              "kind": "run",
+              "content_hash": "50972869a42da6d1d778fba2da9f869b37e96d18935dba617912279369344066",
+              "body": {
+                "seq": 2,
+                "node": "gather",
+                "consumed": [
+                  "msg-2"
+                ],
+                "produced": []
+              },
+              "provenance": {
+                "traceid": "job-1",
+                "node_id": "gather",
+                "derived_from": []
+              }
+            },
+            {
+              "object_id": "job-1/$run",
+              "version": 3,
+              "kind": "run",
+              "content_hash": "a7772b311c9a68493dc392660a8dd94ae13d8b14c324bc8e09ca1afa5cf4d9d3",
+              "body": {
+                "seq": 3,
+                "node": "gather",
+                "consumed": [
+                  "msg-3"
+                ],
+                "produced": [
+                  "msg-4"
+                ]
+              },
+              "provenance": {
+                "traceid": "job-1",
+                "node_id": "gather",
+                "derived_from": []
+              }
+            },
+            {
+              "object_id": "job-1/$run",
+              "version": 4,
+              "kind": "run",
+              "content_hash": "4c6cc4883dcd68015e5a33d78be5beb9388983c61846a0c6022bb5a3075fd499",
+              "body": {
+                "seq": 4,
+                "node": "sink",
+                "consumed": [
+                  "msg-4"
+                ],
+                "produced": []
+              },
+              "provenance": {
+                "traceid": "job-1",
+                "node_id": "sink",
+                "derived_from": []
+              }
+            }
+          ],
+          "objects": [
+            {
+              "id": "job-1/$run",
+              "version": 1,
+              "kind": "run"
+            },
+            {
+              "id": "job-1/$run",
+              "version": 2,
+              "kind": "run"
+            },
+            {
+              "id": "job-1/$run",
+              "version": 3,
+              "kind": "run"
+            },
+            {
+              "id": "job-1/$run",
+              "version": 4,
+              "kind": "run"
+            },
+            {
+              "id": "job-1/parts",
+              "version": 1,
+              "kind": "part"
+            },
+            {
+              "id": "job-1/parts",
+              "version": 2,
+              "kind": "part"
+            },
+            {
+              "id": "job-1/parts",
+              "version": 3,
+              "kind": "part"
+            },
+            {
+              "id": "root",
+              "version": 1,
+              "kind": "root_config"
+            }
+          ],
+          "projection": {
+            "root": "job-1",
+            "instances": {
+              "job-1": {
+                "traceid": "job-1",
+                "templateRef": "root@1",
+                "status": "TERMINAL",
+                "bindings": []
+              }
+            },
+            "templates": {
+              "root@1": {
+                "nodes": {
+                  "gather": {
+                    "kind": "handler",
+                    "handler": "collect",
+                    "ports": {
+                      "in": {
+                        "direction": "receive",
+                        "servo": {
+                          "vars": {
+                            "value": {
+                              "type": "short",
+                              "from": "$.value"
+                            },
+                            "expect": {
+                              "type": "short",
+                              "from": "$.expect"
+                            }
+                          }
+                        }
+                      },
+                      "done": {
+                        "direction": "emit"
+                      }
+                    }
+                  },
+                  "sink": {
+                    "kind": "handler",
+                    "handler": "noop",
+                    "ports": {
+                      "in": {
+                        "direction": "receive"
+                      }
+                    }
+                  }
+                },
+                "edges": {
+                  "e1": {
+                    "from": {
+                      "node": "gather",
+                      "port": "done"
+                    },
+                    "to": {
+                      "node": "sink",
+                      "port": "in"
+                    }
+                  }
+                },
+                "children": {},
+                "bindings": [],
+                "selfBindings": []
+              }
+            },
+            "messages": [
+              {
+                "id": "msg-1",
+                "target": {
+                  "traceid": "job-1",
+                  "node": "gather",
+                  "port": "in"
+                },
+                "state": "CONSUMED"
+              },
+              {
+                "id": "msg-2",
+                "target": {
+                  "traceid": "job-1",
+                  "node": "gather",
+                  "port": "in"
+                },
+                "state": "CONSUMED"
+              },
+              {
+                "id": "msg-3",
+                "target": {
+                  "traceid": "job-1",
+                  "node": "gather",
+                  "port": "in"
+                },
+                "state": "CONSUMED"
+              },
+              {
+                "id": "msg-4",
+                "target": {
+                  "traceid": "job-1",
+                  "node": "sink",
+                  "port": "in"
+                },
+                "state": "CONSUMED",
+                "source": {
+                  "traceid": "job-1",
+                  "node": "gather",
+                  "port": "done"
+                }
+              }
+            ],
+            "records": [],
+            "objects": [
+              {
+                "object_id": "job-1/$run",
+                "kind": "run",
+                "version": 1
+              },
+              {
+                "object_id": "job-1/$run",
+                "kind": "run",
+                "version": 2
+              },
+              {
+                "object_id": "job-1/$run",
+                "kind": "run",
+                "version": 3
+              },
+              {
+                "object_id": "job-1/$run",
+                "kind": "run",
+                "version": 4
+              },
+              {
+                "object_id": "job-1/parts",
+                "kind": "part",
+                "version": 1
+              },
+              {
+                "object_id": "job-1/parts",
+                "kind": "part",
+                "version": 2
+              },
+              {
+                "object_id": "job-1/parts",
+                "kind": "part",
+                "version": 3
+              }
+            ],
+            "locks": []
+          }
+        },
+        "why": {
+          "text": "msg-4 的前因：\n  ← msg-3",
+          "code": 0,
+          "data": {
+            "messageId": "msg-4",
+            "causes": [
+              "msg-3"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "04-request-reply-versus-ordinary-callback-send",
+      "observed": {
+        "requestStep": {
+          "consumed": "msg-1",
+          "traceid": "job/asker",
+          "nodeId": "work",
+          "delivered": [
+            "msg-2"
+          ],
+          "dangling": [],
+          "vars": {
+            "q": "probe"
+          }
+        },
+        "before": [
+          {
+            "id": "lock-1",
+            "holder": "job/asker",
+            "kind": "request",
+            "key": "req-1",
+            "since": 1,
+            "waitingOn": "job/service",
+            "originNode": "work"
+          }
+        ],
+        "manual": "msg-3",
+        "afterOrdinarySend": [
+          {
+            "id": "lock-1",
+            "holder": "job/asker",
+            "kind": "request",
+            "key": "req-1",
+            "since": 1,
+            "waitingOn": "job/service",
+            "originNode": "work"
+          }
+        ],
+        "replyStep": {
+          "consumed": "msg-2",
+          "traceid": "job/service",
+          "nodeId": "serve",
+          "delivered": [
+            "msg-4"
+          ],
+          "dangling": [],
+          "vars": {
+            "q": "probe"
+          }
+        },
+        "afterReply": [],
+        "pending": [
+          {
+            "target": {
+              "traceid": "job/asker",
+              "node": "work",
+              "port": "got"
+            },
+            "payload": {
+              "a": "human supplied"
+            },
+            "id": "msg-3",
+            "state": "QUEUED",
+            "attempts": 0
+          },
+          {
+            "target": {
+              "traceid": "job/asker",
+              "node": "work",
+              "port": "got"
+            },
+            "payload": {
+              "a": "answer:probe"
+            },
+            "source": {
+              "traceid": "job/service",
+              "node": "serve",
+              "port": "answer"
+            },
+            "inReplyTo": "msg-2",
+            "id": "msg-4",
+            "state": "QUEUED",
+            "attempts": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "05-execution-persistence-and-late-result-fence",
+      "observed": {
+        "request": {
+          "executionId": "exec-1",
+          "traceid": "job",
+          "nodeId": "worker",
+          "agentSpec": {
+            "argv": [
+              "true"
+            ]
+          },
+          "priorExecutions": {},
+          "vars": {
+            "value": 7
+          },
+          "outputContract": {
+            "allowedEmitPorts": [
+              "out"
+            ]
+          },
+          "limits": {}
+        },
+        "during": {
+          "root": "job",
+          "permissions": "default",
+          "instances": [
+            {
+              "traceid": "job",
+              "status": "OPEN",
+              "seq": 0,
+              "generation": 0,
+              "blockers": [
+                "1 条待处理消息",
+                "1 个在途 execution"
+              ]
+            }
+          ],
+          "locks": [],
+          "queued": [],
+          "claimed": [
+            {
+              "id": "msg-1",
+              "traceid": "job",
+              "node": "worker",
+              "port": "in"
+            }
+          ],
+          "running": [
+            {
+              "executionId": "exec-1",
+              "traceid": "job",
+              "node": "worker"
+            }
+          ],
+          "deadlocks": [],
+          "retainedSandboxes": 0
+        },
+        "cut": {
+          "text": "已截断 job（generation 1）：isolated late-result experiment\n  丢弃消息 1 条\n  取消执行 1 个\n  级联子实例 0 个",
+          "code": 0,
+          "data": {
+            "traceid": "job",
+            "generation": 1,
+            "reason": "isolated late-result experiment",
+            "truncatedMessages": 1,
+            "cancelledExecutions": 1,
+            "cascaded": []
+          }
+        },
+        "afterCut": {
+          "root": "job",
+          "permissions": "default",
+          "instances": [
+            {
+              "traceid": "job",
+              "status": "TERMINAL",
+              "seq": 0,
+              "generation": 1,
+              "blockers": []
+            }
+          ],
+          "locks": [],
+          "queued": [],
+          "claimed": [],
+          "running": [],
+          "deadlocks": [],
+          "retainedSandboxes": 0
+        },
+        "backendCancelCalls": 0,
+        "returned": {
+          "text": "提交 1 次，失败 1 次，终结 0 个实例。\n可用内置 handler：branch, collect, echo, loop, noop, route\n失败：\n  job/worker：结果作废：被 claim 的消息 msg-1 已不再是 CLAIMED（多半是被认领退回队列、或被截断丢弃）。迟到的结果不覆盖新的 claim",
+          "code": 1,
+          "data": {
+            "converged": true,
+            "committed": 1,
+            "failed": 1,
+            "retried": 0,
+            "settled": [],
+            "failures": [
+              {
+                "traceid": "job",
+                "node": "worker",
+                "reason": "结果作废：被 claim 的消息 msg-1 已不再是 CLAIMED（多半是被认领退回队列、或被截断丢弃）。迟到的结果不覆盖新的 claim"
+              }
+            ],
+            "executionFace": "configured"
+          }
+        },
+        "stateAfter": {
+          "messages": [
+            {
+              "target": {
+                "traceid": "job",
+                "node": "worker",
+                "port": "in"
+              },
+              "payload": {
+                "value": 7
+              },
+              "id": "msg-1",
+              "state": "DISCARDED",
+              "attempts": 0,
+              "failure": "实例被截断：isolated late-result experiment"
+            }
+          ],
+          "records": [
+            {
+              "executionId": "exec-1",
+              "traceid": "job",
+              "nodeId": "worker",
+              "status": "VOIDED",
+              "claimed": [
+                "msg-1"
+              ],
+              "generation": 0,
+              "termination": "CANCELLED"
+            }
+          ],
+          "snapshot": {
+            "root": "job",
+            "instances": {
+              "job": {
+                "traceid": "job",
+                "templateRef": "root@1",
+                "status": "TERMINAL",
+                "bindings": []
+              }
+            },
+            "templates": {
+              "root@1": {
+                "nodes": {
+                  "worker": {
+                    "kind": "handler",
+                    "agent": {
+                      "argv": [
+                        "true"
+                      ]
+                    },
+                    "ports": {
+                      "in": {
+                        "direction": "receive",
+                        "servo": {
+                          "vars": {
+                            "value": {
+                              "type": "short",
+                              "from": "$.value"
+                            }
+                          }
+                        }
+                      },
+                      "out": {
+                        "direction": "emit"
+                      }
+                    }
+                  },
+                  "sink": {
+                    "kind": "handler",
+                    "handler": "noop",
+                    "ports": {
+                      "in": {
+                        "direction": "receive"
+                      }
+                    }
+                  }
+                },
+                "edges": {
+                  "next": {
+                    "from": {
+                      "node": "worker",
+                      "port": "out"
+                    },
+                    "to": {
+                      "node": "sink",
+                      "port": "in"
+                    }
+                  }
+                },
+                "children": {},
+                "bindings": [],
+                "selfBindings": []
+              }
+            },
+            "messages": [
+              {
+                "id": "msg-1",
+                "target": {
+                  "traceid": "job",
+                  "node": "worker",
+                  "port": "in"
+                },
+                "state": "DISCARDED"
+              }
+            ],
+            "records": [
+              {
+                "traceid": "job",
+                "nodeId": "worker",
+                "status": "VOIDED",
+                "termination": "CANCELLED"
+              }
+            ],
+            "objects": [],
+            "locks": []
+          }
+        }
+      }
+    },
+    {
+      "name": "06-two-drivers-on-one-run",
+      "observed": {
+        "startedBeforeAnyResult": [
+          "exec-1",
+          "exec-2"
+        ],
+        "during": {
+          "root": "job",
+          "permissions": "default",
+          "instances": [
+            {
+              "traceid": "job",
+              "status": "OPEN",
+              "seq": 0,
+              "generation": 0,
+              "blockers": [
+                "1 条待处理消息",
+                "1 个在途 execution"
+              ]
+            }
+          ],
+          "locks": [],
+          "queued": [],
+          "claimed": [
+            {
+              "id": "msg-1",
+              "traceid": "job",
+              "node": "worker",
+              "port": "in"
+            }
+          ],
+          "running": [
+            {
+              "executionId": "exec-2",
+              "traceid": "job",
+              "node": "worker"
+            }
+          ],
+          "deadlocks": [],
+          "retainedSandboxes": 0
+        },
+        "raw": [
+          {
+            "executionId": "exec-1",
+            "traceid": "job",
+            "nodeId": "worker",
+            "status": "SETTLED",
+            "claimed": [
+              "msg-1"
+            ],
+            "generation": 0,
+            "termination": "FAILED"
+          },
+          {
+            "executionId": "exec-2",
+            "traceid": "job",
+            "nodeId": "worker",
+            "status": "RUNNING",
+            "claimed": [
+              "msg-1"
+            ],
+            "generation": 0
+          }
+        ],
+        "commands": [
+          {
+            "text": "推进失败：状态不变量被破坏：\n  RUNNING 记录引用了 msg-1，但它是 CONSUMED",
+            "code": 1
+          },
+          {
+            "text": "提交 2 次，失败 1 次（另有 1 次重试后恢复），终结 1 个实例。\n可用内置 handler：branch, collect, echo, loop, noop, route\n失败：\n  job/worker：结果作废：被 claim 的消息 msg-1 已不再是 CLAIMED（多半是被认领退回队列、或被截断丢弃）。迟到的结果不覆盖新的 claim",
+            "code": 1,
+            "data": {
+              "converged": true,
+              "committed": 2,
+              "failed": 1,
+              "retried": 1,
+              "settled": [
+                "job"
+              ],
+              "failures": [
+                {
+                  "traceid": "job",
+                  "node": "worker",
+                  "reason": "结果作废：被 claim 的消息 msg-1 已不再是 CLAIMED（多半是被认领退回队列、或被截断丢弃）。迟到的结果不覆盖新的 claim"
+                }
+              ],
+              "executionFace": "configured"
+            }
+          }
+        ],
+        "requests": [
+          "exec-1",
+          "exec-2"
+        ]
+      }
+    },
+    {
+      "name": "07-run-scope-is-authorization-not-scheduling",
+      "observed": {
+        "requestedScope": "job/a",
+        "executedScopes": [
+          "job/a",
+          "job/b"
+        ]
+      }
+    },
+    {
+      "name": "08-http-current-surface",
+      "observed": [
+        {
+          "method": "GET",
+          "path": "/scene",
+          "authorized": false,
+          "status": 401,
+          "keys": [
+            "error"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/scene",
+          "authorized": true,
+          "status": 200,
+          "keys": [
+            "range",
+            "cells",
+            "cards",
+            "flows",
+            "tethers",
+            "viewport"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/templates",
+          "authorized": true,
+          "status": 200,
+          "keys": [
+            "root@1"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/snapshot",
+          "authorized": true,
+          "status": 404,
+          "keys": [
+            "error"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/object/job-1",
+          "authorized": true,
+          "status": 404,
+          "keys": [
+            "error"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/send",
+          "authorized": true,
+          "status": 405,
+          "keys": [
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09-real-wsl-execution-through-cli-driver",
+      "observed": {
+        "command": {
+          "text": "提交 2 次，失败 0 次，终结 1 个实例。\n可用内置 handler：branch, collect, echo, loop, noop, route",
+          "code": 0,
+          "data": {
+            "converged": true,
+            "committed": 2,
+            "failed": 0,
+            "retried": 0,
+            "settled": [
+              "job"
+            ],
+            "failures": [],
+            "executionFace": "configured"
+          }
+        },
+        "details": {
+          "status": {
+            "traceid": "job",
+            "templateRef": "root@1",
+            "status": "TERMINAL",
+            "bindings": [],
+            "generation": 0,
+            "seq": 2
+          },
+          "records": [
+            {
+              "executionId": "exec-1",
+              "traceid": "job",
+              "nodeId": "worker",
+              "status": "SETTLED",
+              "claimed": [
+                "msg-1"
+              ],
+              "generation": 0,
+              "termination": "DONE",
+              "usage": {
+                "inTokens": 0,
+                "outTokens": 0,
+                "costUsd": 0,
+                "wallClockSeconds": 0.197,
+                "toolCalls": 0,
+                "compactions": 0
+              }
+            }
+          ],
+          "execution": [
+            {
+              "object_id": "job/$exec",
+              "version": 1,
+              "kind": "execution",
+              "content_hash": "6ac2be737bd952c40c49c50c12d3e632a1ded19e033928ffabb914774e7e5e6d",
+              "body": {
+                "execution_id": "exec-1",
+                "node": "worker",
+                "termination": "DONE",
+                "usage": {
+                  "inTokens": 0,
+                  "outTokens": 0,
+                  "costUsd": 0,
+                  "wallClockSeconds": 0.197,
+                  "toolCalls": 0,
+                  "compactions": 0
+                },
+                "diagnostics": {
+                  "runner": "wsl",
+                  "isolates": true,
+                  "networkEnforced": false,
+                  "exitCode": 0,
+                  "stdoutTail": "",
+                  "stderrTail": "w\u0000s\u0000l\u0000:\u0000 \u0000�hKm0R \u0000l\u0000o\u0000c\u0000a\u0000l\u0000h\u0000o\u0000s\u0000t\u0000 \u0000�N\u0006tM�n\f�FO*g\\��P0R \u0000W\u0000S\u0000L\u0000\u00020N\u0000A\u0000T\u0000 \u0000!j\u000f_\u000bN�v \u0000W\u0000S\u0000L\u0000 \u0000\rN/e\u0001c \u0000l\u0000o\u0000c\u0000a\u0000l\u0000h\u0000o\u0000s\u0000t\u0000 \u0000�N\u0006t\u00020\r\u0000\n\u0000",
+                  "sandbox": {
+                    "path": "\\\\wsl.localhost\\Ubuntu\\tmp\\hertaloy-box-job-worker-exec-1",
+                    "retained": false
+                  },
+                  "capabilities": {
+                    "network": "wsl"
+                  },
+                  "observation": {
+                    "changes": [
+                      {
+                        "status": "A",
+                        "path": "result.txt"
+                      }
+                    ],
+                    "insertions": 1,
+                    "deletions": 0,
+                    "snapshot": "266b343ffeceabb046667fa0aa4d5028666dc4f2",
+                    "ref": "refs/hertaloy/snapshots/exec-1"
+                  }
+                }
+              },
+              "provenance": {
+                "traceid": "job",
+                "node_id": "worker",
+                "execution_id": "exec-1",
+                "derived_from": []
+              }
+            }
+          ],
+          "messages": [
+            {
+              "target": {
+                "traceid": "job",
+                "node": "worker",
+                "port": "in"
+              },
+              "payload": {
+                "value": "probe"
+              },
+              "id": "msg-1",
+              "state": "CONSUMED",
+              "attempts": 0
+            },
+            {
+              "target": {
+                "traceid": "job",
+                "node": "sink",
+                "port": "in"
+              },
+              "payload": {
+                "value": "from Linux"
+              },
+              "source": {
+                "traceid": "job",
+                "node": "worker",
+                "port": "out"
+              },
+              "id": "msg-2",
+              "state": "CONSUMED",
+              "attempts": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "10-mcp-stdio-real-transport",
+      "observed": {
+        "initialized": {
+          "protocolVersion": "2024-11-05",
+          "capabilities": {
+            "tools": {
+              "listChanged": true
+            }
+          },
+          "serverInfo": {
+            "name": "hertaloy",
+            "version": "0.0.0"
+          }
+        },
+        "toolNames": [
+          "validate_template",
+          "create_run",
+          "define_template",
+          "get_status",
+          "send_message",
+          "spawn_child",
+          "advance",
+          "read_object",
+          "list_versions",
+          "truncate_instance",
+          "explain_message"
+        ],
+        "status": {
+          "content": [
+            {
+              "type": "text",
+              "text": "run job-1\n\njob-1  TERMINAL  seq=4 gen=0\n\n在途消息 0 条"
+            }
+          ],
+          "isError": false
+        },
+        "stderr": ""
+      }
+    }
+  ]
+}

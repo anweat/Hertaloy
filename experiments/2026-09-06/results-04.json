@@ -1,0 +1,104 @@
+{
+  "at": "2026-09-06T10:51:58.109Z",
+  "commit": "81f622f9d393ddede4dab30bee7955c59316d543",
+  "runtime": "v24.14.0",
+  "stateRoot": "C:\\Users\\anwea\\AppData\\Local\\Temp\\hertaloy-interface-probe-6EQ6R4",
+  "modelCalls": 0,
+  "results": [
+    {
+      "name": "04-request-reply-versus-ordinary-callback-send",
+      "observed": {
+        "requestStep": {
+          "consumed": "msg-1",
+          "traceid": "job/asker",
+          "nodeId": "work",
+          "delivered": [
+            "msg-2"
+          ],
+          "dangling": [],
+          "vars": {
+            "q": "probe"
+          }
+        },
+        "before": [
+          {
+            "id": "lock-1",
+            "holder": "job/asker",
+            "kind": "request",
+            "key": "req-1",
+            "since": 1,
+            "waitingOn": "job/service",
+            "originNode": "work"
+          }
+        ],
+        "manual": "msg-3",
+        "afterOrdinarySend": [
+          {
+            "id": "lock-1",
+            "holder": "job/asker",
+            "kind": "request",
+            "key": "req-1",
+            "since": 1,
+            "waitingOn": "job/service",
+            "originNode": "work"
+          }
+        ],
+        "manualStep": {
+          "consumed": "msg-3",
+          "traceid": "job/asker",
+          "nodeId": "work",
+          "delivered": [],
+          "dangling": [],
+          "vars": {
+            "a": "human supplied"
+          }
+        },
+        "afterManualConsumed": [
+          {
+            "id": "lock-1",
+            "holder": "job/asker",
+            "kind": "request",
+            "key": "req-1",
+            "since": 1,
+            "waitingOn": "job/service",
+            "originNode": "work"
+          }
+        ],
+        "replyStep": {
+          "consumed": "msg-2",
+          "traceid": "job/service",
+          "nodeId": "serve",
+          "delivered": [
+            "msg-4"
+          ],
+          "dangling": [],
+          "vars": {
+            "q": "probe"
+          }
+        },
+        "afterReply": [],
+        "pending": [
+          {
+            "target": {
+              "traceid": "job/asker",
+              "node": "work",
+              "port": "got"
+            },
+            "payload": {
+              "a": "answer:probe"
+            },
+            "source": {
+              "traceid": "job/service",
+              "node": "serve",
+              "port": "answer"
+            },
+            "inReplyTo": "msg-2",
+            "id": "msg-4",
+            "state": "QUEUED",
+            "attempts": 0
+          }
+        ]
+      }
+    }
+  ]
+}
