@@ -13,6 +13,7 @@
     "reachability": "node scripts/reachability.mjs --check"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "2.1.9",
     "tsx": "^4.19.2"
   }
 }
