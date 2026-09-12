@@ -1,15 +1,18 @@
-# Hertaloy / Nodeflow V5
+# Hertaloy
 
-当前仓库已经进入 **V5 嵌套容器运行时重建阶段**。
+嵌套容器运行时。**只有容器一类元素** —— 模板是存储，实例化后是内存里跑的一条命令。
 
 ## 当前基线
 
-- 概念入口：[FOUNDATION_V5.md](./FOUNDATION_V5.md)
-- 测试与实现准备：[V5_WORKPLAN.md](./V5_WORKPLAN.md)
-- 当前迭代约定与修复记录：[ITERATION.md](./ITERATION.md)
+- **概念入口：[MODEL.md](./MODEL.md)** —— 单一概念基线，读这一篇就够
+- 开发指南：[DEVELOPING.md](./DEVELOPING.md) —— 每条都对应一次真踩过的坑
+- 迭代约定与修复台账：[ITERATION.md](./ITERATION.md)
+- 设计史：[ONESHOT.md](./ONESHOT.md) · [V6_MODEL.md](./V6_MODEL.md) ·
+  [FOUNDATION_V5.md](./FOUNDATION_V5.md) · [V5_WORKPLAN.md](./V5_WORKPLAN.md)
 - 历史资料与旧实现索引：[archive/README.md](./archive/README.md)
 
-V5 的第一性变化是：容器成为实例，资产归约为变量，跨网关等待归约为**未了结的义务**（第八次归约把锁账本也删了，见 §9）。V4 的编排对象模型不再是实现基线。
+第十一次归约（节点即容器）删掉了节点、边、`entry`/`exit`、两个判别式以及不变量
+C3 与 M4；模板字段 7 → 3，`L5` 退回一行。迁移路线见 [MODEL.md](./MODEL.md) §12。
 
 ## 仓库状态（v1）
 
