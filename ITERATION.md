@@ -741,6 +741,70 @@ cli 两处，每处都是 `Object.keys(template(t).nodes)` 之后自己拼 `${t}
   那是模板内部的声明名，本来就不是地址。
 - 基准见 [2026-09-07-perf](./experiments/2026-09-07-perf/README.md)。
 
+## 第十三轮（2026-09-15）：第十一次归约落地 —— 待办
+
+基线 `10f1c22`。依据 [MODEL.md](./MODEL.md) §12。流程照本文开头「每批的流程」，
+一个待办一批、一个根因一提交。状态：☐ 未开始 · ◐ 进行中 · ☑ 完成 · ⏸ 等定案。
+
+**排序原则**：不依赖定案、且挡在节点库前面的先做（PA0、PA1）；
+定案先于 contracts 重写；轨 B 与轨 A 并行不冲突。
+
+### 阶段 0：设计定案（先讨论，不写代码）
+
+拆待办时发现 **MODEL.md §3.1 字段表漏了执行体**：`NodeDefinition` 上的
+`handler | agent`、`bind`、`budget`、`ports` 在表里没有落点 —— 它们不会消失，
+要上移。"7 → 3"的计数因此不对。下面几条定了之后一并修正 MODEL / ONESHOT 的 §3。
+
+| # | 待定 | 建议 | Linux 根据 | 状态 |
+|---|---|---|---|---|
+| Q1 | 执行体字段归属 | `handler?`/`agent?`（二选一）、`bind?`、`budget?` 上移到 `ContainerTemplate`；纯组合容器可以没有执行体 | 每个进程都有映像；纯组合的容器相当于只做 fork/wait 的 shell | ⏸ |
+| Q2 | 默认起的子实例：内联模板还是引用 | 两者都允许。内联共享父的 `templateRef`，实例侧不加字段（按 `parent.children[段名]` 派生） | `pthread_create` 共享映像 vs `execve` 换映像 —— 映像共享与否和生命周期无关 | ⏸ |
+| Q3 | `entry` 退场后 spawn 的载荷投哪 | 调用方给端口名，校验必须是子模板**已声明的 receive 端口**；不加字段 | `execve(argv)` / stdin：调用方决定喂什么，但只能喂进已有的口 | ⏸ |
+| Q4 | `exit` 退场后终态通知怎么表达 | 子实例保留位点 `$exit` 的一条路由指向父端口 —— 复用 routes 与保留名，不加字段。备选：子实例声明条目里留一个父端口名 | `SIGCHLD` + 父进程声明自己在哪 `wait` | ⏸ |
+| Q5 | `routes` 的形状 | 统一"别名出口"与"本地环回"两种条目；可见性三种放置（整树 / 仅自己 / 仅某一支）先核 `selfBindings` 在 4 个测试文件里的真实用途，用不上就删一种 | 路由表按前缀最长匹配，可见性来自路由装在哪张表上，不来自条目字段 | ⏸ |
+| Q6 | 能力单调要求校验器看到父模板 | `ExecutionSpecValidator` 签名加一个**不透明**的父 spec 参数；内核只转交，不解读 | `no_new_privs` 由内核在 exec 时对照父进程的位判定 —— 判定方需要父的上下文 | ⏸ |
+| Q7 | scene 快照注入的依赖方向 | sandbox 只依赖 contracts，不能依赖 scene；快照由 cli 组装、经 `ExecutionRequest` 过界 | 环境变量由父进程在 exec 前组装，被 exec 的程序不去读父的内存 | ⏸ |
+
+### 轨 A：结构
+
+| # | 内容 | 依赖 | 验收 | 状态 |
+|---|---|---|---|---|
+| PA0 | 基线：`test` / `typecheck` / `reachability` 全量跑一遍记数字 | — | 数字登记到本节 | ☐ |
+| PA1 | **`ctx` 读裁剪**（M1）：`collect` 前缀必须以自己为前缀；`read(ref)` 只读自己子树或注入进来的 ref | — | 变红的用例逐条判定"该走 `bind`"还是"该声明绑定"，判定结果登记 | ☐ |
+| PA2 | `contracts/template.ts` + `port.ts` 重写：删 `nodes`/`edges`/`bindings`/`selfBindings`/`NodeDefinition`/`EdgeDefinition`/`PortRef`/`ChildSlot.entry`/`exit`/`bindings`；加 `ports`/`routes` 与上移的执行体 | Q1…Q5 | contracts 自身测试绿；其余包编译报错即清单 | ⏸ |
+| PA3 | `Provenance` 的 `traceid`+`node_id` → `instance` | PA2 | 已落库对象读回兼容与否写明（破坏性，按"重建不热恢复"） | ☐ |
+| PA4 | `kernel/instances.ts`（21 处）—— 调整过大可重写 | PA2 | 注册期校验全部迁入；`validateSignalPayloads`（M4）整个删除，信号用例不改仍绿 | ☐ |
+| PA5 | `kernel/aliases/check.ts` + `materialize.ts`（12 处）—— routes 并入，可重写 | PA2、Q5 | 别名用例不改语义仍绿 | ☐ |
+| PA6 | `kernel/runtime.ts`（10 处）+ `routing.ts`：`stageOutputs` 三分支收成"解析 + 排期" | PA4、PA5 | 内网边不再是独立分支；`#handlerContext.spawn` 按 Q3 投递 | ☐ |
+| PA7 | `kernel/control.ts`、`authz-log.ts` 余量 | PA6 | typecheck 绿 | ☐ |
+| PA8 | `state`（2 处）+ **`fixture-gen.mts`**（tsconfig 之外） | PA6 | 重跑生成器而不是手改夹具；scene 用例对"四种命运"的断言仍成立 | ☐ |
+| PA9 | `cli`（15 处）+ `mcp` 的 `spawn_child` 参数 | PA6、Q3 | JSON 契约用例更新；CLI 场景文件语法随之改 | ☐ |
+| PA10 | `scene`（13 处）：`Cell.kind` 3 → 1，删 `phaseOfNode` | PA6 | 可见性用例一条不改仍绿（`RunSnapshot.commits`、`Cell.result` 已在阶段 1a 删除，核实无残留） | ☐ |
+| PA11 | 测试机械更新：kernel 26 / cli 15 / state 5 / scene 2 / 其余 3 个文件 | 随各包 | **机械更新不重写**；失败即真断裂，单独登记 | ☐ |
+| PA12 | 编译器看不到的：`examples/aggregate*.json` 迁移；`experiments/*.mts` 能迁则迁、不能迁在文件头标"基于旧模型"；`results*.json` **不改**（历史证据） | PA2 | `grep` 旧字段在 `examples/` 与 `packages/` 零命中 | ☐ |
+| PA13 | 队列按端口分（原阶段 6） | PA6 | drain 每条成本不随 M 增长（今天 M=200→1600 是 0.108→0.472 ms） | ☐ |
+| PA14 | 收尾门检 + MODEL.md §12.3 验收表逐条过；修正 MODEL/ONESHOT §3 | 全部 | 三条命令退出 0；§4.5 边界判据零命中 | ☐ |
+
+### 轨 B：预算与可观测（不依赖轨 A）
+
+| # | 内容 | 依赖 | 验收 | 状态 |
+|---|---|---|---|---|
+| PB1 | 不变量 B1 更名"变量袋预算"：文档已改；核对报错文案里是否还写"上下文预算" | — | 文案与 MODEL 一致 | ☐ |
+| PB2 | usage 补测（漂移 A-4）：自家 agent 从响应取；外部 CLI 解析输出，取不到**用字段缺省表达"不可得"**，不写 0 | — | `$exec` 里 usage 非零或明确缺省；**不新增字段**（`usage?` 已可选） | ☐ |
+| PB3 | 预绑句柄：核实 `ExecutionRequest` 的变量袋已含注入 ref 的正文；agent 侧若有读工具，按引用比对 | — | 读未预绑的 ref 被拒，有反例用例 | ☐ |
+| PB4 | scene 快照注入 `.hertaloy/context/` | Q7 | sandbox 的依赖清单不出现 scene | ⏸ |
+| PB5 | 资源监控：runner 报事实进 `$exec` diagnostics，失败不影响执行（⑦ 观测期） | — | 监控抛异常时执行照常收口 | ☐ |
+| PB6 | 能力单调不增（`checkAgentSpec` 新规则） | Q6 | 父 `network:none`、子 `open` 在注册期被拒；kernel 非注释代码不出现 `capabilities` | ⏸ |
+
+### 清账（不挡设计，可穿插）
+
+| # | 内容 | 验收 | 状态 |
+|---|---|---|---|
+| PC1 | fiat 自述（MODEL D-3）：`reconcile` / `settleAll` / `reclaim` 各有独立操作类 | 授权表能单独授予/拒绝；有反例 | ☐ |
+| PC2 | scope 限范围（MODEL D-4）：H04 已封了"只接受根 scope"，核实是否已闭合 | 结论登记；未闭合则补 | ☐ |
+| PC3 | `CommitHook` 载荷收窄或钉用例（MODEL D-5） | 挂一个因策略抛错的钩子会被识别/拒绝 | ☐ |
+| PC4 | §4.5 内核零知识判据写成脚本，接进 `reachability` 或独立 `check` | 脚本在 CI 可跑 | ☐ |
+
 
 ---
 

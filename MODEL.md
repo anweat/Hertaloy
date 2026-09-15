@@ -163,6 +163,11 @@ C3（内网实例不自行判定终止）⇒ 节点永远 OPEN
 **7 → 3**（`ports` / `routes` / `children`）。
 `NodeDefinition` 整类消失 —— 它并进子实例声明。
 
+> ⚠️ **本表不完整（2026-09-15 发现）**：`NodeDefinition` 上的执行体 `handler | agent`、
+> `bind`、`budget` 在上表没有落点。它们不会消失，要上移到容器模板 ——
+> 所以"7 → 3"的计数不对，真实形状待 `ITERATION.md` 第十三轮 Q1–Q5 定案后修正。
+> 净减的结论不受影响：上移的是已有字段，不是新增。
+
 ### 3.2 运行侧（kernel —— 实例）
 
 | 类 | 字段 | 存哪 |
@@ -845,7 +850,7 @@ agent 干的事。
 |---|---|
 | 字段收敛 | `entry` / `exit` / `selfBindings` / `edges` 四个字段删除，别名与信号用例不改仍绿 |
 | M4 退场 | `validateSignalPayloads` **整个删掉**，信号用例不改仍绿 |
-| 判别式退场 | `NodeDefinition.kind`、`Cell.kind` 的补丁（`RunSnapshot.commits`、`phaseOfNode`、`Cell.result`）全部删掉，可见性用例一条不改仍绿 |
+| 判别式退场 | `NodeDefinition.kind` 删除、`Cell.kind` 3 → 1、`phaseOfNode` 删除，可见性用例一条不改仍绿（`RunSnapshot.commits` 与 `Cell.result` 已在阶段 1a 删除） |
 | 读裁剪 | 给 `ctx.read` / `ctx.collect` 加子树裁剪后变红的用例，逐条判定该走 `bind` 还是该声明绑定 |
 | 队列按端口分 | drain 每条成本不再随 M 增长（今天 M=200→1600 是 0.108ms → 0.472ms） |
 | 内核边界 | §4.5 那条 grep 在非注释代码上零命中 |
