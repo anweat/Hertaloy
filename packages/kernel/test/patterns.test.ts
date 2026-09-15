@@ -152,6 +152,61 @@ describe("ctx 的边界", () => {
     rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
     rt.drain();
   });
+
+  /**
+   * 读那半的行级安全（MODEL.md §7.2）。写那半早就 chroot 了，读那半一直是全局的：
+   * `read` 能读任意对象、`collect` 能汇聚任意子树 —— 唯一兜着它的是"handler 都是
+   * 自己写的"，而节点库一开放这个前提就没了。
+   *
+   * 跨命名空间要读东西，**造实例去那边处理**，不是开一张通行证。
+   */
+  it("★ read 不跨命名空间", () => {
+    store.put("job-2/secret", "thing", { s: 1 });
+    rt.registerHandler("collect", (_vars, ctx) => {
+      ctx.read("job-2/secret@1");
+      return {};
+    });
+    rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
+    expect(() => rt.drain()).toThrow(/跨命名空间/);
+  });
+
+  it("★ collect 不跨命名空间 —— 前缀落在段边界上，job-1 够不着 job-10", () => {
+    store.put("job-10/results", "result", { v: 1 });
+    rt.registerHandler("collect", (_vars, ctx) => {
+      ctx.collect("job-10", "results");
+      return {};
+    });
+    rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
+    expect(() => rt.drain()).toThrow(/跨命名空间/);
+  });
+
+  it("read 同样守段边界：job-1 读不到 job-10 下的对象", () => {
+    store.put("job-10/x", "thing", { n: 1 });
+    rt.registerHandler("collect", (_vars, ctx) => {
+      ctx.read("job-10/x@1");
+      return {};
+    });
+    rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
+    expect(() => rt.drain()).toThrow(/跨命名空间/);
+  });
+
+  it("自己的命名空间及其子树照常可读、可汇聚", () => {
+    store.put("job-1/coder-1/results", "result", { v: 1 });
+    const seen: unknown[] = [];
+    rt.registerHandler("collect", (_vars, ctx) => {
+      const own = ctx.put("a", "thing", { n: 1 });
+      seen.push(
+        ctx.read(own).body,
+        ctx.read("job-1/coder-1/results@1").body,
+        ctx.collect("job-1", "results").length,
+        ctx.collect("job-1/coder-1", "results").length,
+      );
+      return {};
+    });
+    rt.send({ instance: "job-1/collect", port: "in" }, { v: 1 });
+    rt.drain();
+    expect(seen).toEqual([{ n: 1 }, { v: 1 }, 1, 1]);
+  });
 });
 
 describe("批 0：提交是事务（§10.1）", () => {

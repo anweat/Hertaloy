@@ -508,18 +508,23 @@ EOF 传不下去（Kahn 网络的老问题）。而常驻节点已经没有了�
 `..` / 前导 `/` / 空段一律拒绝。这是对象存储上的行级安全。
 （OS 根据：chroot。）
 
-行级安全的**读那半**同样要有（V5 只做了写那半）：
+行级安全的**读那半**同样要有（V5 只做了写那半）。**读写同一个根**：
 
 ```
 ctx.history / ctx.put  → chroot 到自己
-ctx.collect            → prefix 必须以自己的 traceid 为前缀
-ctx.read(ref)          → 只能读 (a) 自己子树下的，或
-                                (b) 经 bind / servo 注入进来的那批 ref（按引用比对）
+ctx.collect(prefix)    → prefix 必须落在自己的子树里（段边界）
+ctx.read(ref)          → ref 的对象必须落在自己的子树里（段边界）
 横向 / 向上             → 不给权限，造实例 + 发消息（§5.6）
 ```
 
-(b) 不是破口：`servo type:"ref"` 今天就是这个机制，传的是 `id@3` 精确版本，
-对象库 append-only 所以那是一份不可变快照 —— **给出去的是一个窄能力，不是一把钥匙。**
+**要引入别处的产物，不需要"允许读注入进来的 ref"这种例外。** 在端口上声明
+servo `type: "ref"`，内核在 prepare 时就解引用、按 long 计入预算，handler 拿到的
+**已经是正文**（`context.ts` 的 `dereference`）—— 它从头到尾不需要自己去 `read`
+一个别处的引用。原先设想的"注入 ref 白名单"因此没有消费方，不做。
+
+实现：`Runtime.#handlerContext` 的 `read` / `collect` 过模块私有的
+`withinNamespace`（`isDescendantOf` 段边界判定）。落地时全仓**零条既有用例变红**
+—— 仓库里从来没有代码在跨命名空间读，缺口只是没被人撞上。
 
 ### 7.3 保留 kind 与保留名
 
@@ -794,7 +799,7 @@ agent 干的事。
 | — | 提交是事务 | ✅ | `kernel/tx.ts` |
 | — | 冲突域 = generation + claim 集 | ✅ | `Runtime.#apply` |
 | — | 观测不裁决 | ✅ 结构 | scene 包只读 |
-| — | 对象写入受命名空间约束 | ✅ 写那半 / ⚠️ 读那半 | `instances.ts` `namespacedId` |
+| — | 对象读写受命名空间约束（读写同一个根） | ✅ | 写：`instances.ts` `namespacedId`；读：`Runtime.#handlerContext` → `withinNamespace` |
 | — | 授权默认拒绝 | ✅ | `kernel/control.ts` |
 | — | 半状态不可表达 | ✅ 结构 | — |
 | — | 请求必得一个了结 | ✅ 两侧 | `Runtime.#settleRequest` |
@@ -851,7 +856,7 @@ agent 干的事。
 | 字段收敛 | `entry` / `exit` / `selfBindings` / `edges` 四个字段删除，别名与信号用例不改仍绿 |
 | M4 退场 | `validateSignalPayloads` **整个删掉**，信号用例不改仍绿 |
 | 判别式退场 | `NodeDefinition.kind` 删除、`Cell.kind` 3 → 1、`phaseOfNode` 删除，可见性用例一条不改仍绿（`RunSnapshot.commits` 与 `Cell.result` 已在阶段 1a 删除） |
-| 读裁剪 | 给 `ctx.read` / `ctx.collect` 加子树裁剪后变红的用例，逐条判定该走 `bind` 还是该声明绑定 |
+| 读裁剪 | ☑ 已落地（第十三轮 PA1）：加裁剪后零条既有用例变红；新增四条反例钉住跨树、段边界与本树可读 |
 | 队列按端口分 | drain 每条成本不再随 M 增长（今天 M=200→1600 是 0.108ms → 0.472ms） |
 | 内核边界 | §4.5 那条 grep 在非注释代码上零命中 |
 | usage | `$exec` 里 usage 非零 |

@@ -769,8 +769,8 @@ cli 两处，每处都是 `Object.keys(template(t).nodes)` 之后自己拼 `${t}
 
 | # | 内容 | 依赖 | 验收 | 状态 |
 |---|---|---|---|---|
-| PA0 | 基线：`test` / `typecheck` / `reachability` 全量跑一遍记数字 | — | 数字登记到本节 | ☐ |
-| PA1 | **`ctx` 读裁剪**（M1）：`collect` 前缀必须以自己为前缀；`read(ref)` 只读自己子树或注入进来的 ref | — | 变红的用例逐条判定"该走 `bind`"还是"该声明绑定"，判定结果登记 | ☐ |
+| PA0 | 基线：`test` / `typecheck` / `reachability` 全量跑一遍记数字 | — | 数字登记到本节 | ☑ 960 / 7 skipped |
+| PA1 | **`ctx` 读裁剪**（M1）：`read` / `collect` 与 `put` / `history` 同一个根，段边界判定 | — | 变红的用例逐条判定，判定结果登记 | ☑ 零条变红，见批次记录 |
 | PA2 | `contracts/template.ts` + `port.ts` 重写：删 `nodes`/`edges`/`bindings`/`selfBindings`/`NodeDefinition`/`EdgeDefinition`/`PortRef`/`ChildSlot.entry`/`exit`/`bindings`；加 `ports`/`routes` 与上移的执行体 | Q1…Q5 | contracts 自身测试绿；其余包编译报错即清单 | ⏸ |
 | PA3 | `Provenance` 的 `traceid`+`node_id` → `instance` | PA2 | 已落库对象读回兼容与否写明（破坏性，按"重建不热恢复"） | ☐ |
 | PA4 | `kernel/instances.ts`（21 处）—— 调整过大可重写 | PA2 | 注册期校验全部迁入；`validateSignalPayloads`（M4）整个删除，信号用例不改仍绿 | ☐ |
@@ -804,6 +804,48 @@ cli 两处，每处都是 `Object.keys(template(t).nodes)` 之后自己拼 `${t}
 | PC2 | scope 限范围（MODEL D-4）：H04 已封了"只接受根 scope"，核实是否已闭合 | 结论登记；未闭合则补 | ☐ |
 | PC3 | `CommitHook` 载荷收窄或钉用例（MODEL D-5） | 挂一个因策略抛错的钩子会被识别/拒绝 | ☐ |
 | PC4 | §4.5 内核零知识判据写成脚本，接进 `reachability` 或独立 `check` | 脚本在 CI 可跑 | ☐ |
+
+### 批次记录
+
+#### PA0 基线（2026-09-15，`ece0273`）
+
+`typecheck` 退出 0；`reachability` 210 个导出无孤儿；`test` 退出 0 ——
+contracts 71 / kernel 327 / scene 66 / state 87 / cli 198 / mcp 19 / sandbox 192+7 skipped，
+合计 **960 passed / 7 skipped**，与第十二轮收尾门检一致。跳过的 7 项仍是 Docker daemon 未运行。
+
+#### PA1 `ctx` 读裁剪
+
+**登记**：能力缺口（安全）。`#handlerContext` 里写那半 chroot 了（`put` / `history`
+走 `namespacedId`），读那半是全局的 —— `read` 直接 `store.resolve`、`collect` 直接
+`store.collect(prefix)`，不问调用方在哪棵树上。撑着它的只有"handler 都是自己写的"，
+节点库一开放即失效。
+
+**先行审核**：
+- 裁剪的根用什么？**与写同一个根**（`#handlerContext` 的 `traceid`）。原计划写的是
+  "以自己为前缀"，但"自己"在节点尚未成实例的今天是容器、成实例之后是位点 ——
+  绑死"与 put 同根"，两半将来随阶段一起移动，不会再出现一半一半。
+- 原计划的"(b) 注入进来的 ref 可读"**不采纳**：核实 `context.ts` 的 `dereference`，
+  `type: "ref"` 变量在 prepare 时已被替换成正文，handler 从头到尾拿不到需要自己
+  `read` 的外部引用。白名单没有消费方，按 YAGNI 不做；MODEL / ONESHOT §7.2 已同步改写。
+- 判定函数不放 `instances.ts`：`index.ts` 对它 `export *`，会平白多一个公开符号。
+  放 `runtime.ts` 模块私有。复用 contracts 已有的 `isDescendantOf`（段边界），不另写前缀判断。
+
+**反例先红**：`patterns.test.ts`「ctx 的边界」加四条 —— 跨树 `read`、跨段边界 `collect`
+（`job-1` 取 `job-10`）、跨段边界 `read`、本树与子树照常可读可汇聚。前三条修复前
+**全部失败**（读取成功，泄露是真的），第四条修复前后都绿。
+
+**修复**：`read` 先 `parseRef`（非精确引用照旧在此拒）再判对象 id；`collect` 判 prefix；
+不在子树内抛 `InvariantError`，文案指向正确做法（造实例去那边 / 声明 servo `type: "ref"`）。
+
+**验证**：kernel 331 passed（+4）；全量 **964 passed / 7 skipped**；typecheck 退出 0；
+可达性 210 无孤儿（未增加导出）。**既有用例零条变红** —— 全仓 src 里没有一处 handler
+调 `read` / `collect`，测试里的三处（`fanout-merge` 一处、`patterns` 两处）都在本树内。
+tsconfig 之外的 `experiments/*.mts` 与 `fixture-gen.mts` 已扫，无调用。
+
+**一处核实后撤回的怀疑**：写反例时怀疑既有用例把 `expect` 写在 handler 内部，
+失败的断言会被吞成 step 失败。核实同步路径：`step` → `transact` → `#commitSync` →
+handler 调用之间**没有 catch**，任何异常（含断言失败）都穿出 `drain`，
+「保留 kind」那条用例正是靠这一点断言 `drain` 抛错。怀疑不成立，既有写法没问题。
 
 
 ---

@@ -60,7 +60,9 @@ import {
   formatJsonViolations,
   jsonViolations,
   childTrace,
+  isDescendantOf,
   parentTrace as parentTrace_,
+  parseRef,
   validateContract,
 } from "@nodeflow/contracts";
 import { InvariantError, invariant } from "./errors.js";
@@ -1607,6 +1609,10 @@ export class Runtime implements Snapshotable {
    *
    * 内核保留 kind 仍然挡着 —— 受信不等于可以伪造 `run` / `annotation`，
    * 那会污染因果记录。
+   *
+   * **读写同一个根**：`put` / `history` 落在 `traceid` 的命名空间，`read` / `collect`
+   * 也只够得着它的子树（MODEL.md §7.2）。原来读那半是全局的 —— 行级安全只做了
+   * 写那半，而撑着它的只有"handler 都是自己写的"这个前提。
    */
   #handlerContext(traceid: TraceId, input: Message): HandlerContext {
     const store = this.#store;
@@ -1615,9 +1621,16 @@ export class Runtime implements Snapshotable {
       instance: input.target.instance,
       port: input.target.port,
       ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
-      read: (ref: Ref) => store.resolve(ref),
+      read: (ref: Ref) => {
+        // 先解析：非精确引用在这里就拒，与原先 store.resolve 的拒绝同源
+        withinNamespace(traceid, parseRef(ref).objectId, `read ${ref}`);
+        return store.resolve(ref);
+      },
       history: (name: string) => store.history(namespacedId(traceid, name)),
-      collect: (prefix: string, name: string) => store.collect(prefix, name),
+      collect: (prefix: string, name: string) => {
+        withinNamespace(traceid, prefix, `collect(${JSON.stringify(prefix)})`);
+        return store.collect(prefix, name);
+      },
       spawn: (slot: string, segment: string, payload?: Json): TraceId => {
         const child = this.spawn(traceid, slot, segment);
         if (payload === undefined) return child.traceid;
@@ -1824,6 +1837,26 @@ export class Runtime implements Snapshotable {
       );
     }
     return port;
+  }
+}
+
+/**
+ * 读那半的命名空间约束：`target` 必须落在 `root` 的子树里，**按段边界判定**
+ * （`job-1` 够不着 `job-10`）。
+ *
+ * 不导出：`instances.ts` 经 `index.ts` 整个对外，放那儿会平白多一个公开符号，
+ * 而这条规则没有内核之外的消费方。
+ *
+ * 跨命名空间的正确做法不是放宽这里，而是造实例去那边处理；需要把别处的产物
+ * 带进来，就在端口上声明 servo `type: "ref"`，由内核在 prepare 时解引用注入 ——
+ * handler 拿到的已经是正文，不需要自己去 `read`。
+ */
+function withinNamespace(root: TraceId, target: string, op: string): void {
+  if (!isDescendantOf(target, root)) {
+    throw new InvariantError(
+      `${op} 跨命名空间：${JSON.stringify(target)} 不在 ${root} 的子树内。` +
+        `要读别处的东西，造实例去那边处理；要引入别处的产物，在端口上声明 servo \`type: "ref"\``,
+    );
   }
 }
 
