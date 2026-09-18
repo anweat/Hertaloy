@@ -765,6 +765,53 @@ cli 两处，每处都是 `Object.keys(template(t).nodes)` 之后自己拼 `${t}
 | Q6 | 能力单调要求校验器看到父模板 | `ExecutionSpecValidator` 签名加一个**不透明**的父 spec 参数；内核只转交，不解读 | `no_new_privs` 由内核在 exec 时对照父进程的位判定 —— 判定方需要父的上下文 | ⏸ |
 | Q7 | scene 快照注入的依赖方向 | sandbox 只依赖 contracts，不能依赖 scene；快照由 cli 组装、经 `ExecutionRequest` 过界 | 环境变量由父进程在 exec 前组装，被 exec 的程序不去读父的内存 | ⏸ |
 
+### 阶段 0 定案（2026-09-17）—— 见 [V6_REDESIGN.md](./V6_REDESIGN.md)
+
+一次七视角勘察 + 四份独立重设计之后，作者定了四条，推翻其中两个 Q，并实测了一条：
+
+| Q | 原建议 | 定案 |
+|---|---|---|
+| Q1 | `handler?`/`agent?` 二选一上移到 `ContainerTemplate` | **推翻。** 不再分 handler / agent；执行体属于位点；同步 vs 异步由 **runner 的返回类型**结构性判定（返回 Promise ⇒ 必须落 claim），不由模板字段声明 |
+| Q2 | 内联模板与引用两者都允许 | **改为只内联。** 子容器的全部描述保留在父模板里直接声明，`ChildSlot.template: Ref` 退场；复用改走 `TemplateOverlay`（`extends` + `override`）。副产品：跨模板校验变成本地校验，子实例不再需要自己的 `templateRef` |
+| Q3 | spawn 载荷投给子模板已声明的 receive 端口 | **消失。** 子容器自己声明容器端口（socket activation 形状），`ChildSlot.entry` 退场 |
+| Q4 | 子实例保留位点 `$exit` 的一条路由 | **不进基线。** 终止 / 失败通知走普通消息（差事 + 错误响应），形状由声明方给；"一种系统事件原语吃掉三件事"降为**优化措施** |
+| Q5 | `routes` 形状，先核 `selfBindings` 真实用途 | **核实结论**：`selfBindings` 非空只有 `aliases.test.ts` S5 两条用例 ⇒ 删（= `inherit:false`）；`ChildSlot.bindings` 只有 3 条用例且那条声称"另一支看不见"的用例**没有针对性断言**。内网边与别名合成一张 `wires` 表（同一个问题今天有两套解析） |
+| Q6 / Q7 | 校验器看到父模板 / scene 快照注入方向 | 不变，仍 ⏸ |
+
+另定两条不在 Q 表里的：
+
+- **容器不带 `exec` 段**。容器模板做的是"把资产提取成变量 → 把变量配置进各位点的命令行"，
+  命令属于位点。"容器也是实例、也是一条命令"在本体上承认同源（一类实体、一份定义、
+  一条生命周期规则），形状上分开。
+- **基底与声明面的分界**：只有容器基底（默认注入、环境相关配置与对应安全策略）
+  和命令行工具自己实现的部分不声明，其余基本都要声明、且要对 agent 开放。
+  由此得一条原则：**声明即注入（基底除外）**；"开放"是可读可用，不是可改。
+  今天有两处违反：`AgentSpec.context` 写了文件却没告知 agent；
+  `capabilities.wallClockSeconds` 会杀进程却从不告知 agent（C-8）。
+
+#### 探针 N1（2026-09-17）：命名空间根下沉到位点
+
+**背景**：`V6_REDESIGN.md` 主张删掉 MODEL §7.4（聚合判定只能在同步 handler 里做），
+理由是它的成因不是 agent 的异步性，而是 `#handlerContext` 把 `put`/`history` 的根
+取成了 `containerOf(input.target)`。
+
+**方法**：4 处读点、7 行改动，把根换成 `input.target.instance` / `record.instance`，
+`spawn` 与 `provenance` 不动。全量跑，然后回退（仓库未改）。
+完整记录见 [experiments/2026-09-17-n1](./experiments/2026-09-17-n1/README.md)。
+
+**结果**：964 条里 **29 条变红** —— kernel 13 / cli 12 / state 3 / mcp 1；
+**scene · contracts · sandbox 三个包一条不红**（渲染层与执行面不依赖命名空间的根）。
+
+**分类**：26 条机械更新（断言里写死了对象 id，路径深了一层）；
+**3 条真语义断裂，同一个根因，而且正是帧 12** ——
+`merge` 是容器的一个位点、`coder-1` 是容器的子容器，根下沉后两者成了兄弟，
+`collect("job-1")` 与 `read job-1/coder-1/results@1` 被 `withinNamespace` 挡住。
+
+**结论**：合法的跨位点读只剩一种形状（父容器名下、指名某个子槽的汇聚），
+它在声明期完全表达得出 ⇒ 跨位点汇聚从运行期的 `ctx.collect(任意前缀)`
+改成声明期的 `gather`（端口变量的一种来源，注入期由内核代取）。
+`ctx.collect` 不是被裁剪，是被替换。
+
 ### 轨 A：结构
 
 | # | 内容 | 依赖 | 验收 | 状态 |
