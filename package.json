@@ -10,7 +10,8 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "hertaloy": "tsx packages/cli/src/main.ts",
-    "reachability": "node scripts/reachability.mjs --check"
+    "reachability": "node scripts/reachability.mjs --check",
+    "docs-check": "node scripts/docs-check.mjs"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "2.1.9",
